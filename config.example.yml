@@ -1,0 +1,75 @@
+# modelserver example configuration
+#
+# Copy this file to config.yml and adjust values for your environment.
+# Most fields have sensible defaults; only the fields marked as REQUIRED
+# must be provided before the server will start successfully.
+
+server:
+  # Address and port the reverse-proxy/API gateway listens on.
+  proxy_addr: ":8080"
+  # Address and port the admin/management API listens on.
+  admin_addr: ":8081"
+  # Maximum time allowed for a single upstream request (Go duration string).
+  request_timeout: 600s
+  # Maximum accepted request body size in bytes (default 50 MB).
+  max_request_body: 52428800
+
+db:
+  # REQUIRED — PostgreSQL connection string.
+  # Can also be set via MODELSERVER_DB_URL environment variable.
+  url: "postgres://user:password@localhost:5432/modelserver?sslmode=disable"
+
+auth:
+  # REQUIRED — Secret used to sign JWT tokens. Use a long random string.
+  # Can also be set via MODELSERVER_AUTH_JWT_SECRET environment variable.
+  jwt_secret: "change-me-to-a-long-random-secret"
+  # How long an access token remains valid.
+  access_token_ttl: 15m
+  # How long a refresh token remains valid.
+  refresh_token_ttl: 168h  # 7 days
+  # Set to false to disable self-service registration.
+  allow_registration: true
+
+  oauth:
+    github:
+      client_id: ""
+      client_secret: ""
+    google:
+      client_id: ""
+      client_secret: ""
+    oidc:
+      # Issuer URL of your OpenID Connect provider (e.g. Keycloak, Dex).
+      issuer_url: ""
+      client_id: ""
+      client_secret: ""
+
+encryption:
+  # REQUIRED — 32-byte (base64 or hex) key used for at-rest encryption.
+  # Can also be set via MODELSERVER_ENCRYPTION_KEY environment variable.
+  key: "change-me-to-a-32-byte-secret-key"
+
+trace:
+  # HTTP header name used to propagate a trace identifier across services.
+  trace_header: "X-Trace-Id"
+  # HTTP header name used to group related requests into a thread.
+  thread_header: "X-Thread-Id"
+
+collector:
+  # Number of events per flush batch.
+  batch_size: 100
+  # How often the collector flushes its buffer to storage.
+  flush_interval: 1s
+  # Maximum number of events held in the in-memory buffer before back-pressure.
+  buffer_size: 10000
+
+log:
+  # Logging verbosity: debug | info | warn | error
+  level: "info"
+  # Log output format: json | text
+  format: "json"
+
+cors:
+  # List of origins allowed to make cross-origin requests.
+  # An empty list disables CORS permitting only same-origin requests.
+  allowed_origins:
+    - "https://app.example.com"
