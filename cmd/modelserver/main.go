@@ -123,7 +123,7 @@ func main() {
 	})
 
 	// Mount proxy routes.
-	proxy.MountRoutes(proxyRouter, st, proxyHandler, cfg.Trace)
+	proxy.MountRoutes(proxyRouter, st, proxyHandler, cfg.Trace, logger)
 
 	proxyServer := &http.Server{
 		Addr:    cfg.Server.ProxyAddr,
