@@ -14,7 +14,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/modelserver/modelserver/internal/collector"
 	"github.com/modelserver/modelserver/internal/config"
+	"github.com/modelserver/modelserver/internal/crypto"
+	"github.com/modelserver/modelserver/internal/proxy"
 	"github.com/modelserver/modelserver/internal/store"
 )
 
@@ -70,6 +73,37 @@ func main() {
 	defer st.Close()
 	logger.Info("connected to database")
 
+	// Initialize encryption key.
+	var encryptionKey []byte
+	if cfg.Encryption.Key != "" {
+		encryptionKey, err = crypto.ParseHexKey(cfg.Encryption.Key)
+		if err != nil {
+			log.Fatalf("invalid encryption key: %v", err)
+		}
+	}
+
+	// Initialize collector.
+	coll := collector.New(collector.Config{
+		BatchSize:     cfg.Collector.BatchSize,
+		FlushInterval: cfg.Collector.FlushInterval,
+		BufferSize:    cfg.Collector.BufferSize,
+	}, st, logger)
+	coll.Start()
+	defer coll.Stop()
+
+	// Load channels and routes for channel router.
+	channels, err := st.ListChannels()
+	if err != nil {
+		log.Fatalf("failed to load channels: %v", err)
+	}
+	routes, err := st.ListChannelRoutes()
+	if err != nil {
+		log.Fatalf("failed to load channel routes: %v", err)
+	}
+	channelRouter := proxy.NewChannelRouter(channels, routes)
+
+	proxyHandler := proxy.NewHandler(st, coll, channelRouter, encryptionKey, logger, cfg.Server)
+
 	// --- Proxy server ---
 	proxyRouter := chi.NewRouter()
 	proxyRouter.Use(middleware.Recoverer)
@@ -88,7 +122,8 @@ func main() {
 		w.Write([]byte("ok"))
 	})
 
-	// TODO: Mount proxy routes in Phase 2
+	// Mount proxy routes.
+	proxy.MountRoutes(proxyRouter, st, proxyHandler, cfg.Trace)
 
 	proxyServer := &http.Server{
 		Addr:    cfg.Server.ProxyAddr,
