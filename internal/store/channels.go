@@ -1,0 +1,178 @@
+package store
+
+import (
+	"database/sql"
+	"fmt"
+	"time"
+
+	"github.com/lib/pq"
+	"github.com/modelserver/modelserver/internal/types"
+)
+
+// CreateChannel inserts a new channel.
+func (s *Store) CreateChannel(c *types.Channel) error {
+	return s.db.QueryRow(`
+		INSERT INTO channels (provider, name, base_url, api_key_encrypted, supported_models, weight, selection_priority, status, max_concurrent)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id, created_at, updated_at`,
+		c.Provider, c.Name, c.BaseURL, c.APIKeyEncrypted,
+		pq.Array(c.SupportedModels), c.Weight, c.SelectionPriority, c.Status, c.MaxConcurrent,
+	).Scan(&c.ID, &c.CreatedAt, &c.UpdatedAt)
+}
+
+// GetChannelByID returns a channel by ID.
+func (s *Store) GetChannelByID(id string) (*types.Channel, error) {
+	c := &types.Channel{}
+	err := s.db.QueryRow(`
+		SELECT id, provider, name, base_url, api_key_encrypted, supported_models,
+			weight, selection_priority, status, max_concurrent, created_at, updated_at
+		FROM channels WHERE id = $1`, id,
+	).Scan(&c.ID, &c.Provider, &c.Name, &c.BaseURL, &c.APIKeyEncrypted,
+		pq.Array(&c.SupportedModels), &c.Weight, &c.SelectionPriority, &c.Status,
+		&c.MaxConcurrent, &c.CreatedAt, &c.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get channel: %w", err)
+	}
+	return c, nil
+}
+
+// ListChannels returns all channels.
+func (s *Store) ListChannels() ([]types.Channel, error) {
+	rows, err := s.db.Query(`
+		SELECT id, provider, name, base_url, supported_models,
+			weight, selection_priority, status, max_concurrent, created_at, updated_at
+		FROM channels ORDER BY selection_priority DESC, name ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var channels []types.Channel
+	for rows.Next() {
+		var c types.Channel
+		if err := rows.Scan(&c.ID, &c.Provider, &c.Name, &c.BaseURL,
+			pq.Array(&c.SupportedModels), &c.Weight, &c.SelectionPriority, &c.Status,
+			&c.MaxConcurrent, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		channels = append(channels, c)
+	}
+	return channels, nil
+}
+
+// ListActiveChannelsForModel returns active channels that support a given model.
+func (s *Store) ListActiveChannelsForModel(model string) ([]types.Channel, error) {
+	rows, err := s.db.Query(`
+		SELECT id, provider, name, base_url, api_key_encrypted, supported_models,
+			weight, selection_priority, status, max_concurrent, created_at, updated_at
+		FROM channels
+		WHERE status = 'active' AND $1 = ANY(supported_models)
+		ORDER BY selection_priority DESC, weight DESC`, model)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var channels []types.Channel
+	for rows.Next() {
+		var c types.Channel
+		if err := rows.Scan(&c.ID, &c.Provider, &c.Name, &c.BaseURL, &c.APIKeyEncrypted,
+			pq.Array(&c.SupportedModels), &c.Weight, &c.SelectionPriority, &c.Status,
+			&c.MaxConcurrent, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		channels = append(channels, c)
+	}
+	return channels, nil
+}
+
+// UpdateChannel updates channel fields.
+func (s *Store) UpdateChannel(id string, updates map[string]interface{}) error {
+	updates["updated_at"] = time.Now()
+	query, args := buildUpdateQuery("channels", "id", id, updates)
+	_, err := s.db.Exec(query, args...)
+	return err
+}
+
+// DeleteChannel deletes a channel.
+func (s *Store) DeleteChannel(id string) error {
+	_, err := s.db.Exec("DELETE FROM channels WHERE id = $1", id)
+	return err
+}
+
+// --- Channel Routes ---
+
+// CreateChannelRoute inserts a new channel route.
+func (s *Store) CreateChannelRoute(r *types.ChannelRoute) error {
+	return s.db.QueryRow(`
+		INSERT INTO channel_routes (project_id, model_pattern, channel_ids, match_priority, enabled)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, created_at, updated_at`,
+		nullString(r.ProjectID), r.ModelPattern, pq.Array(r.ChannelIDs), r.MatchPriority, r.Enabled,
+	).Scan(&r.ID, &r.CreatedAt, &r.UpdatedAt)
+}
+
+// ListChannelRoutes returns all channel routes, ordered by match_priority DESC.
+func (s *Store) ListChannelRoutes() ([]types.ChannelRoute, error) {
+	rows, err := s.db.Query(`
+		SELECT id, COALESCE(project_id::text, ''), model_pattern, channel_ids, match_priority, enabled, created_at, updated_at
+		FROM channel_routes ORDER BY match_priority DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var routes []types.ChannelRoute
+	for rows.Next() {
+		var r types.ChannelRoute
+		if err := rows.Scan(&r.ID, &r.ProjectID, &r.ModelPattern,
+			pq.Array(&r.ChannelIDs), &r.MatchPriority, &r.Enabled, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			return nil, err
+		}
+		routes = append(routes, r)
+	}
+	return routes, nil
+}
+
+// ListChannelRoutesForProject returns routes for a specific project + global routes.
+func (s *Store) ListChannelRoutesForProject(projectID string) ([]types.ChannelRoute, error) {
+	rows, err := s.db.Query(`
+		SELECT id, COALESCE(project_id::text, ''), model_pattern, channel_ids, match_priority, enabled, created_at, updated_at
+		FROM channel_routes
+		WHERE (project_id = $1 OR project_id IS NULL) AND enabled = TRUE
+		ORDER BY
+			CASE WHEN project_id IS NOT NULL THEN 0 ELSE 1 END,
+			match_priority DESC`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var routes []types.ChannelRoute
+	for rows.Next() {
+		var r types.ChannelRoute
+		if err := rows.Scan(&r.ID, &r.ProjectID, &r.ModelPattern,
+			pq.Array(&r.ChannelIDs), &r.MatchPriority, &r.Enabled, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			return nil, err
+		}
+		routes = append(routes, r)
+	}
+	return routes, nil
+}
+
+// UpdateChannelRoute updates a route.
+func (s *Store) UpdateChannelRoute(id string, updates map[string]interface{}) error {
+	updates["updated_at"] = time.Now()
+	query, args := buildUpdateQuery("channel_routes", "id", id, updates)
+	_, err := s.db.Exec(query, args...)
+	return err
+}
+
+// DeleteChannelRoute deletes a route.
+func (s *Store) DeleteChannelRoute(id string) error {
+	_, err := s.db.Exec("DELETE FROM channel_routes WHERE id = $1", id)
+	return err
+}
