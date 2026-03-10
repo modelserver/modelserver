@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/modelserver/modelserver/internal/admin"
+	"github.com/modelserver/modelserver/internal/auth"
 	"github.com/modelserver/modelserver/internal/collector"
 	"github.com/modelserver/modelserver/internal/config"
 	"github.com/modelserver/modelserver/internal/crypto"
@@ -160,8 +161,11 @@ func main() {
 		w.Write([]byte("ok"))
 	})
 
+	// Initialize JWT manager.
+	jwtMgr := auth.NewJWTManager(cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL)
+
 	// Mount admin API routes.
-	admin.MountRoutes(adminRouter, st, cfg, encryptionKey, logger)
+	admin.MountRoutes(adminRouter, st, cfg, encryptionKey, jwtMgr)
 
 	adminServer := &http.Server{
 		Addr:    cfg.Server.AdminAddr,

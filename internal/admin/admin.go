@@ -6,9 +6,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/modelserver/modelserver/internal/auth"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
@@ -16,13 +15,6 @@ import (
 type adminCtxKey string
 
 const ctxUser adminCtxKey = "admin_user"
-
-// Claims defines the JWT payload.
-type Claims struct {
-	UserID       string `json:"uid"`
-	IsSuperadmin bool   `json:"sa"`
-	jwt.RegisteredClaims
-}
 
 // UserFromContext returns the authenticated user from the request context.
 func UserFromContext(ctx context.Context) *types.User {
@@ -32,22 +24,23 @@ func UserFromContext(ctx context.Context) *types.User {
 	return nil
 }
 
-// AuthMiddleware validates a JWT bearer token and loads the user into context.
-func AuthMiddleware(st *store.Store, jwtSecret string) func(http.Handler) http.Handler {
+// JWTAuthMiddleware validates a JWT bearer token and loads the user into context.
+func JWTAuthMiddleware(jwtMgr *auth.JWTManager, st *store.Store) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token := extractBearer(r)
-			if token == "" {
+			tokenStr := extractBearer(r)
+			if tokenStr == "" {
 				writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid authorization header")
 				return
 			}
 
-			claims := &Claims{}
-			parsed, err := jwt.ParseWithClaims(token, claims, func(t *jwt.Token) (interface{}, error) {
-				return []byte(jwtSecret), nil
-			})
-			if err != nil || !parsed.Valid {
+			claims, err := jwtMgr.ValidateToken(tokenStr)
+			if err != nil {
 				writeError(w, http.StatusUnauthorized, "unauthorized", "invalid or expired token")
+				return
+			}
+			if claims.TokenType != "access" {
+				writeError(w, http.StatusUnauthorized, "unauthorized", "expected access token")
 				return
 			}
 
@@ -79,25 +72,10 @@ func RequireSuperadmin(next http.Handler) http.Handler {
 	})
 }
 
-// GenerateToken creates a signed JWT for a user.
-func GenerateToken(user *types.User, secret string, ttl time.Duration) (string, error) {
-	claims := Claims{
-		UserID:       user.ID,
-		IsSuperadmin: user.IsSuperadmin,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Subject:   user.ID,
-		},
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, &claims)
-	return token.SignedString([]byte(secret))
-}
-
 func extractBearer(r *http.Request) string {
-	auth := r.Header.Get("Authorization")
-	if strings.HasPrefix(auth, "Bearer ") {
-		return strings.TrimPrefix(auth, "Bearer ")
+	h := r.Header.Get("Authorization")
+	if strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimPrefix(h, "Bearer ")
 	}
 	return ""
 }

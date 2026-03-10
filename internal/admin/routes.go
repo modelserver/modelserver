@@ -1,26 +1,35 @@
 package admin
 
 import (
-	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/modelserver/modelserver/internal/auth"
 	"github.com/modelserver/modelserver/internal/config"
 	"github.com/modelserver/modelserver/internal/store"
 )
 
 // MountRoutes mounts all admin API routes onto the given router.
-func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byte, logger *slog.Logger) {
+func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byte, jwtMgr *auth.JWTManager) {
 	r.Route("/api/v1", func(r chi.Router) {
 		// Public auth endpoints.
-		r.Post("/auth/login", handleLogin(st, cfg.Auth))
+		r.Post("/auth/login", handleLogin(st, jwtMgr, cfg.Auth))
+		r.Post("/auth/register", handleRegister(st, jwtMgr, cfg.Auth))
+		r.Post("/auth/refresh", handleRefresh(st, jwtMgr))
+		r.Post("/system/initialize", handleInitialize(st, jwtMgr))
+
+		// OAuth callbacks (public).
+		r.Post("/auth/oauth/github", handleOAuthCallback(st, jwtMgr, cfg, "github"))
+		r.Post("/auth/oauth/google", handleOAuthCallback(st, jwtMgr, cfg, "google"))
+		r.Post("/auth/oauth/oidc", handleOAuthCallback(st, jwtMgr, cfg, "oidc"))
 
 		// Authenticated endpoints.
 		r.Group(func(r chi.Router) {
-			r.Use(AuthMiddleware(st, cfg.Auth.JWTSecret))
+			r.Use(JWTAuthMiddleware(jwtMgr, st))
 
 			// Current user.
 			r.Get("/me", handleGetMe())
+			r.Patch("/auth/password", handleChangePassword(st))
 
 			// Users (superadmin only).
 			r.Route("/users", func(r chi.Router) {
@@ -125,7 +134,6 @@ func projectAccessMiddleware(st *store.Store) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Superadmins can access all projects.
 			if user.IsSuperadmin {
 				next.ServeHTTP(w, r)
 				return
