@@ -7,15 +7,18 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/modelserver/modelserver/internal/config"
+	"github.com/modelserver/modelserver/internal/ratelimit"
 	"github.com/modelserver/modelserver/internal/store"
 )
 
 // MountRoutes mounts all proxy routes onto the given router.
-func MountRoutes(r chi.Router, st *store.Store, handler *Handler, traceCfg config.TraceConfig, logger *slog.Logger) {
+func MountRoutes(r chi.Router, st *store.Store, handler *Handler, traceCfg config.TraceConfig, limiter ratelimit.RateLimiter, logger *slog.Logger) {
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(AuthMiddleware(st))
 		r.Use(TraceMiddleware(traceCfg))
-		r.Use(RateLimitMiddleware(st, logger))
+		if limiter != nil {
+			r.Use(RateLimitMiddleware(limiter, logger))
+		}
 
 		r.Post("/messages", handler.HandleMessages)
 		r.Get("/models", handler.HandleListModels)

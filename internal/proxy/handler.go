@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"github.com/modelserver/modelserver/internal/collector"
 	"github.com/modelserver/modelserver/internal/config"
 	"github.com/modelserver/modelserver/internal/crypto"
+	"github.com/modelserver/modelserver/internal/ratelimit"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
@@ -22,17 +24,19 @@ type Handler struct {
 	store         *store.Store
 	collector     *collector.Collector
 	channelRouter *ChannelRouter
+	rateLimiter   ratelimit.RateLimiter
 	encryptionKey []byte
 	logger        *slog.Logger
 	maxBodySize   int64
 }
 
 // NewHandler creates a new proxy handler.
-func NewHandler(st *store.Store, coll *collector.Collector, router *ChannelRouter, encKey []byte, logger *slog.Logger, cfg config.ServerConfig) *Handler {
+func NewHandler(st *store.Store, coll *collector.Collector, router *ChannelRouter, limiter ratelimit.RateLimiter, encKey []byte, logger *slog.Logger, cfg config.ServerConfig) *Handler {
 	return &Handler{
 		store:         st,
 		collector:     coll,
 		channelRouter: router,
+		rateLimiter:   limiter,
 		encryptionKey: encKey,
 		logger:        logger,
 		maxBodySize:   cfg.MaxRequestBody,
@@ -197,6 +201,16 @@ func (h *Handler) interceptNonStreaming(resp *http.Response, project *types.Proj
 	})
 
 	logger.Info("request completed", "input_tokens", usage.InputTokens, "output_tokens", usage.OutputTokens, "credits", credits, "duration_ms", duration)
+
+	if h.rateLimiter != nil {
+		h.rateLimiter.PostRecord(context.Background(), apiKey.ID, model, types.TokenUsage{
+			InputTokens:         usage.InputTokens,
+			OutputTokens:        usage.OutputTokens,
+			CacheCreationTokens: usage.CacheCreationInputTokens,
+			CacheReadTokens:     usage.CacheReadInputTokens,
+		})
+	}
+
 	return nil
 }
 
@@ -234,6 +248,15 @@ func (h *Handler) interceptStreaming(resp *http.Response, project *types.Project
 		logger.Info("streaming request completed",
 			"input_tokens", usage.InputTokens, "output_tokens", usage.OutputTokens,
 			"credits", credits, "duration_ms", duration, "ttft_ms", ttft)
+
+		if h.rateLimiter != nil {
+			h.rateLimiter.PostRecord(context.Background(), apiKey.ID, model, types.TokenUsage{
+				InputTokens:         usage.InputTokens,
+				OutputTokens:        usage.OutputTokens,
+				CacheCreationTokens: usage.CacheCreationInputTokens,
+				CacheReadTokens:     usage.CacheReadInputTokens,
+			})
+		}
 	})
 	return nil
 }

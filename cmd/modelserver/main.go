@@ -21,6 +21,7 @@ import (
 	"github.com/modelserver/modelserver/internal/config"
 	"github.com/modelserver/modelserver/internal/crypto"
 	"github.com/modelserver/modelserver/internal/proxy"
+	"github.com/modelserver/modelserver/internal/ratelimit"
 	"github.com/modelserver/modelserver/internal/store"
 )
 
@@ -105,7 +106,10 @@ func main() {
 	}
 	channelRouter := proxy.NewChannelRouter(channels, routes)
 
-	proxyHandler := proxy.NewHandler(st, coll, channelRouter, encryptionKey, logger, cfg.Server)
+	// Initialize rate limiter.
+	rateLimiter := ratelimit.NewCompositeRateLimiter(st, logger)
+
+	proxyHandler := proxy.NewHandler(st, coll, channelRouter, rateLimiter, encryptionKey, logger, cfg.Server)
 
 	// --- Proxy server ---
 	proxyRouter := chi.NewRouter()
@@ -126,7 +130,7 @@ func main() {
 	})
 
 	// Mount proxy routes.
-	proxy.MountRoutes(proxyRouter, st, proxyHandler, cfg.Trace, logger)
+	proxy.MountRoutes(proxyRouter, st, proxyHandler, cfg.Trace, rateLimiter, logger)
 
 	proxyServer := &http.Server{
 		Addr:    cfg.Server.ProxyAddr,
