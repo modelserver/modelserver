@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -10,13 +11,15 @@ import (
 )
 
 // MountRoutes mounts all proxy routes onto the given router.
-func MountRoutes(r chi.Router, st *store.Store, handler *Handler, traceCfg config.TraceConfig) {
+func MountRoutes(r chi.Router, st *store.Store, handler *Handler, traceCfg config.TraceConfig, logger *slog.Logger) {
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(AuthMiddleware(st))
 		r.Use(TraceMiddleware(traceCfg))
+		r.Use(RateLimitMiddleware(st, logger))
 
 		r.Post("/messages", handler.HandleMessages)
 		r.Get("/models", handler.HandleListModels)
+		r.Get("/usage", handler.HandleUsage)
 	})
 }
 

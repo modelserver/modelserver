@@ -15,8 +15,10 @@ import (
 type contextKey string
 
 const (
-	ctxAPIKey  contextKey = "apikey"
-	ctxProject contextKey = "project"
+	ctxAPIKey       contextKey = "apikey"
+	ctxProject      contextKey = "project"
+	ctxPolicy       contextKey = "policy"
+	ctxSubscription contextKey = "subscription"
 )
 
 // APIKeyFromContext returns the API key from the request context.
@@ -35,7 +37,23 @@ func ProjectFromContext(ctx context.Context) *types.Project {
 	return nil
 }
 
-// AuthMiddleware validates the API key and loads the associated project.
+// PolicyFromContext returns the rate limit policy from the request context.
+func PolicyFromContext(ctx context.Context) *types.RateLimitPolicy {
+	if p, ok := ctx.Value(ctxPolicy).(*types.RateLimitPolicy); ok {
+		return p
+	}
+	return nil
+}
+
+// SubscriptionFromContext returns the active subscription from the request context.
+func SubscriptionFromContext(ctx context.Context) *types.Subscription {
+	if s, ok := ctx.Value(ctxSubscription).(*types.Subscription); ok {
+		return s
+	}
+	return nil
+}
+
+// AuthMiddleware validates the API key and loads the associated project, policy, and subscription.
 func AuthMiddleware(st *store.Store) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -78,10 +96,41 @@ func AuthMiddleware(st *store.Store) func(http.Handler) http.Handler {
 				return
 			}
 
+			// Resolve rate limit policy: key-specific > subscription > project default.
+			var policy *types.RateLimitPolicy
+			var subscription *types.Subscription
+
+			if apiKey.RateLimitPolicyID != "" {
+				policy, _ = st.GetPolicyByID(apiKey.RateLimitPolicyID)
+			}
+
+			if policy == nil {
+				// Try loading active subscription for this project.
+				subscription, _ = st.GetActiveSubscription(project.ID)
+				if subscription != nil {
+					policy, _ = st.GetPolicyByID(subscription.PolicyID)
+				}
+			}
+
+			if policy == nil {
+				policy, _ = st.GetDefaultPolicy(project.ID)
+			}
+
+			// Check policy validity window.
+			if policy != nil && !policy.IsActive() {
+				policy = nil
+			}
+
 			go st.UpdateAPIKeyLastUsed(apiKey.ID)
 
 			ctx := context.WithValue(r.Context(), ctxAPIKey, apiKey)
 			ctx = context.WithValue(ctx, ctxProject, project)
+			if policy != nil {
+				ctx = context.WithValue(ctx, ctxPolicy, policy)
+			}
+			if subscription != nil {
+				ctx = context.WithValue(ctx, ctxSubscription, subscription)
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

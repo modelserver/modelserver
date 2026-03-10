@@ -176,6 +176,43 @@ func (s *Store) CountRequestsInWindowForModel(apiKeyID, model string, windowStar
 	return count, err
 }
 
+// --- Project-level credit queries (for shared/project-scope rate limiting) ---
+
+// SumCreditsInWindowByProject returns total credits consumed by all keys in a project within a time window.
+func (s *Store) SumCreditsInWindowByProject(projectID string, windowStart time.Time) (float64, error) {
+	var total float64
+	err := s.db.QueryRow(`
+		SELECT COALESCE(SUM(credits_consumed), 0)
+		FROM requests
+		WHERE project_id = $1 AND created_at >= $2`,
+		projectID, windowStart,
+	).Scan(&total)
+	return total, err
+}
+
+// CountRequestsInWindowByProject returns the number of requests by all keys in a project within a time window.
+func (s *Store) CountRequestsInWindowByProject(projectID string, windowStart time.Time) (int64, error) {
+	var count int64
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM requests
+		WHERE project_id = $1 AND created_at >= $2`,
+		projectID, windowStart,
+	).Scan(&count)
+	return count, err
+}
+
+// SumTokensInWindowByProject returns total tokens for all keys in a project within a time window.
+func (s *Store) SumTokensInWindowByProject(projectID string, windowStart time.Time) (int64, error) {
+	var total int64
+	err := s.db.QueryRow(`
+		SELECT COALESCE(SUM(input_tokens + output_tokens), 0)
+		FROM requests
+		WHERE project_id = $1 AND created_at >= $2`,
+		projectID, windowStart,
+	).Scan(&total)
+	return total, err
+}
+
 // GetUsageOverview returns a high-level usage overview for a project.
 func (s *Store) GetUsageOverview(projectID string, since, until time.Time) (map[string]interface{}, error) {
 	var requestCount int64
