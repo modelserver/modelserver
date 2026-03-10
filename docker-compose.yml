@@ -10,6 +10,24 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U modelserver"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  modelserver:
+    build: .
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    environment:
+      - MODELSERVER_DB_URL=postgres://modelserver:modelserver@postgres:5432/modelserver?sslmode=disable
+      - MODELSERVER_AUTH_JWT_SECRET=change-me-in-production-must-be-at-least-32-chars
+      - MODELSERVER_ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   pgdata:
