@@ -74,6 +74,12 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 					// Requests & Usage.
 					r.Get("/requests", handleListRequests(st))
 					r.Get("/usage", handleGetUsage(st))
+
+					// Traces & Threads.
+					r.Get("/traces", handleListTraces(st))
+					r.Get("/traces/{traceID}", handleGetTrace(st))
+					r.Get("/threads", handleListThreads(st))
+					r.Get("/threads/{threadID}", handleGetThread(st))
 				})
 			})
 

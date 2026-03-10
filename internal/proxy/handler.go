@@ -89,6 +89,16 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 
 	policy := PolicyFromContext(r.Context())
 	traceID := TraceIDFromContext(r.Context())
+	threadID := ThreadIDFromContext(r.Context())
+
+	// Lazily register the trace in the database.
+	if traceID != "" {
+		source := types.TraceSourceAuto
+		if r.Header.Get("x-trace-id") != "" {
+			source = types.TraceSourceHeader
+		}
+		go h.store.EnsureTrace(project.ID, traceID, threadID, source)
+	}
 
 	logger := h.logger.With(
 		"project_id", project.ID,
