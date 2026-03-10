@@ -14,6 +14,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
+	"github.com/modelserver/modelserver/internal/admin"
 	"github.com/modelserver/modelserver/internal/collector"
 	"github.com/modelserver/modelserver/internal/config"
 	"github.com/modelserver/modelserver/internal/crypto"
@@ -134,6 +136,16 @@ func main() {
 	adminRouter := chi.NewRouter()
 	adminRouter.Use(middleware.Recoverer)
 	adminRouter.Use(middleware.RealIP)
+	if len(cfg.CORS.AllowedOrigins) > 0 {
+		adminRouter.Use(cors.Handler(cors.Options{
+			AllowedOrigins:   cfg.CORS.AllowedOrigins,
+			AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+			AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+			ExposedHeaders:   []string{"X-RateLimit-Limit", "X-RateLimit-Used", "X-RateLimit-Reset", "Retry-After"},
+			AllowCredentials: true,
+			MaxAge:           300,
+		}))
+	}
 
 	adminRouter.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -148,7 +160,8 @@ func main() {
 		w.Write([]byte("ok"))
 	})
 
-	// TODO: Mount admin routes in Phase 4
+	// Mount admin API routes.
+	admin.MountRoutes(adminRouter, st, cfg, encryptionKey, logger)
 
 	adminServer := &http.Server{
 		Addr:    cfg.Server.AdminAddr,
