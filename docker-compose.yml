@@ -10,6 +10,7 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U modelserver"]
       interval: 5s
@@ -25,9 +26,26 @@ services:
       - MODELSERVER_DB_URL=postgres://modelserver:modelserver@postgres:5432/modelserver?sslmode=disable
       - MODELSERVER_AUTH_JWT_SECRET=change-me-in-production-must-be-at-least-32-chars
       - MODELSERVER_ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      - MODELSERVER_BILLING_WEBHOOK_SECRET=payserver-webhook-secret-change-me
+      - MODELSERVER_BILLING_PAYSERVER_URL=http://payserver:8090
     depends_on:
       postgres:
         condition: service_healthy
+
+  payserver:
+    build: ./services/payserver
+    ports:
+      - "8090:8090"
+    environment:
+      - PAYSERVER_DB_URL=postgres://modelserver:modelserver@postgres:5432/payserver?sslmode=disable
+      - PAYSERVER_API_KEY=payserver-api-key-change-me
+      - PAYSERVER_CALLBACK_MODELSERVER_URL=http://modelserver:8081/api/v1/billing/webhook/delivery
+      - PAYSERVER_CALLBACK_WEBHOOK_SECRET=payserver-webhook-secret-change-me
+    depends_on:
+      postgres:
+        condition: service_healthy
+      modelserver:
+        condition: service_started
 
   dashboard:
     build: ./dashboard
