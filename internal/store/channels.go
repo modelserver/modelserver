@@ -12,11 +12,11 @@ import (
 // CreateChannel inserts a new channel.
 func (s *Store) CreateChannel(c *types.Channel) error {
 	return s.db.QueryRow(`
-		INSERT INTO channels (provider, name, base_url, api_key_encrypted, supported_models, weight, selection_priority, status, max_concurrent)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO channels (provider, name, base_url, api_key_encrypted, supported_models, weight, selection_priority, status, max_concurrent, test_model)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id, created_at, updated_at`,
 		c.Provider, c.Name, c.BaseURL, c.APIKeyEncrypted,
-		pq.Array(c.SupportedModels), c.Weight, c.SelectionPriority, c.Status, c.MaxConcurrent,
+		pq.Array(c.SupportedModels), c.Weight, c.SelectionPriority, c.Status, c.MaxConcurrent, c.TestModel,
 	).Scan(&c.ID, &c.CreatedAt, &c.UpdatedAt)
 }
 
@@ -25,11 +25,11 @@ func (s *Store) GetChannelByID(id string) (*types.Channel, error) {
 	c := &types.Channel{}
 	err := s.db.QueryRow(`
 		SELECT id, provider, name, base_url, api_key_encrypted, supported_models,
-			weight, selection_priority, status, max_concurrent, created_at, updated_at
+			weight, selection_priority, status, max_concurrent, test_model, created_at, updated_at
 		FROM channels WHERE id = $1`, id,
 	).Scan(&c.ID, &c.Provider, &c.Name, &c.BaseURL, &c.APIKeyEncrypted,
 		pq.Array(&c.SupportedModels), &c.Weight, &c.SelectionPriority, &c.Status,
-		&c.MaxConcurrent, &c.CreatedAt, &c.UpdatedAt)
+		&c.MaxConcurrent, &c.TestModel, &c.CreatedAt, &c.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -39,11 +39,11 @@ func (s *Store) GetChannelByID(id string) (*types.Channel, error) {
 	return c, nil
 }
 
-// ListChannels returns all channels.
+// ListChannels returns all channels (including encrypted API keys for decryption at load time).
 func (s *Store) ListChannels() ([]types.Channel, error) {
 	rows, err := s.db.Query(`
-		SELECT id, provider, name, base_url, supported_models,
-			weight, selection_priority, status, max_concurrent, created_at, updated_at
+		SELECT id, provider, name, base_url, api_key_encrypted, supported_models,
+			weight, selection_priority, status, max_concurrent, test_model, created_at, updated_at
 		FROM channels ORDER BY selection_priority DESC, name ASC`)
 	if err != nil {
 		return nil, err
@@ -53,12 +53,15 @@ func (s *Store) ListChannels() ([]types.Channel, error) {
 	var channels []types.Channel
 	for rows.Next() {
 		var c types.Channel
-		if err := rows.Scan(&c.ID, &c.Provider, &c.Name, &c.BaseURL,
+		if err := rows.Scan(&c.ID, &c.Provider, &c.Name, &c.BaseURL, &c.APIKeyEncrypted,
 			pq.Array(&c.SupportedModels), &c.Weight, &c.SelectionPriority, &c.Status,
-			&c.MaxConcurrent, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			&c.MaxConcurrent, &c.TestModel, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		channels = append(channels, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return channels, nil
 }
@@ -67,7 +70,7 @@ func (s *Store) ListChannels() ([]types.Channel, error) {
 func (s *Store) ListActiveChannelsForModel(model string) ([]types.Channel, error) {
 	rows, err := s.db.Query(`
 		SELECT id, provider, name, base_url, api_key_encrypted, supported_models,
-			weight, selection_priority, status, max_concurrent, created_at, updated_at
+			weight, selection_priority, status, max_concurrent, test_model, created_at, updated_at
 		FROM channels
 		WHERE status = 'active' AND $1 = ANY(supported_models)
 		ORDER BY selection_priority DESC, weight DESC`, model)
@@ -81,10 +84,13 @@ func (s *Store) ListActiveChannelsForModel(model string) ([]types.Channel, error
 		var c types.Channel
 		if err := rows.Scan(&c.ID, &c.Provider, &c.Name, &c.BaseURL, &c.APIKeyEncrypted,
 			pq.Array(&c.SupportedModels), &c.Weight, &c.SelectionPriority, &c.Status,
-			&c.MaxConcurrent, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			&c.MaxConcurrent, &c.TestModel, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		channels = append(channels, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return channels, nil
 }
@@ -134,6 +140,9 @@ func (s *Store) ListChannelRoutes() ([]types.ChannelRoute, error) {
 		}
 		routes = append(routes, r)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return routes, nil
 }
 
@@ -159,6 +168,9 @@ func (s *Store) ListChannelRoutesForProject(projectID string) ([]types.ChannelRo
 			return nil, err
 		}
 		routes = append(routes, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return routes, nil
 }

@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -20,7 +21,7 @@ type streamInterceptor struct {
 	ttft       int64
 	gotFirst   bool
 	onComplete func(model, msgID string, usage anthropic.Usage, ttft int64)
-	completed  bool
+	once       sync.Once
 }
 
 func newStreamInterceptor(inner io.ReadCloser, startTime time.Time, onComplete func(string, string, anthropic.Usage, int64)) *streamInterceptor {
@@ -104,11 +105,9 @@ func (si *streamInterceptor) parseLine(line []byte) {
 }
 
 func (si *streamInterceptor) finish() {
-	if si.completed {
-		return
-	}
-	si.completed = true
-	if si.onComplete != nil && si.model != "" {
-		si.onComplete(si.model, si.msgID, si.usage, si.ttft)
-	}
+	si.once.Do(func() {
+		if si.onComplete != nil && si.model != "" {
+			si.onComplete(si.model, si.msgID, si.usage, si.ttft)
+		}
+	})
 }

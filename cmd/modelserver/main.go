@@ -100,11 +100,33 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to load channels: %v", err)
 	}
+	if len(channels) > 0 && len(encryptionKey) == 0 {
+		logger.Warn("encryption key not configured but channels exist — channel API keys will not be decrypted, proxy requests will fail")
+	}
 	routes, err := st.ListChannelRoutes()
 	if err != nil {
 		log.Fatalf("failed to load channel routes: %v", err)
 	}
-	channelRouter := proxy.NewChannelRouter(channels, routes)
+	channelRouter := proxy.NewChannelRouter(channels, routes, encryptionKey, logger)
+
+	// Periodically reload channels and routes from the database.
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			ch, err := st.ListChannels()
+			if err != nil {
+				logger.Error("failed to reload channels", "error", err)
+				continue
+			}
+			rt, err := st.ListChannelRoutes()
+			if err != nil {
+				logger.Error("failed to reload channel routes", "error", err)
+				continue
+			}
+			channelRouter.Reload(ch, rt, encryptionKey, logger)
+		}
+	}()
 
 	// Initialize rate limiter.
 	rateLimiter := ratelimit.NewCompositeRateLimiter(st, logger)
@@ -130,7 +152,7 @@ func main() {
 	})
 
 	// Mount proxy routes.
-	proxy.MountRoutes(proxyRouter, st, proxyHandler, cfg.Trace, rateLimiter, logger)
+	proxy.MountRoutes(proxyRouter, st, proxyHandler, cfg.Trace, rateLimiter, encryptionKey, logger)
 
 	proxyServer := &http.Server{
 		Addr:    cfg.Server.ProxyAddr,

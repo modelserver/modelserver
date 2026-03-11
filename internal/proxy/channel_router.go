@@ -1,34 +1,68 @@
 package proxy
 
 import (
+	"log/slog"
 	"math/rand"
 	"path/filepath"
+	"sync"
 
+	"github.com/modelserver/modelserver/internal/crypto"
 	"github.com/modelserver/modelserver/internal/types"
 )
 
 // ChannelRouter matches requests to channels using route rules.
+// Decrypted channel API keys are cached in memory to avoid per-request decryption.
 type ChannelRouter struct {
-	channels   []types.Channel
-	channelMap map[string]*types.Channel
-	routes     []types.ChannelRoute
+	mu            sync.RWMutex
+	channels      []types.Channel
+	channelMap    map[string]*types.Channel
+	routes        []types.ChannelRoute
+	decryptedKeys map[string]string // channelID → plaintext API key
 }
 
 // NewChannelRouter creates a channel router with the given channels and routes.
-func NewChannelRouter(channels []types.Channel, routes []types.ChannelRoute) *ChannelRouter {
+// Decrypts all channel API keys at construction time.
+func NewChannelRouter(channels []types.Channel, routes []types.ChannelRoute, encKey []byte, logger *slog.Logger) *ChannelRouter {
 	cm := make(map[string]*types.Channel, len(channels))
 	for i := range channels {
 		cm[channels[i].ID] = &channels[i]
 	}
+	keys := decryptChannelKeys(channels, encKey, logger)
 	return &ChannelRouter{
-		channels:   channels,
-		channelMap: cm,
-		routes:     routes,
+		channels:      channels,
+		channelMap:    cm,
+		routes:        routes,
+		decryptedKeys: keys,
 	}
+}
+
+// Reload replaces the channels and routes atomically, re-decrypting all keys.
+func (cr *ChannelRouter) Reload(channels []types.Channel, routes []types.ChannelRoute, encKey []byte, logger *slog.Logger) {
+	cm := make(map[string]*types.Channel, len(channels))
+	for i := range channels {
+		cm[channels[i].ID] = &channels[i]
+	}
+	keys := decryptChannelKeys(channels, encKey, logger)
+	cr.mu.Lock()
+	cr.channels = channels
+	cr.channelMap = cm
+	cr.routes = routes
+	cr.decryptedKeys = keys
+	cr.mu.Unlock()
+}
+
+// GetChannelKey returns the decrypted API key for a channel, or empty string if not found.
+func (cr *ChannelRouter) GetChannelKey(channelID string) string {
+	cr.mu.RLock()
+	defer cr.mu.RUnlock()
+	return cr.decryptedKeys[channelID]
 }
 
 // MatchChannels returns the channels to use for a given project + model.
 func (cr *ChannelRouter) MatchChannels(projectID, model string) []types.Channel {
+	cr.mu.RLock()
+	defer cr.mu.RUnlock()
+
 	if ch := cr.matchRoutes(projectID, model); len(ch) > 0 {
 		return ch
 	}
@@ -43,6 +77,26 @@ func (cr *ChannelRouter) MatchChannels(projectID, model string) []types.Channel 
 		}
 	}
 	return result
+}
+
+// ActiveModels returns all supported models from active channels.
+func (cr *ChannelRouter) ActiveModels() []string {
+	cr.mu.RLock()
+	defer cr.mu.RUnlock()
+
+	seen := make(map[string]bool)
+	var models []string
+	for _, ch := range cr.channels {
+		if ch.Status == types.ChannelStatusActive {
+			for _, m := range ch.SupportedModels {
+				if !seen[m] {
+					seen[m] = true
+					models = append(models, m)
+				}
+			}
+		}
+	}
+	return models
 }
 
 func (cr *ChannelRouter) matchRoutes(projectID, model string) []types.Channel {
@@ -135,4 +189,26 @@ func weightedRandom(channels []types.Channel) *types.Channel {
 		}
 	}
 	return &channels[0]
+}
+
+// decryptChannelKeys decrypts all channel API keys and returns a map of channelID → plaintext.
+func decryptChannelKeys(channels []types.Channel, encKey []byte, logger *slog.Logger) map[string]string {
+	keys := make(map[string]string, len(channels))
+	if len(encKey) == 0 {
+		return keys
+	}
+	for _, ch := range channels {
+		if len(ch.APIKeyEncrypted) == 0 {
+			continue
+		}
+		plaintext, err := crypto.Decrypt(encKey, ch.APIKeyEncrypted)
+		if err != nil {
+			if logger != nil {
+				logger.Error("failed to decrypt channel key at load time", "channel_id", ch.ID, "error", err)
+			}
+			continue
+		}
+		keys[ch.ID] = string(plaintext)
+	}
+	return keys
 }

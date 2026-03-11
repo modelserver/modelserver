@@ -27,6 +27,7 @@ type Channel struct {
 	SelectionPriority int       `json:"selection_priority"`
 	Status            string    `json:"status"`
 	MaxConcurrent     int       `json:"max_concurrent"`
+	TestModel         string    `json:"test_model,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }

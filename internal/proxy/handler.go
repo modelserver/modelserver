@@ -13,7 +13,6 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/modelserver/modelserver/internal/collector"
 	"github.com/modelserver/modelserver/internal/config"
-	"github.com/modelserver/modelserver/internal/crypto"
 	"github.com/modelserver/modelserver/internal/ratelimit"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
@@ -84,9 +83,9 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	channelAPIKey, err := crypto.Decrypt(h.encryptionKey, channel.APIKeyEncrypted)
-	if err != nil {
-		h.logger.Error("failed to decrypt channel key", "channel_id", channel.ID, "error", err)
+	channelAPIKey := h.channelRouter.GetChannelKey(channel.ID)
+	if channelAPIKey == "" {
+		h.logger.Error("no decrypted key for channel", "channel_id", channel.ID)
 		writeProxyError(w, http.StatusInternalServerError, "channel configuration error")
 		return
 	}
@@ -117,7 +116,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 
 	proxy := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
-			directorSetUpstream(req, channel.BaseURL, string(channelAPIKey))
+			directorSetUpstream(req, channel.BaseURL, channelAPIKey)
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -203,7 +202,7 @@ func (h *Handler) interceptNonStreaming(resp *http.Response, project *types.Proj
 	logger.Info("request completed", "input_tokens", usage.InputTokens, "output_tokens", usage.OutputTokens, "credits", credits, "duration_ms", duration)
 
 	if h.rateLimiter != nil {
-		h.rateLimiter.PostRecord(context.Background(), apiKey.ID, model, types.TokenUsage{
+		h.rateLimiter.PostRecord(context.Background(), project.ID, apiKey.ID, model, types.TokenUsage{
 			InputTokens:         usage.InputTokens,
 			OutputTokens:        usage.OutputTokens,
 			CacheCreationTokens: usage.CacheCreationInputTokens,
@@ -250,7 +249,7 @@ func (h *Handler) interceptStreaming(resp *http.Response, project *types.Project
 			"credits", credits, "duration_ms", duration, "ttft_ms", ttft)
 
 		if h.rateLimiter != nil {
-			h.rateLimiter.PostRecord(context.Background(), apiKey.ID, model, types.TokenUsage{
+			h.rateLimiter.PostRecord(context.Background(), project.ID, apiKey.ID, model, types.TokenUsage{
 				InputTokens:         usage.InputTokens,
 				OutputTokens:        usage.OutputTokens,
 				CacheCreationTokens: usage.CacheCreationInputTokens,

@@ -12,9 +12,9 @@ import (
 )
 
 // MountRoutes mounts all proxy routes onto the given router.
-func MountRoutes(r chi.Router, st *store.Store, handler *Handler, traceCfg config.TraceConfig, limiter ratelimit.RateLimiter, logger *slog.Logger) {
+func MountRoutes(r chi.Router, st *store.Store, handler *Handler, traceCfg config.TraceConfig, limiter ratelimit.RateLimiter, encKey []byte, logger *slog.Logger) {
 	r.Route("/v1", func(r chi.Router) {
-		r.Use(AuthMiddleware(st))
+		r.Use(AuthMiddleware(st, encKey))
 		r.Use(TraceMiddleware(traceCfg))
 		if limiter != nil {
 			r.Use(RateLimitMiddleware(limiter, logger))
@@ -38,17 +38,7 @@ func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 	if len(apiKey.AllowedModels) > 0 {
 		models = apiKey.AllowedModels
 	} else {
-		seen := make(map[string]bool)
-		for _, ch := range h.channelRouter.channels {
-			if ch.Status == "active" {
-				for _, m := range ch.SupportedModels {
-					if !seen[m] {
-						seen[m] = true
-						models = append(models, m)
-					}
-				}
-			}
-		}
+		models = h.channelRouter.ActiveModels()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
