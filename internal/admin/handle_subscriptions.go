@@ -6,7 +6,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/modelserver/modelserver/internal/store"
-	"github.com/modelserver/modelserver/internal/types"
 )
 
 func handleListSubscriptions(st *store.Store) http.HandlerFunc {
@@ -38,9 +37,12 @@ func handleCreateSubscription(st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		plans := types.PredefinedPlans()
-		plan, ok := plans[body.PlanName]
-		if !ok {
+		plan, err := st.GetPlanBySlug(body.PlanName)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to look up plan")
+			return
+		}
+		if plan == nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "unknown plan: "+body.PlanName)
 			return
 		}
@@ -58,7 +60,7 @@ func handleCreateSubscription(st *store.Store) http.HandlerFunc {
 			}
 		}
 
-		sub, err := st.CreateSubscriptionFromPlan(projectID, body.PlanName, plan, startsAt, expiresAt)
+		sub, err := st.CreateSubscriptionFromPlan(projectID, plan, startsAt, expiresAt)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to create subscription: "+err.Error())
 			return

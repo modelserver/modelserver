@@ -20,6 +20,7 @@ type Project struct {
 	CreatedBy   string          `json:"created_by"`
 	Status      string          `json:"status"`
 	Settings    json.RawMessage `json:"settings,omitempty"`
+	BillingTag  string          `json:"billing_tag,omitempty"`
 	CreatedAt   time.Time       `json:"created_at"`
 	UpdatedAt   time.Time       `json:"updated_at"`
 }

@@ -73,3 +73,20 @@ cors:
   # An empty list disables CORS permitting only same-origin requests.
   allowed_origins:
     - "https://app.example.com"
+
+billing:
+  # HMAC-SHA256 secret used to verify payment webhook signatures.
+  # Can also be set via MODELSERVER_BILLING_WEBHOOK_SECRET environment variable.
+  webhook_secret: ""
+  # Base URL of the external payment provider API.
+  # Can also be set via MODELSERVER_BILLING_PAYMENT_API_URL environment variable.
+  payment_api_url: ""
+  # API key / bearer token for the external payment provider.
+  # Can also be set via MODELSERVER_BILLING_PAYMENT_API_KEY environment variable.
+  payment_api_key: ""
+  # URL the payment provider will call when a payment is completed.
+  # Can also be set via MODELSERVER_BILLING_NOTIFY_URL environment variable.
+  notify_url: ""
+  # URL the user is redirected to after completing payment.
+  # Can also be set via MODELSERVER_BILLING_RETURN_URL environment variable.
+  return_url: ""

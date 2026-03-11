@@ -18,6 +18,7 @@ type Config struct {
 	Collector  CollectorConfig  `yaml:"collector"`
 	Log        LogConfig        `yaml:"log"`
 	CORS       CORSConfig       `yaml:"cors"`
+	Billing    BillingConfig    `yaml:"billing"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -89,6 +90,15 @@ type LogConfig struct {
 // CORSConfig holds Cross-Origin Resource Sharing settings.
 type CORSConfig struct {
 	AllowedOrigins []string `yaml:"allowed_origins"`
+}
+
+// BillingConfig holds settings for the billing and payment integration.
+type BillingConfig struct {
+	WebhookSecret string `yaml:"webhook_secret"`
+	PaymentAPIURL string `yaml:"payment_api_url"`
+	PaymentAPIKey string `yaml:"payment_api_key"`
+	NotifyURL     string `yaml:"notify_url"`
+	ReturnURL     string `yaml:"return_url"`
 }
 
 // defaults returns a Config populated with all default values.
@@ -166,5 +176,20 @@ func (c *Config) ApplyEnvOverrides() {
 	}
 	if v := os.Getenv("MODELSERVER_ENCRYPTION_KEY"); v != "" {
 		c.Encryption.Key = v
+	}
+	if v := os.Getenv("MODELSERVER_BILLING_WEBHOOK_SECRET"); v != "" {
+		c.Billing.WebhookSecret = v
+	}
+	if v := os.Getenv("MODELSERVER_BILLING_PAYMENT_API_URL"); v != "" {
+		c.Billing.PaymentAPIURL = v
+	}
+	if v := os.Getenv("MODELSERVER_BILLING_PAYMENT_API_KEY"); v != "" {
+		c.Billing.PaymentAPIKey = v
+	}
+	if v := os.Getenv("MODELSERVER_BILLING_NOTIFY_URL"); v != "" {
+		c.Billing.NotifyURL = v
+	}
+	if v := os.Getenv("MODELSERVER_BILLING_RETURN_URL"); v != "" {
+		c.Billing.ReturnURL = v
 	}
 }

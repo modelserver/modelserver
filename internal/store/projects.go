@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -15,11 +16,16 @@ func (s *Store) CreateProject(p *types.Project) error {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 
+	settings := p.Settings
+	if len(settings) == 0 {
+		settings = json.RawMessage(`{}`)
+	}
+
 	err = tx.QueryRow(`
-		INSERT INTO projects (name, slug, description, created_by, status, settings)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO projects (name, slug, description, created_by, status, settings, billing_tag)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, created_at, updated_at`,
-		p.Name, p.Slug, nullString(p.Description), p.CreatedBy, p.Status, p.Settings,
+		p.Name, p.Slug, nullString(p.Description), p.CreatedBy, p.Status, settings, p.BillingTag,
 	).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		tx.Rollback()
@@ -41,9 +47,9 @@ func (s *Store) CreateProject(p *types.Project) error {
 func (s *Store) GetProjectByID(id string) (*types.Project, error) {
 	p := &types.Project{}
 	err := s.db.QueryRow(`
-		SELECT id, name, slug, COALESCE(description, ''), created_by, status, settings, created_at, updated_at
+		SELECT id, name, slug, COALESCE(description, ''), created_by, status, settings, COALESCE(billing_tag, ''), created_at, updated_at
 		FROM projects WHERE id = $1`, id,
-	).Scan(&p.ID, &p.Name, &p.Slug, &p.Description, &p.CreatedBy, &p.Status, &p.Settings, &p.CreatedAt, &p.UpdatedAt)
+	).Scan(&p.ID, &p.Name, &p.Slug, &p.Description, &p.CreatedBy, &p.Status, &p.Settings, &p.BillingTag, &p.CreatedAt, &p.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -57,9 +63,9 @@ func (s *Store) GetProjectByID(id string) (*types.Project, error) {
 func (s *Store) GetProjectBySlug(slug string) (*types.Project, error) {
 	p := &types.Project{}
 	err := s.db.QueryRow(`
-		SELECT id, name, slug, COALESCE(description, ''), created_by, status, settings, created_at, updated_at
+		SELECT id, name, slug, COALESCE(description, ''), created_by, status, settings, COALESCE(billing_tag, ''), created_at, updated_at
 		FROM projects WHERE slug = $1`, slug,
-	).Scan(&p.ID, &p.Name, &p.Slug, &p.Description, &p.CreatedBy, &p.Status, &p.Settings, &p.CreatedAt, &p.UpdatedAt)
+	).Scan(&p.ID, &p.Name, &p.Slug, &p.Description, &p.CreatedBy, &p.Status, &p.Settings, &p.BillingTag, &p.CreatedAt, &p.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -81,7 +87,7 @@ func (s *Store) ListUserProjects(userID string, p types.PaginationParams) ([]typ
 	}
 
 	rows, err := s.db.Query(fmt.Sprintf(`
-		SELECT p.id, p.name, p.slug, COALESCE(p.description, ''), p.created_by, p.status, p.settings, p.created_at, p.updated_at
+		SELECT p.id, p.name, p.slug, COALESCE(p.description, ''), p.created_by, p.status, p.settings, COALESCE(p.billing_tag, ''), p.created_at, p.updated_at
 		FROM projects p
 		JOIN project_members pm ON p.id = pm.project_id
 		WHERE pm.user_id = $1
@@ -98,10 +104,47 @@ func (s *Store) ListUserProjects(userID string, p types.PaginationParams) ([]typ
 	for rows.Next() {
 		var proj types.Project
 		if err := rows.Scan(&proj.ID, &proj.Name, &proj.Slug, &proj.Description, &proj.CreatedBy,
-			&proj.Status, &proj.Settings, &proj.CreatedAt, &proj.UpdatedAt); err != nil {
+			&proj.Status, &proj.Settings, &proj.BillingTag, &proj.CreatedAt, &proj.UpdatedAt); err != nil {
 			return nil, 0, fmt.Errorf("scan project: %w", err)
 		}
 		projects = append(projects, proj)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate projects: %w", err)
+	}
+	return projects, total, nil
+}
+
+// ListAllProjects returns all projects with pagination (for superadmin).
+func (s *Store) ListAllProjects(p types.PaginationParams) ([]types.Project, int, error) {
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM projects`).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count projects: %w", err)
+	}
+
+	rows, err := s.db.Query(fmt.Sprintf(`
+		SELECT id, name, slug, COALESCE(description, ''), created_by, status, settings, COALESCE(billing_tag, ''), created_at, updated_at
+		FROM projects
+		ORDER BY %s %s LIMIT $1 OFFSET $2`,
+		sanitizeSort(p.Sort, "created_at"), sanitizeOrder(p.Order)),
+		p.Limit(), p.Offset(),
+	)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list all projects: %w", err)
+	}
+	defer rows.Close()
+
+	var projects []types.Project
+	for rows.Next() {
+		var proj types.Project
+		if err := rows.Scan(&proj.ID, &proj.Name, &proj.Slug, &proj.Description, &proj.CreatedBy,
+			&proj.Status, &proj.Settings, &proj.BillingTag, &proj.CreatedAt, &proj.UpdatedAt); err != nil {
+			return nil, 0, fmt.Errorf("scan project: %w", err)
+		}
+		projects = append(projects, proj)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate projects: %w", err)
 	}
 	return projects, total, nil
 }
@@ -173,6 +216,9 @@ func (s *Store) ListProjectMembers(projectID string) ([]types.ProjectMember, err
 		}
 		m.User = &u
 		members = append(members, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate members: %w", err)
 	}
 	return members, nil
 }
