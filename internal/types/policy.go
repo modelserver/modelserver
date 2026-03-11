@@ -102,88 +102,19 @@ type ClassicRule struct {
 
 // Subscription binds a project to a plan with a time range.
 type Subscription struct {
-	ID        string     `json:"id"`
-	ProjectID string     `json:"project_id"`
-	PlanName  string     `json:"plan_name"` // "pro", "max_5x", "max_20x", or custom
-	PolicyID  string     `json:"policy_id"`
-	Status    string     `json:"status"`
-	StartsAt  time.Time  `json:"starts_at"`
-	ExpiresAt time.Time  `json:"expires_at"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	ID        string    `json:"id"`
+	ProjectID string    `json:"project_id"`
+	PlanID    string    `json:"plan_id,omitempty"`
+	PlanName  string    `json:"plan_name"` // "pro", "max_5x", "max_20x", or custom
+	Status    string    `json:"status"`
+	StartsAt  time.Time `json:"starts_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // IsActive returns true if the subscription is currently active.
 func (s *Subscription) IsActive() bool {
 	now := time.Now()
 	return s.Status == SubscriptionStatusActive && !now.Before(s.StartsAt) && !now.After(s.ExpiresAt)
-}
-
-// PredefinedPlan holds the template data for a plan.
-type PredefinedPlan struct {
-	Name             string
-	CreditRules      []CreditRule
-	ModelCreditRates map[string]CreditRate
-	ClassicRules     []ClassicRule
-}
-
-// DefaultModelCreditRates returns the standard rates matching Claude subscription pricing.
-func DefaultModelCreditRates() map[string]CreditRate {
-	return map[string]CreditRate{
-		"claude-opus-4": {
-			InputRate:         0.667,
-			OutputRate:        3.333,
-			CacheCreationRate: 0.667,
-			CacheReadRate:     0.667,
-		},
-		"claude-sonnet-4": {
-			InputRate:         0.4,
-			OutputRate:        2.0,
-			CacheCreationRate: 0.4,
-			CacheReadRate:     0.4,
-		},
-		"claude-haiku-4-5": {
-			InputRate:         0.133,
-			OutputRate:        0.667,
-			CacheCreationRate: 0.133,
-			CacheReadRate:     0.133,
-		},
-		"_default": {
-			InputRate:         0.4,
-			OutputRate:        2.0,
-			CacheCreationRate: 0.4,
-			CacheReadRate:     0.4,
-		},
-	}
-}
-
-// PredefinedPlans returns the built-in plan templates.
-func PredefinedPlans() map[string]PredefinedPlan {
-	rates := DefaultModelCreditRates()
-	return map[string]PredefinedPlan{
-		PlanPro: {
-			Name: "Pro",
-			CreditRules: []CreditRule{
-				{Window: "5h", WindowType: "sliding", MaxCredits: 550_000, Scope: CreditScopeProject},
-				{Window: "1w", WindowType: "calendar", MaxCredits: 5_000_000, Scope: CreditScopeProject},
-			},
-			ModelCreditRates: rates,
-		},
-		PlanMax5x: {
-			Name: "Max 5x",
-			CreditRules: []CreditRule{
-				{Window: "5h", WindowType: "sliding", MaxCredits: 3_300_000, Scope: CreditScopeProject},
-				{Window: "1w", WindowType: "calendar", MaxCredits: 41_666_700, Scope: CreditScopeProject},
-			},
-			ModelCreditRates: rates,
-		},
-		PlanMax20x: {
-			Name: "Max 20x",
-			CreditRules: []CreditRule{
-				{Window: "5h", WindowType: "sliding", MaxCredits: 11_000_000, Scope: CreditScopeProject},
-				{Window: "1w", WindowType: "calendar", MaxCredits: 83_333_300, Scope: CreditScopeProject},
-			},
-			ModelCreditRates: rates,
-		},
-	}
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/modelserver/modelserver/internal/crypto"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
@@ -54,13 +55,47 @@ func SubscriptionFromContext(ctx context.Context) *types.Subscription {
 }
 
 // AuthMiddleware validates the API key and loads the associated project, policy, and subscription.
-func AuthMiddleware(st *store.Store) func(http.Handler) http.Handler {
+// If an encryption key is provided, it first validates the embedded HMAC checksum
+// to reject malformed keys without hitting the database.
+//
+// Supported key formats:
+//   - New (base64url): "ms-" + 48 base64url chars (32 random + 4 checksum bytes)
+//   - Legacy (hex):    "ms-" + 72 hex chars (64 random + 8 checksum hex)
+//   - Old legacy:      "ms-" + 64 hex chars (no checksum, falls through to DB)
+func AuthMiddleware(st *store.Store, encKey []byte) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rawKey := extractAPIKey(r)
 			if rawKey == "" {
 				writeProxyError(w, http.StatusUnauthorized, "missing api key")
 				return
+			}
+
+			// Pre-DB validation: verify embedded HMAC checksum to reject brute-force attempts.
+			if len(encKey) > 0 && strings.HasPrefix(rawKey, types.APIKeyPrefix) {
+				keyBody := rawKey[len(types.APIKeyPrefix):]
+				bodyLen := len(keyBody)
+
+				switch {
+				case bodyLen == 48:
+					// New format (base64url): 36 raw bytes → 48 base64url chars.
+					if !crypto.ValidateAPIKeyChecksum(encKey, keyBody) {
+						writeProxyError(w, http.StatusUnauthorized, "invalid api key")
+						return
+					}
+				case bodyLen == 72:
+					// Legacy hex format with checksum: 64 random hex + 8 checksum hex.
+					if !crypto.ValidateAPIKeyChecksumHex(encKey, keyBody) {
+						writeProxyError(w, http.StatusUnauthorized, "invalid api key")
+						return
+					}
+				case bodyLen == 64:
+					// Old legacy hex format without checksum — skip pre-check, fall through to DB.
+				default:
+					// Invalid length — reject immediately.
+					writeProxyError(w, http.StatusUnauthorized, "invalid api key")
+					return
+				}
 			}
 
 			hash := sha256.Sum256([]byte(rawKey))
@@ -107,8 +142,11 @@ func AuthMiddleware(st *store.Store) func(http.Handler) http.Handler {
 			if policy == nil {
 				// Try loading active subscription for this project.
 				subscription, _ = st.GetActiveSubscription(project.ID)
-				if subscription != nil {
-					policy, _ = st.GetPolicyByID(subscription.PolicyID)
+				if subscription != nil && subscription.PlanID != "" {
+					plan, _ := st.GetPlanByID(subscription.PlanID)
+					if plan != nil {
+						policy = plan.ToPolicy(project.ID)
+					}
 				}
 			}
 
