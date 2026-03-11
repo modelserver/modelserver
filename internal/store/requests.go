@@ -83,6 +83,9 @@ func (s *Store) ListRequests(projectID string, p types.PaginationParams, filters
 		}
 		requests = append(requests, r)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 	return requests, total, nil
 }
 

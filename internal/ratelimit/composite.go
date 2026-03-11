@@ -77,9 +77,10 @@ func (c *CompositeRateLimiter) PreCheck(ctx context.Context, projectID, apiKeyID
 }
 
 // PostRecord records actual usage and invalidates caches.
-func (c *CompositeRateLimiter) PostRecord(ctx context.Context, apiKeyID, model string, usage types.TokenUsage) {
+func (c *CompositeRateLimiter) PostRecord(ctx context.Context, projectID, apiKeyID, model string, usage types.TokenUsage) {
 	c.classic.Record(apiKeyID, model, usage)
 	c.cache.invalidatePrefix(apiKeyID)
+	c.cache.invalidatePrefix("p:" + projectID)
 }
 
 // windowStartTime returns the start of the current window.

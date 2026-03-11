@@ -98,6 +98,9 @@ func (s *Store) ListAPIKeys(projectID string, p types.PaginationParams) ([]types
 		}
 		keys = append(keys, k)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 	return keys, total, nil
 }
 

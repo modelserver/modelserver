@@ -29,5 +29,12 @@ services:
       postgres:
         condition: service_healthy
 
+  dashboard:
+    build: ./dashboard
+    ports:
+      - "3000:80"
+    depends_on:
+      - modelserver
+
 volumes:
   pgdata:

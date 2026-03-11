@@ -3,10 +3,12 @@ package admin
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/modelserver/modelserver/internal/crypto"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
@@ -24,7 +26,7 @@ func handleListKeys(st *store.Store) http.HandlerFunc {
 	}
 }
 
-func handleCreateKey(st *store.Store) http.HandlerFunc {
+func handleCreateKey(st *store.Store, encKey []byte) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "projectID")
 		user := UserFromContext(r.Context())
@@ -43,13 +45,21 @@ func handleCreateKey(st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		// Generate a random API key.
-		rawBytes := make([]byte, 32)
-		if _, err := rand.Read(rawBytes); err != nil {
+		// Generate 32 random bytes.
+		randomBytes := make([]byte, crypto.APIKeyRandomLen)
+		if _, err := rand.Read(randomBytes); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to generate key")
 			return
 		}
-		plaintext := types.APIKeyPrefix + hex.EncodeToString(rawBytes)
+
+		// Compute 4-byte HMAC checksum over the random bytes.
+		checksum := crypto.ComputeAPIKeyChecksum(encKey, randomBytes)
+
+		// Concatenate random + checksum and encode as base64url (no padding).
+		combined := append(randomBytes, checksum...)
+		keyBody := base64.RawURLEncoding.EncodeToString(combined)
+
+		plaintext := types.APIKeyPrefix + keyBody // ms- + 48 base64url chars
 		hash := sha256.Sum256([]byte(plaintext))
 
 		key := &types.APIKey{

@@ -102,6 +102,9 @@ func (s *Store) ListUsers(p types.PaginationParams) ([]types.User, int, error) {
 		}
 		users = append(users, u)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate users: %w", err)
+	}
 	return users, total, nil
 }
 

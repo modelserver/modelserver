@@ -5,12 +5,19 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/modelserver/modelserver/internal/auth"
+	"github.com/modelserver/modelserver/internal/billing"
 	"github.com/modelserver/modelserver/internal/config"
 	"github.com/modelserver/modelserver/internal/store"
 )
 
 // MountRoutes mounts all admin API routes onto the given router.
 func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byte, jwtMgr *auth.JWTManager) {
+	// Construct payment client if configured.
+	var payClient billing.PaymentClient
+	if cfg.Billing.PaymentAPIURL != "" {
+		payClient = billing.NewHTTPPaymentClient(cfg.Billing.PaymentAPIURL, cfg.Billing.PaymentAPIKey)
+	}
+
 	r.Route("/api/v1", func(r chi.Router) {
 		// Public auth endpoints.
 		r.Post("/auth/login", handleLogin(st, jwtMgr, cfg.Auth))
@@ -22,6 +29,14 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 		r.Post("/auth/oauth/github", handleOAuthCallback(st, jwtMgr, cfg, "github"))
 		r.Post("/auth/oauth/google", handleOAuthCallback(st, jwtMgr, cfg, "google"))
 		r.Post("/auth/oauth/oidc", handleOAuthCallback(st, jwtMgr, cfg, "oidc"))
+
+		// Billing webhook (HMAC auth, not JWT).
+		if cfg.Billing.WebhookSecret != "" {
+			r.Route("/billing/webhook", func(r chi.Router) {
+				r.Use(billing.HMACAuthMiddleware(cfg.Billing.WebhookSecret))
+				r.Post("/delivery", handleDeliveryWebhook(st))
+			})
+		}
 
 		// Authenticated endpoints.
 		r.Group(func(r chi.Router) {
@@ -37,6 +52,18 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 				r.Get("/", handleListUsers(st))
 				r.Get("/{userID}", handleGetUser(st))
 				r.Put("/{userID}", handleUpdateUser(st))
+			})
+
+			// Plans (superadmin only).
+			r.Route("/plans", func(r chi.Router) {
+				r.Use(RequireSuperadmin)
+				r.Get("/", handleListPlans(st))
+				r.Post("/", handleCreatePlan(st))
+				r.Route("/{planID}", func(r chi.Router) {
+					r.Get("/", handleGetPlan(st))
+					r.Put("/", handleUpdatePlan(st))
+					r.Delete("/", handleDeletePlan(st))
+				})
 			})
 
 			// Projects.
@@ -57,7 +84,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 
 					// API Keys.
 					r.Get("/keys", handleListKeys(st))
-					r.Post("/keys", handleCreateKey(st))
+					r.Post("/keys", handleCreateKey(st, encKey))
 					r.Route("/keys/{keyID}", func(r chi.Router) {
 						r.Get("/", handleGetKey(st))
 						r.Put("/", handleUpdateKey(st))
@@ -80,6 +107,12 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 						r.Put("/", handleUpdateSubscription(st))
 					})
 
+					// Available plans & Orders.
+					r.Get("/available-plans", handleListAvailablePlans(st))
+					r.Get("/orders", handleListOrders(st))
+					r.Post("/orders", handleCreateOrder(st, payClient, cfg.Billing))
+					r.Get("/orders/{orderID}", handleGetOrder(st))
+
 					// Requests & Usage.
 					r.Get("/requests", handleListRequests(st))
 					r.Get("/usage", handleGetUsage(st))
@@ -97,10 +130,12 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 				r.Use(RequireSuperadmin)
 				r.Get("/", handleListChannels(st, encKey))
 				r.Post("/", handleCreateChannel(st, encKey))
+				r.Get("/stats", handleChannelStats(st))
 				r.Route("/{channelID}", func(r chi.Router) {
 					r.Get("/", handleGetChannel(st))
 					r.Put("/", handleUpdateChannel(st, encKey))
 					r.Delete("/", handleDeleteChannel(st))
+					r.Post("/test", handleTestChannel(st, encKey))
 				})
 			})
 

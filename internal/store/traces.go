@@ -65,6 +65,9 @@ func (s *Store) ListTraces(projectID string, p types.PaginationParams) ([]types.
 		}
 		traces = append(traces, t)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 	return traces, total, nil
 }
 
@@ -120,6 +123,9 @@ func (s *Store) ListThreads(projectID string, p types.PaginationParams) ([]types
 			return nil, 0, err
 		}
 		threads = append(threads, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
 	}
 	return threads, total, nil
 }

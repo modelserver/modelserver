@@ -40,7 +40,9 @@ func (s *Store) GetPolicyByID(id string) (*types.RateLimitPolicy, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get policy: %w", err)
 	}
-	unmarshalPolicyJSON(p, creditRules, rates, classic)
+	if err := unmarshalPolicyJSON(p, creditRules, rates, classic); err != nil {
+		return nil, fmt.Errorf("get policy: %w", err)
+	}
 	return p, nil
 }
 
@@ -61,7 +63,9 @@ func (s *Store) GetDefaultPolicy(projectID string) (*types.RateLimitPolicy, erro
 	if err != nil {
 		return nil, fmt.Errorf("get default policy: %w", err)
 	}
-	unmarshalPolicyJSON(p, creditRules, rates, classic)
+	if err := unmarshalPolicyJSON(p, creditRules, rates, classic); err != nil {
+		return nil, fmt.Errorf("get default policy: %w", err)
+	}
 	return p, nil
 }
 
@@ -86,8 +90,13 @@ func (s *Store) ListPolicies(projectID string) ([]types.RateLimitPolicy, error) 
 			&p.StartsAt, &p.ExpiresAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
-		unmarshalPolicyJSON(&p, creditRules, rates, classic)
+		if err := unmarshalPolicyJSON(&p, creditRules, rates, classic); err != nil {
+			return nil, err
+		}
 		policies = append(policies, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return policies, nil
 }
@@ -106,14 +115,21 @@ func (s *Store) DeletePolicy(id string) error {
 	return err
 }
 
-func unmarshalPolicyJSON(p *types.RateLimitPolicy, creditRules, rates, classic []byte) {
+func unmarshalPolicyJSON(p *types.RateLimitPolicy, creditRules, rates, classic []byte) error {
 	if creditRules != nil {
-		json.Unmarshal(creditRules, &p.CreditRules)
+		if err := json.Unmarshal(creditRules, &p.CreditRules); err != nil {
+			return fmt.Errorf("unmarshal credit_rules: %w", err)
+		}
 	}
 	if rates != nil {
-		json.Unmarshal(rates, &p.ModelCreditRates)
+		if err := json.Unmarshal(rates, &p.ModelCreditRates); err != nil {
+			return fmt.Errorf("unmarshal model_credit_rates: %w", err)
+		}
 	}
 	if classic != nil {
-		json.Unmarshal(classic, &p.ClassicRules)
+		if err := json.Unmarshal(classic, &p.ClassicRules); err != nil {
+			return fmt.Errorf("unmarshal classic_rules: %w", err)
+		}
 	}
+	return nil
 }

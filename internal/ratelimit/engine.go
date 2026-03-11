@@ -14,7 +14,7 @@ type RateLimiter interface {
 	PreCheck(ctx context.Context, projectID, apiKeyID, model string, policy *types.RateLimitPolicy) (bool, time.Duration, error)
 
 	// PostRecord records actual usage after a response completes.
-	PostRecord(ctx context.Context, apiKeyID, model string, usage types.TokenUsage)
+	PostRecord(ctx context.Context, projectID, apiKeyID, model string, usage types.TokenUsage)
 }
 
 // CreditWindowStatus shows credit usage for a time window.

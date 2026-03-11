@@ -80,17 +80,36 @@ func handleRegister(st *store.Store, jwtMgr *auth.JWTManager, authCfg config.Aut
 			return
 		}
 
+		// First registered user becomes superadmin.
+		isFirst := false
+		if exists, err := st.UserExists(); err == nil && !exists {
+			isFirst = true
+		}
+
 		user := &types.User{
 			Email:        body.Email,
 			PasswordHash: string(hash),
 			Name:         body.Name,
+			IsSuperadmin: isFirst,
 			MaxProjects:  5,
 			Status:       types.UserStatusActive,
+		}
+		if isFirst {
+			user.MaxProjects = 100
 		}
 		if err := st.CreateUser(user); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to create user")
 			return
 		}
+
+		// Auto-create default project for new user.
+		project := &types.Project{
+			Name:      "Default Project",
+			Slug:      "default-" + user.ID[:8],
+			CreatedBy: user.ID,
+			Status:    types.ProjectStatusActive,
+		}
+		_ = st.CreateProject(project)
 
 		issueTokens(w, jwtMgr, user)
 	}
@@ -161,6 +180,15 @@ func handleInitialize(st *store.Store, jwtMgr *auth.JWTManager) http.HandlerFunc
 			writeError(w, http.StatusInternalServerError, "internal", "failed to create user")
 			return
 		}
+
+		// Auto-create default project for superadmin.
+		project := &types.Project{
+			Name:      "Default Project",
+			Slug:      "default-" + user.ID[:8],
+			CreatedBy: user.ID,
+			Status:    types.ProjectStatusActive,
+		}
+		_ = st.CreateProject(project)
 
 		issueTokens(w, jwtMgr, user)
 	}
@@ -260,11 +288,14 @@ func handleOAuthCallback(st *store.Store, jwtMgr *auth.JWTManager, cfg *config.C
 			user, _ = st.GetUserByEmail(info.Email)
 			if user != nil {
 				// Link OAuth to existing email account.
-				st.UpdateUser(user.ID, map[string]interface{}{
+				if err := st.UpdateUser(user.ID, map[string]interface{}{
 					"oauth_provider": info.Provider,
 					"oauth_id":       info.ProviderID,
 					"avatar_url":     info.AvatarURL,
-				})
+				}); err != nil {
+					// Non-fatal: log and continue with login.
+					_ = err
+				}
 			}
 		}
 

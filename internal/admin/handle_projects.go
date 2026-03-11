@@ -1,7 +1,11 @@
 package admin
 
 import (
+	"log"
 	"net/http"
+	"regexp"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/modelserver/modelserver/internal/store"
@@ -18,9 +22,7 @@ func handleListProjects(st *store.Store) http.HandlerFunc {
 		var err error
 
 		if user.IsSuperadmin {
-			// Superadmins see all projects (reuse ListUserProjects with empty userID won't work,
-			// so we list the user's projects and note that superadmin access check is in middleware).
-			projects, total, err = st.ListUserProjects(user.ID, p)
+			projects, total, err = st.ListAllProjects(p)
 		} else {
 			projects, total, err = st.ListUserProjects(user.ID, p)
 		}
@@ -44,9 +46,12 @@ func handleCreateProject(st *store.Store) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
 			return
 		}
-		if body.Name == "" || body.Slug == "" {
-			writeError(w, http.StatusBadRequest, "bad_request", "name and slug are required")
+		if body.Name == "" {
+			writeError(w, http.StatusBadRequest, "bad_request", "name is required")
 			return
+		}
+		if body.Slug == "" {
+			body.Slug = slugify(body.Name)
 		}
 
 		// Check project limit.
@@ -70,8 +75,14 @@ func handleCreateProject(st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		// Add creator as owner.
-		st.AddProjectMember(project.ID, user.ID, types.RoleOwner)
+		// Auto-assign free plan subscription to the new project.
+		if freePlan, err := st.GetPlanBySlug("free"); err == nil && freePlan != nil && freePlan.IsActive {
+			now := time.Now()
+			expiresAt := now.AddDate(100, 0, 0) // Perpetual free tier.
+			if _, err := st.CreateSubscriptionFromPlan(project.ID, freePlan, now, expiresAt); err != nil {
+				log.Printf("WARN: failed to assign free plan to project %s: %v", project.ID, err)
+			}
+		}
 
 		writeData(w, http.StatusCreated, project)
 	}
@@ -99,7 +110,7 @@ func handleUpdateProject(st *store.Store) http.HandlerFunc {
 		}
 
 		updates := make(map[string]interface{})
-		for _, field := range []string{"name", "description", "status", "settings"} {
+		for _, field := range []string{"name", "description", "status", "settings", "billing_tag"} {
 			if v, ok := body[field]; ok {
 				updates[field] = v
 			}
@@ -196,4 +207,16 @@ func handleRemoveMember(st *store.Store) http.HandlerFunc {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+var nonAlphaNum = regexp.MustCompile(`[^a-z0-9]+`)
+
+func slugify(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = nonAlphaNum.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	if s == "" {
+		s = "project"
+	}
+	return s
 }
