@@ -25,6 +25,53 @@ type DailyUsage struct {
 	TotalCredits float64 `json:"total_credits"`
 }
 
+// ChannelUsageSummary holds aggregated usage data per channel.
+type ChannelUsageSummary struct {
+	ChannelID     string  `json:"channel_id"`
+	RequestCount  int64   `json:"request_count"`
+	InputTokens   int64   `json:"input_tokens"`
+	OutputTokens  int64   `json:"output_tokens"`
+	TotalCredits  float64 `json:"total_credits"`
+	AvgLatencyMs  float64 `json:"avg_latency_ms"`
+	SuccessCount  int64   `json:"success_count"`
+	ErrorCount    int64   `json:"error_count"`
+}
+
+// GetUsageByChannel returns usage aggregated by channel across all projects.
+func (s *Store) GetUsageByChannel(since, until time.Time) ([]ChannelUsageSummary, error) {
+	rows, err := s.db.Query(`
+		SELECT channel_id, COUNT(*) as request_count,
+			COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+			COALESCE(SUM(credits_consumed), 0), COALESCE(AVG(latency_ms), 0),
+			COUNT(*) FILTER (WHERE status = 'success'),
+			COUNT(*) FILTER (WHERE status != 'success')
+		FROM requests
+		WHERE channel_id IS NOT NULL AND created_at >= $1 AND created_at <= $2
+		GROUP BY channel_id
+		ORDER BY request_count DESC`,
+		since, until)
+	if err != nil {
+		return nil, fmt.Errorf("usage by channel: %w", err)
+	}
+	defer rows.Close()
+
+	var summaries []ChannelUsageSummary
+	for rows.Next() {
+		var u ChannelUsageSummary
+		if err := rows.Scan(&u.ChannelID, &u.RequestCount,
+			&u.InputTokens, &u.OutputTokens,
+			&u.TotalCredits, &u.AvgLatencyMs,
+			&u.SuccessCount, &u.ErrorCount); err != nil {
+			return nil, err
+		}
+		summaries = append(summaries, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return summaries, nil
+}
+
 // GetUsageByModel returns usage aggregated by model for a project.
 func (s *Store) GetUsageByModel(projectID string, since, until time.Time) ([]UsageSummary, error) {
 	rows, err := s.db.Query(`
@@ -51,6 +98,9 @@ func (s *Store) GetUsageByModel(projectID string, since, until time.Time) ([]Usa
 			return nil, err
 		}
 		summaries = append(summaries, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return summaries, nil
 }
@@ -89,6 +139,9 @@ func (s *Store) GetUsageByAPIKey(projectID string, since, until time.Time) ([]ma
 			"total_credits": credits,
 		})
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return results, nil
 }
 
@@ -114,6 +167,9 @@ func (s *Store) GetDailyUsage(projectID string, since, until time.Time) ([]Daily
 			return nil, err
 		}
 		daily = append(daily, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return daily, nil
 }

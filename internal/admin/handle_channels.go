@@ -1,7 +1,12 @@
 package admin
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/modelserver/modelserver/internal/crypto"
@@ -31,6 +36,7 @@ func handleCreateChannel(st *store.Store, encKey []byte) http.HandlerFunc {
 			Weight          int      `json:"weight"`
 			Priority        int      `json:"selection_priority"`
 			MaxConcurrent   int      `json:"max_concurrent"`
+			TestModel       string   `json:"test_model"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
@@ -62,6 +68,7 @@ func handleCreateChannel(st *store.Store, encKey []byte) http.HandlerFunc {
 			SelectionPriority: body.Priority,
 			Status:            types.ChannelStatusActive,
 			MaxConcurrent:     body.MaxConcurrent,
+			TestModel:         body.TestModel,
 		}
 
 		if err := st.CreateChannel(ch); err != nil {
@@ -93,7 +100,7 @@ func handleUpdateChannel(st *store.Store, encKey []byte) http.HandlerFunc {
 		}
 
 		updates := make(map[string]interface{})
-		for _, field := range []string{"name", "base_url", "provider", "supported_models", "weight", "selection_priority", "status", "max_concurrent"} {
+		for _, field := range []string{"name", "base_url", "provider", "supported_models", "weight", "selection_priority", "status", "max_concurrent", "test_model"} {
 			if v, ok := body[field]; ok {
 				updates[field] = v
 			}
@@ -134,7 +141,135 @@ func handleDeleteChannel(st *store.Store) http.HandlerFunc {
 	}
 }
 
-// --- Channel Routes ---
+func handleChannelStats(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		now := time.Now()
+		since := now.AddDate(0, 0, -30)
+		until := now
+
+		if v := r.URL.Query().Get("since"); v != "" {
+			if t, err := time.Parse(time.RFC3339, v); err == nil {
+				since = t
+			}
+		}
+		if v := r.URL.Query().Get("until"); v != "" {
+			if t, err := time.Parse(time.RFC3339, v); err == nil {
+				until = t
+			}
+		}
+
+		stats, err := st.GetUsageByChannel(since, until)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to get channel stats")
+			return
+		}
+		if stats == nil {
+			stats = []store.ChannelUsageSummary{}
+		}
+		writeData(w, http.StatusOK, stats)
+	}
+}
+
+func handleTestChannel(st *store.Store, encKey []byte) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		channelID := chi.URLParam(r, "channelID")
+		ch, err := st.GetChannelByID(channelID)
+		if err != nil || ch == nil {
+			writeError(w, http.StatusNotFound, "not_found", "channel not found")
+			return
+		}
+
+		apiKey, err := crypto.Decrypt(encKey, ch.APIKeyEncrypted)
+		if err != nil {
+			writeData(w, http.StatusOK, map[string]interface{}{
+				"success": false,
+				"error":   "failed to decrypt API key",
+			})
+			return
+		}
+
+		// Pick test model: test_model field → first supported model → fallback
+		testModel := ch.TestModel
+		if testModel == "" && len(ch.SupportedModels) > 0 {
+			testModel = ch.SupportedModels[0]
+		}
+		if testModel == "" {
+			testModel = "claude-haiku-4-5"
+		}
+
+		baseURL := ch.BaseURL
+		if baseURL == "" {
+			baseURL = "https://api.anthropic.com"
+		}
+
+		// Build minimal request body based on provider
+		var reqBody []byte
+		var endpoint string
+		switch ch.Provider {
+		case types.ProviderOpenAI:
+			endpoint = baseURL + "/v1/chat/completions"
+			reqBody, _ = json.Marshal(map[string]interface{}{
+				"model":      testModel,
+				"max_tokens": 10,
+				"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
+			})
+		default: // anthropic, gemini, etc.
+			endpoint = baseURL + "/v1/messages"
+			reqBody, _ = json.Marshal(map[string]interface{}{
+				"model":      testModel,
+				"max_tokens": 10,
+				"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
+			})
+		}
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		req, err := http.NewRequest("POST", endpoint, bytes.NewReader(reqBody))
+		if err != nil {
+			writeData(w, http.StatusOK, map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("failed to create request: %v", err),
+			})
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		switch ch.Provider {
+		case types.ProviderOpenAI:
+			req.Header.Set("Authorization", "Bearer "+string(apiKey))
+		default: // anthropic
+			req.Header.Set("x-api-key", string(apiKey))
+			req.Header.Set("anthropic-version", "2023-06-01")
+		}
+
+		start := time.Now()
+		resp, err := client.Do(req)
+		latency := time.Since(start).Milliseconds()
+
+		if err != nil {
+			writeData(w, http.StatusOK, map[string]interface{}{
+				"success":    false,
+				"latency_ms": latency,
+				"model":      testModel,
+				"error":      fmt.Sprintf("request failed: %v", err),
+			})
+			return
+		}
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
+
+		success := resp.StatusCode >= 200 && resp.StatusCode < 300
+		result := map[string]interface{}{
+			"success":     success,
+			"status_code": resp.StatusCode,
+			"latency_ms":  latency,
+			"model":       testModel,
+		}
+		if !success {
+			result["error"] = fmt.Sprintf("upstream returned %d", resp.StatusCode)
+		}
+		writeData(w, http.StatusOK, result)
+	}
+}
 
 func handleListRoutes(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
