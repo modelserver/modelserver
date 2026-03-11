@@ -1,0 +1,31 @@
+server:
+  addr: ":8090"
+
+db:
+  url: "postgres://user:password@localhost:5432/payserver?sslmode=disable"
+
+callback:
+  modelserver_url: "http://localhost:8081/api/v1/billing/webhook/delivery"
+  webhook_secret: ""
+  timeout: 10s
+
+api_key: "change-me"
+
+log:
+  level: "info"
+  format: "json"
+
+wechat:
+  app_id: ""
+  mch_id: ""
+  mch_api_v3_key: ""
+  mch_serial_no: ""
+  mch_private_key_path: ""
+  notify_url: ""
+
+alipay:
+  app_id: ""
+  private_key_path: ""
+  alipay_public_key_path: ""
+  notify_url: ""
+  return_url: ""
