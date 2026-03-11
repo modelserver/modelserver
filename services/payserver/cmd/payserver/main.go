@@ -42,6 +42,10 @@ func main() {
 	}
 	cfg.ApplyEnvOverrides()
 
+	if cfg.APIKey == "" {
+		log.Fatal("api_key is required (api_key in config or PAYSERVER_API_KEY env)")
+	}
+
 	// Logger.
 	var logLevel slog.Level
 	switch cfg.Log.Level {

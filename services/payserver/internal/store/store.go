@@ -73,11 +73,22 @@ func (s *Store) migrate() error {
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", name, err)
 		}
-		if _, err := s.db.Exec(string(content)); err != nil {
+
+		// Run migration + record in a single transaction to prevent partial application.
+		tx, err := s.db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin tx for migration %s: %w", name, err)
+		}
+		if _, err := tx.Exec(string(content)); err != nil {
+			tx.Rollback()
 			return fmt.Errorf("apply migration %s: %w", name, err)
 		}
-		if _, err := s.db.Exec(`INSERT INTO schema_migrations (name) VALUES ($1)`, name); err != nil {
+		if _, err := tx.Exec(`INSERT INTO schema_migrations (name) VALUES ($1)`, name); err != nil {
+			tx.Rollback()
 			return fmt.Errorf("record migration %s: %w", name, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit migration %s: %w", name, err)
 		}
 		s.logger.Info("applied migration", "name", name)
 	}

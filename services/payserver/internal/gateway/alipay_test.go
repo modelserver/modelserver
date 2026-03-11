@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -82,7 +83,10 @@ func TestAlipaySign(t *testing.T) {
 	}
 
 	content := "test signing content"
-	sig := gw.sign([]byte(content))
+	sig, err := gw.sign([]byte(content))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
 
 	sigBytes, err := base64.StdEncoding.DecodeString(sig)
 	if err != nil {
@@ -113,8 +117,6 @@ func TestAlipayBuildPagePayURL(t *testing.T) {
 		OutTradeNo:  "ORDER123",
 		Description: "Test Product",
 		Amount:      2000,
-		NotifyURL:   "https://example.com/notify/alipay",
-		ReturnURL:   "https://example.com/return",
 	})
 	if err != nil {
 		t.Fatalf("CreatePayment: %v", err)
@@ -122,20 +124,7 @@ func TestAlipayBuildPagePayURL(t *testing.T) {
 	if result.PaymentURL == "" {
 		t.Error("PaymentURL is empty")
 	}
-	if !containsSubstring(result.PaymentURL, "app_id=2021000000000001") {
+	if !strings.Contains(result.PaymentURL, "app_id=2021000000000001") {
 		t.Errorf("PaymentURL missing app_id: %s", result.PaymentURL)
 	}
-}
-
-func containsSubstring(s, sub string) bool {
-	return len(s) >= len(sub) && searchSubstring(s, sub)
-}
-
-func searchSubstring(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

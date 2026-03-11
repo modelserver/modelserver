@@ -51,7 +51,7 @@ func (g *WeChatGateway) CreatePayment(ctx context.Context, req *PaymentRequest) 
 		Mchid:       core.String(g.cfg.MchID),
 		Description: core.String(req.Description),
 		OutTradeNo:  core.String(req.OutTradeNo),
-		NotifyUrl:   core.String(req.NotifyURL),
+		NotifyUrl:   core.String(g.cfg.NotifyURL),
 		Amount: &native.Amount{
 			Total:    core.Int64(req.Amount),
 			Currency: core.String("CNY"),
@@ -59,6 +59,10 @@ func (g *WeChatGateway) CreatePayment(ctx context.Context, req *PaymentRequest) 
 	})
 	if err != nil {
 		return nil, fmt.Errorf("wechat prepay: %w", err)
+	}
+
+	if resp == nil || resp.CodeUrl == nil {
+		return nil, fmt.Errorf("wechat prepay: missing code_url in response")
 	}
 
 	return &PaymentResult{

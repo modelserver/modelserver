@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS payments (
     payment_url       TEXT NOT NULL DEFAULT '',
     amount            BIGINT NOT NULL,
     status            TEXT NOT NULL DEFAULT 'pending',
-    callback_status   TEXT NOT NULL DEFAULT 'pending',
+    callback_status   TEXT NOT NULL DEFAULT 'n/a',
     callback_retries  INT NOT NULL DEFAULT 0,
     raw_notify        JSONB,
     paid_at           TIMESTAMPTZ,
@@ -15,3 +15,7 @@ CREATE TABLE IF NOT EXISTS payments (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_order_id ON payments(order_id);
+
+CREATE INDEX IF NOT EXISTS idx_payments_pending_callbacks
+    ON payments(updated_at)
+    WHERE status = 'paid' AND callback_status = 'pending';

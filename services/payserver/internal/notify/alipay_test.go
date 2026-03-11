@@ -99,17 +99,31 @@ func TestAlipayNotifyVerification(t *testing.T) {
 
 func TestParseYuanToFen(t *testing.T) {
 	tests := []struct {
-		yuan string
-		want int64
+		yuan    string
+		want    int64
+		wantErr bool
 	}{
-		{"20.00", 2000},
-		{"0.01", 1},
-		{"123.45", 12345},
-		{"1", 100},
-		{"9.99", 999},
+		{"20.00", 2000, false},
+		{"0.01", 1, false},
+		{"123.45", 12345, false},
+		{"1", 100, false},
+		{"9.99", 999, false},
+		{"", 0, true},
+		{"abc", 0, true},
+		{"-20.00", 0, true},
 	}
 	for _, tt := range tests {
-		got := parseYuanToFen(tt.yuan)
+		got, err := parseYuanToFen(tt.yuan)
+		if tt.wantErr {
+			if err == nil {
+				t.Errorf("parseYuanToFen(%q) expected error, got %d", tt.yuan, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("parseYuanToFen(%q) unexpected error: %v", tt.yuan, err)
+			continue
+		}
 		if got != tt.want {
 			t.Errorf("parseYuanToFen(%q) = %d, want %d", tt.yuan, got, tt.want)
 		}

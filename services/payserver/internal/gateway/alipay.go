@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"net/url"
@@ -48,11 +49,24 @@ func NewAlipayGateway(cfg AlipayGatewayConfig) (*AlipayGateway, error) {
 
 func (g *AlipayGateway) Channel() string { return "alipay" }
 
+type alipayBizContent struct {
+	OutTradeNo  string `json:"out_trade_no"`
+	TotalAmount string `json:"total_amount"`
+	Subject     string `json:"subject"`
+	ProductCode string `json:"product_code"`
+}
+
 func (g *AlipayGateway) CreatePayment(_ context.Context, req *PaymentRequest) (*PaymentResult, error) {
-	bizContent := fmt.Sprintf(
-		`{"out_trade_no":"%s","total_amount":"%s","subject":"%s","product_code":"FAST_INSTANT_TRADE_PAY"}`,
-		req.OutTradeNo, formatAmount(req.Amount), req.Description,
-	)
+	bc := alipayBizContent{
+		OutTradeNo:  req.OutTradeNo,
+		TotalAmount: formatAmount(req.Amount),
+		Subject:     req.Description,
+		ProductCode: "FAST_INSTANT_TRADE_PAY",
+	}
+	bizContentBytes, err := json.Marshal(bc)
+	if err != nil {
+		return nil, fmt.Errorf("marshal biz_content: %w", err)
+	}
 
 	params := url.Values{}
 	params.Set("app_id", g.cfg.AppID)
@@ -61,12 +75,15 @@ func (g *AlipayGateway) CreatePayment(_ context.Context, req *PaymentRequest) (*
 	params.Set("sign_type", "RSA2")
 	params.Set("timestamp", time.Now().Format("2006-01-02 15:04:05"))
 	params.Set("version", "1.0")
-	params.Set("notify_url", req.NotifyURL)
-	params.Set("return_url", req.ReturnURL)
-	params.Set("biz_content", bizContent)
+	params.Set("notify_url", g.cfg.NotifyURL)
+	params.Set("return_url", g.cfg.ReturnURL)
+	params.Set("biz_content", string(bizContentBytes))
 
 	signStr := BuildSignString(params)
-	sig := g.sign([]byte(signStr))
+	sig, err := g.sign([]byte(signStr))
+	if err != nil {
+		return nil, fmt.Errorf("sign request: %w", err)
+	}
 	params.Set("sign", sig)
 
 	payURL := alipayGatewayURL + "?" + params.Encode()
@@ -78,13 +95,13 @@ func (g *AlipayGateway) CreatePayment(_ context.Context, req *PaymentRequest) (*
 }
 
 // sign performs SHA256WithRSA signing and returns base64-encoded signature.
-func (g *AlipayGateway) sign(content []byte) string {
+func (g *AlipayGateway) sign(content []byte) (string, error) {
 	hashed := sha256.Sum256(content)
 	sig, err := rsa.SignPKCS1v15(rand.Reader, g.privateKey, crypto.SHA256, hashed[:])
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("rsa sign: %w", err)
 	}
-	return base64.StdEncoding.EncodeToString(sig)
+	return base64.StdEncoding.EncodeToString(sig), nil
 }
 
 // VerifyCallback verifies an Alipay async notification signature.

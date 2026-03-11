@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"github.com/modelserver/modelserver/services/payserver/internal/gateway"
 	"github.com/modelserver/modelserver/services/payserver/internal/store"
 )
+
+const maxRequestBodySize = 64 * 1024 // 64 KB
 
 type paymentAPIRequest struct {
 	OrderID     string            `json:"order_id"`
@@ -29,6 +32,8 @@ type paymentAPIResponse struct {
 
 func handleCreatePayment(st *store.Store, gateways map[string]gateway.Gateway, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+
 		var req paymentAPIRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -42,38 +47,45 @@ func handleCreatePayment(st *store.Store, gateways map[string]gateway.Gateway, l
 
 		gw, ok := gateways[req.Channel]
 		if !ok {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported channel: " + req.Channel})
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported channel"})
 			return
 		}
 
-		// Idempotency: check if payment already exists for this order_id
-		existing, err := st.GetPaymentByOrderID(req.OrderID)
+		// Insert-first pattern: atomically insert a placeholder record or retrieve existing.
+		// This prevents TOCTOU races where concurrent requests could both call the gateway.
+		payment := &store.Payment{
+			OrderID: req.OrderID,
+			Channel: req.Channel,
+			Amount:  req.Amount,
+			Status:  "pending",
+		}
+		created, err := st.InsertOrGetPayment(payment)
 		if err != nil {
-			logger.Error("check existing payment", "error", err)
+			logger.Error("insert or get payment", "error", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 			return
 		}
-		if existing != nil {
-			if existing.Status == "paid" {
+
+		if !created {
+			// Existing record — idempotency handling.
+			if payment.Status == "paid" {
 				writeJSON(w, http.StatusConflict, map[string]string{"error": "order already paid"})
 				return
 			}
-			// Return existing pending payment
+			// Return existing pending payment.
 			writeJSON(w, http.StatusOK, paymentAPIResponse{
-				PaymentRef: existing.ID,
-				PaymentURL: existing.PaymentURL,
+				PaymentRef: payment.ID,
+				PaymentURL: payment.PaymentURL,
 				Status:     "pending",
 			})
 			return
 		}
 
-		// Call payment gateway
+		// New record inserted — call payment gateway.
 		result, err := gw.CreatePayment(r.Context(), &gateway.PaymentRequest{
 			OutTradeNo:  req.OrderID,
 			Description: req.ProductName,
 			Amount:      req.Amount,
-			NotifyURL:   req.NotifyURL,
-			ReturnURL:   req.ReturnURL,
 		})
 		if err != nil {
 			logger.Error("create payment", "channel", req.Channel, "order_id", req.OrderID, "error", err)
@@ -81,18 +93,10 @@ func handleCreatePayment(st *store.Store, gateways map[string]gateway.Gateway, l
 			return
 		}
 
-		// Persist payment record
-		payment := &store.Payment{
-			OrderID:    req.OrderID,
-			Channel:    req.Channel,
-			TradeNo:    result.TradeNo,
-			PaymentURL: result.PaymentURL,
-			Amount:     req.Amount,
-			Status:     "pending",
-		}
-		if err := st.CreatePayment(payment); err != nil {
-			logger.Error("persist payment", "order_id", req.OrderID, "error", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create payment record"})
+		// Update the record with gateway result.
+		if err := st.UpdatePaymentGatewayResult(payment.ID, result.TradeNo, result.PaymentURL); err != nil {
+			logger.Error("update payment gateway result", "order_id", req.OrderID, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update payment record"})
 			return
 		}
 
@@ -105,10 +109,16 @@ func handleCreatePayment(st *store.Store, gateways map[string]gateway.Gateway, l
 }
 
 func bearerAuthMiddleware(apiKey string) func(http.Handler) http.Handler {
+	apiKeyBytes := []byte(apiKey)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			auth := r.Header.Get("Authorization")
-			if !strings.HasPrefix(auth, "Bearer ") || auth[7:] != apiKey {
+			if !strings.HasPrefix(auth, "Bearer ") {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+				return
+			}
+			token := []byte(auth[7:])
+			if subtle.ConstantTimeCompare(token, apiKeyBytes) != 1 {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 				return
 			}

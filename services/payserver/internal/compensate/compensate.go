@@ -11,7 +11,7 @@ import (
 
 const (
 	pollInterval = 30 * time.Second
-	maxRetries   = 10
+	MaxRetries   = 10
 	batchSize    = 20
 )
 
@@ -19,7 +19,8 @@ type Worker struct {
 	store    *store.Store
 	callback *notify.CallbackClient
 	logger   *slog.Logger
-	stop     chan struct{}
+	cancel   context.CancelFunc
+	done     chan struct{}
 }
 
 func NewWorker(st *store.Store, cb *notify.CallbackClient, logger *slog.Logger) *Worker {
@@ -27,45 +28,57 @@ func NewWorker(st *store.Store, cb *notify.CallbackClient, logger *slog.Logger) 
 		store:    st,
 		callback: cb,
 		logger:   logger,
-		stop:     make(chan struct{}),
+		done:     make(chan struct{}),
 	}
 }
 
 func (w *Worker) Start() {
-	go w.run()
+	ctx, cancel := context.WithCancel(context.Background())
+	w.cancel = cancel
+	go w.run(ctx)
 }
 
+// Stop signals the worker to stop and waits for it to finish.
 func (w *Worker) Stop() {
-	close(w.stop)
+	w.cancel()
+	<-w.done
 }
 
-func (w *Worker) run() {
+func (w *Worker) run(ctx context.Context) {
+	defer close(w.done)
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-w.stop:
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			w.processPending()
+			w.processPending(ctx)
 		}
 	}
 }
 
-func (w *Worker) processPending() {
-	payments, err := w.store.ListPendingCallbacks(batchSize)
+func (w *Worker) processPending(ctx context.Context) {
+	payments, err := w.store.ListPendingCallbacks(batchSize, MaxRetries)
 	if err != nil {
 		w.logger.Error("compensate: list pending", "error", err)
 		return
 	}
 
 	for _, p := range payments {
+		// Check if shutdown was requested.
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		if !w.shouldRetry(p) {
 			continue
 		}
 
-		if p.CallbackRetries >= maxRetries {
+		if p.CallbackRetries >= MaxRetries {
 			w.logger.Error("compensate: max retries reached", "order_id", p.OrderID)
 			w.store.MarkCallbackFailed(p.OrderID)
 			continue
@@ -81,12 +94,13 @@ func (w *Worker) processPending() {
 			payload.PaidAt = p.PaidAt.Format(time.RFC3339)
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		err := w.callback.Send(ctx, payload)
+		callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := w.callback.Send(callCtx, payload)
 		cancel()
 
 		if err != nil {
-			w.logger.Warn("compensate: callback failed", "order_id", p.OrderID, "retries", p.CallbackRetries, "error", err)
+			w.logger.Warn("compensate: callback failed",
+				"order_id", p.OrderID, "retries", p.CallbackRetries, "error", err)
 			w.store.IncrCallbackRetries(p.OrderID)
 			continue
 		}
