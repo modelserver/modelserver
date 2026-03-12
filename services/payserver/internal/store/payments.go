@@ -1,9 +1,11 @@
 package store
 
 import (
-	"database/sql"
+	"context"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type Payment struct {
@@ -26,8 +28,9 @@ type Payment struct {
 // Returns (payment, created, error). If the order_id already exists, returns the existing
 // record with created=false. This prevents TOCTOU races on concurrent requests.
 func (s *Store) InsertOrGetPayment(p *Payment) (bool, error) {
+	ctx := context.Background()
 	// Try insert first. ON CONFLICT returns nothing, so we detect via RETURNING.
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(ctx, `
 		INSERT INTO payments (order_id, channel, trade_no, payment_url, amount, status)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (order_id) DO NOTHING
@@ -37,7 +40,7 @@ func (s *Store) InsertOrGetPayment(p *Payment) (bool, error) {
 	if err == nil {
 		return true, nil // inserted
 	}
-	if err != sql.ErrNoRows {
+	if err != pgx.ErrNoRows {
 		return false, fmt.Errorf("insert payment: %w", err)
 	}
 	// Conflict: fetch existing record.
@@ -54,7 +57,7 @@ func (s *Store) InsertOrGetPayment(p *Payment) (bool, error) {
 
 // UpdatePaymentGatewayResult updates the gateway result (trade_no, payment_url) for a pending payment.
 func (s *Store) UpdatePaymentGatewayResult(id string, tradeNo, paymentURL string) error {
-	_, err := s.db.Exec(`
+	_, err := s.pool.Exec(context.Background(), `
 		UPDATE payments SET trade_no = $1, payment_url = $2, updated_at = NOW()
 		WHERE id = $3 AND status = 'pending'`,
 		tradeNo, paymentURL, id)
@@ -63,7 +66,7 @@ func (s *Store) UpdatePaymentGatewayResult(id string, tradeNo, paymentURL string
 
 func (s *Store) GetPaymentByOrderID(orderID string) (*Payment, error) {
 	p := &Payment{}
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT id, order_id, channel, trade_no, payment_url, amount, status,
 			callback_status, callback_retries, raw_notify, paid_at,
 			created_at, updated_at
@@ -71,7 +74,7 @@ func (s *Store) GetPaymentByOrderID(orderID string) (*Payment, error) {
 	).Scan(&p.ID, &p.OrderID, &p.Channel, &p.TradeNo, &p.PaymentURL, &p.Amount, &p.Status,
 		&p.CallbackStatus, &p.CallbackRetries, &p.RawNotify, &p.PaidAt,
 		&p.CreatedAt, &p.UpdatedAt)
-	if err == sql.ErrNoRows {
+	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
@@ -82,7 +85,7 @@ func (s *Store) GetPaymentByOrderID(orderID string) (*Payment, error) {
 
 func (s *Store) GetPaymentByID(id string) (*Payment, error) {
 	p := &Payment{}
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT id, order_id, channel, trade_no, payment_url, amount, status,
 			callback_status, callback_retries, raw_notify, paid_at,
 			created_at, updated_at
@@ -90,7 +93,7 @@ func (s *Store) GetPaymentByID(id string) (*Payment, error) {
 	).Scan(&p.ID, &p.OrderID, &p.Channel, &p.TradeNo, &p.PaymentURL, &p.Amount, &p.Status,
 		&p.CallbackStatus, &p.CallbackRetries, &p.RawNotify, &p.PaidAt,
 		&p.CreatedAt, &p.UpdatedAt)
-	if err == sql.ErrNoRows {
+	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
@@ -102,7 +105,7 @@ func (s *Store) GetPaymentByID(id string) (*Payment, error) {
 // MarkPaymentPaid atomically marks a pending payment as paid.
 // Returns true if the row was actually updated (i.e., it was pending).
 func (s *Store) MarkPaymentPaid(orderID string, tradeNo string, rawNotify string, paidAt time.Time) (bool, error) {
-	result, err := s.db.Exec(`
+	result, err := s.pool.Exec(context.Background(), `
 		UPDATE payments
 		SET status = 'paid', trade_no = $1, raw_notify = $2, paid_at = $3, updated_at = NOW()
 		WHERE order_id = $4 AND status = 'pending'`,
@@ -110,29 +113,25 @@ func (s *Store) MarkPaymentPaid(orderID string, tradeNo string, rawNotify string
 	if err != nil {
 		return false, err
 	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return n > 0, nil
+	return result.RowsAffected() > 0, nil
 }
 
 func (s *Store) MarkCallbackSuccess(orderID string) error {
-	_, err := s.db.Exec(`
+	_, err := s.pool.Exec(context.Background(), `
 		UPDATE payments SET callback_status = 'success', updated_at = NOW()
 		WHERE order_id = $1`, orderID)
 	return err
 }
 
 func (s *Store) IncrCallbackRetries(orderID string) error {
-	_, err := s.db.Exec(`
+	_, err := s.pool.Exec(context.Background(), `
 		UPDATE payments SET callback_retries = callback_retries + 1, updated_at = NOW()
 		WHERE order_id = $1`, orderID)
 	return err
 }
 
 func (s *Store) MarkCallbackFailed(orderID string) error {
-	_, err := s.db.Exec(`
+	_, err := s.pool.Exec(context.Background(), `
 		UPDATE payments SET callback_status = 'failed', updated_at = NOW()
 		WHERE order_id = $1`, orderID)
 	return err
@@ -141,7 +140,7 @@ func (s *Store) MarkCallbackFailed(orderID string) error {
 // ListPendingCallbacks returns paid payments with pending callbacks, using FOR UPDATE SKIP LOCKED
 // to prevent concurrent workers from processing the same rows.
 func (s *Store) ListPendingCallbacks(limit int, maxRetries int) ([]Payment, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.pool.Query(context.Background(), `
 		SELECT id, order_id, channel, trade_no, payment_url, amount, status,
 			callback_status, callback_retries, raw_notify, paid_at,
 			created_at, updated_at

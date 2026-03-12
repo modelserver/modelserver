@@ -1,36 +1,36 @@
 package store
 
 import (
-	"database/sql"
+	"context"
 	"fmt"
 	"time"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5"
 	"github.com/modelserver/modelserver/internal/types"
 )
 
 // CreateChannel inserts a new channel.
 func (s *Store) CreateChannel(c *types.Channel) error {
-	return s.db.QueryRow(`
+	return s.pool.QueryRow(context.Background(), `
 		INSERT INTO channels (provider, name, base_url, api_key_encrypted, supported_models, weight, selection_priority, status, max_concurrent, test_model)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id, created_at, updated_at`,
 		c.Provider, c.Name, c.BaseURL, c.APIKeyEncrypted,
-		pq.Array(c.SupportedModels), c.Weight, c.SelectionPriority, c.Status, c.MaxConcurrent, c.TestModel,
+		c.SupportedModels, c.Weight, c.SelectionPriority, c.Status, c.MaxConcurrent, c.TestModel,
 	).Scan(&c.ID, &c.CreatedAt, &c.UpdatedAt)
 }
 
 // GetChannelByID returns a channel by ID.
 func (s *Store) GetChannelByID(id string) (*types.Channel, error) {
 	c := &types.Channel{}
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT id, provider, name, base_url, api_key_encrypted, supported_models,
 			weight, selection_priority, status, max_concurrent, test_model, created_at, updated_at
 		FROM channels WHERE id = $1`, id,
 	).Scan(&c.ID, &c.Provider, &c.Name, &c.BaseURL, &c.APIKeyEncrypted,
-		pq.Array(&c.SupportedModels), &c.Weight, &c.SelectionPriority, &c.Status,
+		&c.SupportedModels, &c.Weight, &c.SelectionPriority, &c.Status,
 		&c.MaxConcurrent, &c.TestModel, &c.CreatedAt, &c.UpdatedAt)
-	if err == sql.ErrNoRows {
+	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
@@ -41,7 +41,7 @@ func (s *Store) GetChannelByID(id string) (*types.Channel, error) {
 
 // ListChannels returns all channels (including encrypted API keys for decryption at load time).
 func (s *Store) ListChannels() ([]types.Channel, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.pool.Query(context.Background(), `
 		SELECT id, provider, name, base_url, api_key_encrypted, supported_models,
 			weight, selection_priority, status, max_concurrent, test_model, created_at, updated_at
 		FROM channels ORDER BY selection_priority DESC, name ASC`)
@@ -54,7 +54,7 @@ func (s *Store) ListChannels() ([]types.Channel, error) {
 	for rows.Next() {
 		var c types.Channel
 		if err := rows.Scan(&c.ID, &c.Provider, &c.Name, &c.BaseURL, &c.APIKeyEncrypted,
-			pq.Array(&c.SupportedModels), &c.Weight, &c.SelectionPriority, &c.Status,
+			&c.SupportedModels, &c.Weight, &c.SelectionPriority, &c.Status,
 			&c.MaxConcurrent, &c.TestModel, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -68,7 +68,7 @@ func (s *Store) ListChannels() ([]types.Channel, error) {
 
 // ListActiveChannelsForModel returns active channels that support a given model.
 func (s *Store) ListActiveChannelsForModel(model string) ([]types.Channel, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.pool.Query(context.Background(), `
 		SELECT id, provider, name, base_url, api_key_encrypted, supported_models,
 			weight, selection_priority, status, max_concurrent, test_model, created_at, updated_at
 		FROM channels
@@ -83,7 +83,7 @@ func (s *Store) ListActiveChannelsForModel(model string) ([]types.Channel, error
 	for rows.Next() {
 		var c types.Channel
 		if err := rows.Scan(&c.ID, &c.Provider, &c.Name, &c.BaseURL, &c.APIKeyEncrypted,
-			pq.Array(&c.SupportedModels), &c.Weight, &c.SelectionPriority, &c.Status,
+			&c.SupportedModels, &c.Weight, &c.SelectionPriority, &c.Status,
 			&c.MaxConcurrent, &c.TestModel, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -99,13 +99,13 @@ func (s *Store) ListActiveChannelsForModel(model string) ([]types.Channel, error
 func (s *Store) UpdateChannel(id string, updates map[string]interface{}) error {
 	updates["updated_at"] = time.Now()
 	query, args := buildUpdateQuery("channels", "id", id, updates)
-	_, err := s.db.Exec(query, args...)
+	_, err := s.pool.Exec(context.Background(), query, args...)
 	return err
 }
 
 // DeleteChannel deletes a channel.
 func (s *Store) DeleteChannel(id string) error {
-	_, err := s.db.Exec("DELETE FROM channels WHERE id = $1", id)
+	_, err := s.pool.Exec(context.Background(), "DELETE FROM channels WHERE id = $1", id)
 	return err
 }
 
@@ -113,17 +113,17 @@ func (s *Store) DeleteChannel(id string) error {
 
 // CreateChannelRoute inserts a new channel route.
 func (s *Store) CreateChannelRoute(r *types.ChannelRoute) error {
-	return s.db.QueryRow(`
+	return s.pool.QueryRow(context.Background(), `
 		INSERT INTO channel_routes (project_id, model_pattern, channel_ids, match_priority, enabled)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id, created_at, updated_at`,
-		nullString(r.ProjectID), r.ModelPattern, pq.Array(r.ChannelIDs), r.MatchPriority, r.Enabled,
+		nullString(r.ProjectID), r.ModelPattern, r.ChannelIDs, r.MatchPriority, r.Enabled,
 	).Scan(&r.ID, &r.CreatedAt, &r.UpdatedAt)
 }
 
 // ListChannelRoutes returns all channel routes, ordered by match_priority DESC.
 func (s *Store) ListChannelRoutes() ([]types.ChannelRoute, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.pool.Query(context.Background(), `
 		SELECT id, COALESCE(project_id::text, ''), model_pattern, channel_ids, match_priority, enabled, created_at, updated_at
 		FROM channel_routes ORDER BY match_priority DESC`)
 	if err != nil {
@@ -135,7 +135,7 @@ func (s *Store) ListChannelRoutes() ([]types.ChannelRoute, error) {
 	for rows.Next() {
 		var r types.ChannelRoute
 		if err := rows.Scan(&r.ID, &r.ProjectID, &r.ModelPattern,
-			pq.Array(&r.ChannelIDs), &r.MatchPriority, &r.Enabled, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			&r.ChannelIDs, &r.MatchPriority, &r.Enabled, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		routes = append(routes, r)
@@ -148,7 +148,7 @@ func (s *Store) ListChannelRoutes() ([]types.ChannelRoute, error) {
 
 // ListChannelRoutesForProject returns routes for a specific project + global routes.
 func (s *Store) ListChannelRoutesForProject(projectID string) ([]types.ChannelRoute, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.pool.Query(context.Background(), `
 		SELECT id, COALESCE(project_id::text, ''), model_pattern, channel_ids, match_priority, enabled, created_at, updated_at
 		FROM channel_routes
 		WHERE (project_id = $1 OR project_id IS NULL) AND enabled = TRUE
@@ -164,7 +164,7 @@ func (s *Store) ListChannelRoutesForProject(projectID string) ([]types.ChannelRo
 	for rows.Next() {
 		var r types.ChannelRoute
 		if err := rows.Scan(&r.ID, &r.ProjectID, &r.ModelPattern,
-			pq.Array(&r.ChannelIDs), &r.MatchPriority, &r.Enabled, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			&r.ChannelIDs, &r.MatchPriority, &r.Enabled, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		routes = append(routes, r)
@@ -179,12 +179,12 @@ func (s *Store) ListChannelRoutesForProject(projectID string) ([]types.ChannelRo
 func (s *Store) UpdateChannelRoute(id string, updates map[string]interface{}) error {
 	updates["updated_at"] = time.Now()
 	query, args := buildUpdateQuery("channel_routes", "id", id, updates)
-	_, err := s.db.Exec(query, args...)
+	_, err := s.pool.Exec(context.Background(), query, args...)
 	return err
 }
 
 // DeleteChannelRoute deletes a route.
 func (s *Store) DeleteChannelRoute(id string) error {
-	_, err := s.db.Exec("DELETE FROM channel_routes WHERE id = $1", id)
+	_, err := s.pool.Exec(context.Background(), "DELETE FROM channel_routes WHERE id = $1", id)
 	return err
 }

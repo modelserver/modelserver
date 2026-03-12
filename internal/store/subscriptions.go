@@ -1,17 +1,18 @@
 package store
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/modelserver/modelserver/internal/types"
 )
 
 // CreateSubscription inserts a new subscription.
 func (s *Store) CreateSubscription(sub *types.Subscription) error {
-	return s.db.QueryRow(`
+	return s.pool.QueryRow(context.Background(), `
 		INSERT INTO subscriptions (project_id, plan_id, plan_name, status, starts_at, expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, created_at, updated_at`,
@@ -22,22 +23,22 @@ func (s *Store) CreateSubscription(sub *types.Subscription) error {
 // GetActiveSubscription returns the active subscription for a project.
 func (s *Store) GetActiveSubscription(projectID string) (*types.Subscription, error) {
 	sub := &types.Subscription{}
-	var planID sql.NullString
-	err := s.db.QueryRow(`
+	var planID *string
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT id, project_id, COALESCE(plan_id::text, ''), plan_name, status, starts_at, expires_at, created_at, updated_at
 		FROM subscriptions
 		WHERE project_id = $1 AND status = 'active' AND starts_at <= NOW() AND expires_at >= NOW()
 		ORDER BY created_at DESC LIMIT 1`, projectID,
 	).Scan(&sub.ID, &sub.ProjectID, &planID, &sub.PlanName, &sub.Status,
 		&sub.StartsAt, &sub.ExpiresAt, &sub.CreatedAt, &sub.UpdatedAt)
-	if err == sql.ErrNoRows {
+	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get active subscription: %w", err)
 	}
-	if planID.Valid {
-		sub.PlanID = planID.String
+	if planID != nil {
+		sub.PlanID = *planID
 	}
 	return sub, nil
 }
@@ -45,27 +46,27 @@ func (s *Store) GetActiveSubscription(projectID string) (*types.Subscription, er
 // GetSubscriptionByID returns a subscription by ID.
 func (s *Store) GetSubscriptionByID(id string) (*types.Subscription, error) {
 	sub := &types.Subscription{}
-	var planID sql.NullString
-	err := s.db.QueryRow(`
+	var planID *string
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT id, project_id, COALESCE(plan_id::text, ''), plan_name, status, starts_at, expires_at, created_at, updated_at
 		FROM subscriptions WHERE id = $1`, id,
 	).Scan(&sub.ID, &sub.ProjectID, &planID, &sub.PlanName, &sub.Status,
 		&sub.StartsAt, &sub.ExpiresAt, &sub.CreatedAt, &sub.UpdatedAt)
-	if err == sql.ErrNoRows {
+	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get subscription: %w", err)
 	}
-	if planID.Valid {
-		sub.PlanID = planID.String
+	if planID != nil {
+		sub.PlanID = *planID
 	}
 	return sub, nil
 }
 
 // ListSubscriptions returns all subscriptions for a project.
 func (s *Store) ListSubscriptions(projectID string) ([]types.Subscription, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.pool.Query(context.Background(), `
 		SELECT id, project_id, COALESCE(plan_id::text, ''), plan_name, status, starts_at, expires_at, created_at, updated_at
 		FROM subscriptions WHERE project_id = $1
 		ORDER BY created_at DESC`, projectID)
@@ -77,13 +78,13 @@ func (s *Store) ListSubscriptions(projectID string) ([]types.Subscription, error
 	var subs []types.Subscription
 	for rows.Next() {
 		var sub types.Subscription
-		var planID sql.NullString
+		var planID *string
 		if err := rows.Scan(&sub.ID, &sub.ProjectID, &planID, &sub.PlanName, &sub.Status,
 			&sub.StartsAt, &sub.ExpiresAt, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
 			return nil, err
 		}
-		if planID.Valid {
-			sub.PlanID = planID.String
+		if planID != nil {
+			sub.PlanID = *planID
 		}
 		subs = append(subs, sub)
 	}
@@ -95,7 +96,7 @@ func (s *Store) ListSubscriptions(projectID string) ([]types.Subscription, error
 
 // UpdateSubscriptionStatus updates a subscription's status.
 func (s *Store) UpdateSubscriptionStatus(id, status string) error {
-	_, err := s.db.Exec(`
+	_, err := s.pool.Exec(context.Background(), `
 		UPDATE subscriptions SET status = $1, updated_at = NOW()
 		WHERE id = $2`, status, id)
 	return err
@@ -104,6 +105,7 @@ func (s *Store) UpdateSubscriptionStatus(id, status string) error {
 // ExpireAndFallbackToFree marks expired paid subscriptions as expired and
 // creates a new free-tier subscription for each affected project.
 func (s *Store) ExpireAndFallbackToFree() (int64, error) {
+	ctx := context.Background()
 	// Fetch the free plan once.
 	freePlan, err := s.GetPlanBySlug("free")
 	if err != nil {
@@ -111,17 +113,17 @@ func (s *Store) ExpireAndFallbackToFree() (int64, error) {
 	}
 	if freePlan == nil || !freePlan.IsActive {
 		// No free plan configured — just expire without fallback.
-		result, err := s.db.Exec(`
+		result, err := s.pool.Exec(ctx, `
 			UPDATE subscriptions SET status = 'expired', updated_at = NOW()
 			WHERE status = 'active' AND plan_name != 'free' AND expires_at < NOW()`)
 		if err != nil {
 			return 0, err
 		}
-		return result.RowsAffected()
+		return result.RowsAffected(), nil
 	}
 
 	// Find expired paid subscriptions.
-	rows, err := s.db.Query(`
+	rows, err := s.pool.Query(ctx, `
 		SELECT id, project_id FROM subscriptions
 		WHERE status = 'active' AND plan_name != 'free' AND expires_at < NOW()`)
 	if err != nil {
@@ -150,25 +152,25 @@ func (s *Store) ExpireAndFallbackToFree() (int64, error) {
 	var count int64
 
 	for _, e := range items {
-		tx, err := s.db.Begin()
+		tx, err := s.pool.Begin(ctx)
 		if err != nil {
 			return count, fmt.Errorf("begin tx: %w", err)
 		}
 		// Mark as expired.
-		if _, err := tx.Exec(`UPDATE subscriptions SET status = 'expired', updated_at = NOW() WHERE id = $1`, e.id); err != nil {
-			tx.Rollback()
+		if _, err := tx.Exec(ctx, `UPDATE subscriptions SET status = 'expired', updated_at = NOW() WHERE id = $1`, e.id); err != nil {
+			tx.Rollback(ctx)
 			return count, fmt.Errorf("expire subscription %s: %w", e.id, err)
 		}
 		// Create free plan subscription.
-		if _, err := tx.Exec(`
+		if _, err := tx.Exec(ctx, `
 			INSERT INTO subscriptions (project_id, plan_id, plan_name, status, starts_at, expires_at)
 			VALUES ($1, $2, $3, $4, $5, $6)`,
 			e.projectID, freePlan.ID, freePlan.Slug, "active", now, freeExpiry,
 		); err != nil {
-			tx.Rollback()
+			tx.Rollback(ctx)
 			return count, fmt.Errorf("create free fallback for project %s: %w", e.projectID, err)
 		}
-		if err := tx.Commit(); err != nil {
+		if err := tx.Commit(ctx); err != nil {
 			return count, fmt.Errorf("commit fallback for project %s: %w", e.projectID, err)
 		}
 		count++
@@ -195,7 +197,7 @@ func (s *Store) CreateSubscriptionFromPlan(projectID string, plan *types.Plan, s
 
 // RenewSubscription extends a subscription's expires_at by additionalMonths.
 func (s *Store) RenewSubscription(subID string, additionalMonths int) error {
-	_, err := s.db.Exec(`
+	_, err := s.pool.Exec(context.Background(), `
 		UPDATE subscriptions SET expires_at = expires_at + ($1 || ' months')::interval, updated_at = NOW()
 		WHERE id = $2`, additionalMonths, subID)
 	return err
@@ -203,15 +205,16 @@ func (s *Store) RenewSubscription(subID string, additionalMonths int) error {
 
 // DeliverOrder processes a paid order within a transaction, creating or updating subscriptions as needed.
 func (s *Store) DeliverOrder(orderID string, plan *types.Plan, project *types.Project) (*types.Subscription, error) {
-	tx, err := s.db.Begin()
+	ctx := context.Background()
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
 
 	// Fetch the order inside the tx.
 	var order types.Order
-	var existSubID sql.NullString
-	err = tx.QueryRow(`
+	var existSubID *string
+	err = tx.QueryRow(ctx, `
 		SELECT id, project_id, plan_id, order_type, periods, unit_price, amount, currency,
 			status, payment_ref, payment_url, existing_subscription_id, metadata, created_at, updated_at
 		FROM orders WHERE id = $1 FOR UPDATE`, orderID,
@@ -219,16 +222,16 @@ func (s *Store) DeliverOrder(orderID string, plan *types.Plan, project *types.Pr
 		&order.UnitPrice, &order.Amount, &order.Currency, &order.Status, &order.PaymentRef,
 		&order.PaymentURL, &existSubID, &order.Metadata, &order.CreatedAt, &order.UpdatedAt)
 	if err != nil {
-		tx.Rollback()
+		tx.Rollback(ctx)
 		return nil, fmt.Errorf("fetch order: %w", err)
 	}
-	if existSubID.Valid {
-		order.ExistingSubscriptionID = existSubID.String
+	if existSubID != nil {
+		order.ExistingSubscriptionID = *existSubID
 	}
 
 	if order.Status == types.OrderStatusDelivered {
 		// Already delivered (concurrent webhook retry). Return existing subscription.
-		tx.Rollback()
+		tx.Rollback(ctx)
 		if order.ExistingSubscriptionID != "" {
 			sub, err := s.GetSubscriptionByID(order.ExistingSubscriptionID)
 			if err == nil && sub != nil {
@@ -243,7 +246,7 @@ func (s *Store) DeliverOrder(orderID string, plan *types.Plan, project *types.Pr
 		return nil, fmt.Errorf("order already delivered but subscription not found")
 	}
 	if order.Status != types.OrderStatusPaying {
-		tx.Rollback()
+		tx.Rollback(ctx)
 		return nil, fmt.Errorf("order status is %s, expected paying", order.Status)
 	}
 
@@ -253,24 +256,24 @@ func (s *Store) DeliverOrder(orderID string, plan *types.Plan, project *types.Pr
 	switch order.OrderType {
 	case types.OrderTypeUpgrade:
 		if order.ExistingSubscriptionID == "" {
-			tx.Rollback()
+			tx.Rollback(ctx)
 			return nil, fmt.Errorf("upgrade order has no existing subscription ID")
 		}
 
 		// Get old subscription's expires_at and plan_name.
 		var oldExpiresAt time.Time
 		var oldPlanName string
-		err = tx.QueryRow(`SELECT expires_at, plan_name FROM subscriptions WHERE id = $1`, order.ExistingSubscriptionID).Scan(&oldExpiresAt, &oldPlanName)
+		err = tx.QueryRow(ctx, `SELECT expires_at, plan_name FROM subscriptions WHERE id = $1`, order.ExistingSubscriptionID).Scan(&oldExpiresAt, &oldPlanName)
 		if err != nil {
-			tx.Rollback()
+			tx.Rollback(ctx)
 			return nil, fmt.Errorf("get old subscription: %w", err)
 		}
 
 		// Revoke old subscription.
-		_, err = tx.Exec(`UPDATE subscriptions SET status = $1, updated_at = NOW() WHERE id = $2`,
+		_, err = tx.Exec(ctx, `UPDATE subscriptions SET status = $1, updated_at = NOW() WHERE id = $2`,
 			types.SubscriptionStatusRevoked, order.ExistingSubscriptionID)
 		if err != nil {
-			tx.Rollback()
+			tx.Rollback(ctx)
 			return nil, fmt.Errorf("revoke old subscription: %w", err)
 		}
 
@@ -284,31 +287,31 @@ func (s *Store) DeliverOrder(orderID string, plan *types.Plan, project *types.Pr
 		}
 
 		sub = &types.Subscription{ProjectID: order.ProjectID, PlanID: plan.ID, PlanName: plan.Slug, Status: types.SubscriptionStatusActive, StartsAt: now, ExpiresAt: newExpiresAt}
-		err = tx.QueryRow(`
+		err = tx.QueryRow(ctx, `
 			INSERT INTO subscriptions (project_id, plan_id, plan_name, status, starts_at, expires_at)
 			VALUES ($1, $2, $3, $4, $5, $6)
 			RETURNING id, created_at, updated_at`,
 			sub.ProjectID, sub.PlanID, sub.PlanName, sub.Status, sub.StartsAt, sub.ExpiresAt,
 		).Scan(&sub.ID, &sub.CreatedAt, &sub.UpdatedAt)
 		if err != nil {
-			tx.Rollback()
+			tx.Rollback(ctx)
 			return nil, fmt.Errorf("create subscription for upgrade: %w", err)
 		}
 
 	default:
-		tx.Rollback()
+		tx.Rollback(ctx)
 		return nil, fmt.Errorf("unknown order type: %s", order.OrderType)
 	}
 
 	// Mark order as delivered.
-	_, err = tx.Exec(`UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2`,
+	_, err = tx.Exec(ctx, `UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2`,
 		types.OrderStatusDelivered, orderID)
 	if err != nil {
-		tx.Rollback()
+		tx.Rollback(ctx)
 		return nil, fmt.Errorf("mark order delivered: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit delivery: %w", err)
 	}
 	return sub, nil

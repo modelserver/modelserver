@@ -1,11 +1,12 @@
 package store
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/modelserver/modelserver/internal/types"
 )
 
@@ -15,7 +16,7 @@ func (s *Store) CreatePlan(p *types.Plan) error {
 	ratesJSON, _ := marshalJSON(p.ModelCreditRates)
 	classicJSON, _ := marshalJSON(p.ClassicRules)
 
-	return s.db.QueryRow(`
+	return s.pool.QueryRow(context.Background(), `
 		INSERT INTO plans (name, slug, display_name, description, tier_level, group_tag,
 			price_per_period, period_months, credit_rules, model_credit_rates, classic_rules, is_active)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
@@ -29,7 +30,7 @@ func (s *Store) CreatePlan(p *types.Plan) error {
 func (s *Store) GetPlanByID(id string) (*types.Plan, error) {
 	p := &types.Plan{}
 	var creditRules, rates, classic []byte
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT id, name, slug, display_name, description, tier_level, group_tag,
 			price_per_period, period_months, credit_rules, model_credit_rates, classic_rules,
 			is_active, created_at, updated_at
@@ -37,7 +38,7 @@ func (s *Store) GetPlanByID(id string) (*types.Plan, error) {
 	).Scan(&p.ID, &p.Name, &p.Slug, &p.DisplayName, &p.Description, &p.TierLevel, &p.GroupTag,
 		&p.PricePerPeriod, &p.PeriodMonths, &creditRules, &rates, &classic,
 		&p.IsActive, &p.CreatedAt, &p.UpdatedAt)
-	if err == sql.ErrNoRows {
+	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
@@ -53,7 +54,7 @@ func (s *Store) GetPlanByID(id string) (*types.Plan, error) {
 func (s *Store) GetPlanBySlug(slug string) (*types.Plan, error) {
 	p := &types.Plan{}
 	var creditRules, rates, classic []byte
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT id, name, slug, display_name, description, tier_level, group_tag,
 			price_per_period, period_months, credit_rules, model_credit_rates, classic_rules,
 			is_active, created_at, updated_at
@@ -61,7 +62,7 @@ func (s *Store) GetPlanBySlug(slug string) (*types.Plan, error) {
 	).Scan(&p.ID, &p.Name, &p.Slug, &p.DisplayName, &p.Description, &p.TierLevel, &p.GroupTag,
 		&p.PricePerPeriod, &p.PeriodMonths, &creditRules, &rates, &classic,
 		&p.IsActive, &p.CreatedAt, &p.UpdatedAt)
-	if err == sql.ErrNoRows {
+	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
@@ -85,7 +86,7 @@ func (s *Store) ListPlans(activeOnly bool) ([]types.Plan, error) {
 	}
 	query += ` ORDER BY tier_level ASC, name ASC`
 
-	rows, err := s.db.Query(query)
+	rows, err := s.pool.Query(context.Background(), query)
 	if err != nil {
 		return nil, fmt.Errorf("list plans: %w", err)
 	}
@@ -95,7 +96,7 @@ func (s *Store) ListPlans(activeOnly bool) ([]types.Plan, error) {
 
 // ListPlansForProject returns active plans matching the project's billing_tags.
 func (s *Store) ListPlansForProject(projectID string) ([]types.Plan, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.pool.Query(context.Background(), `
 		SELECT pl.id, pl.name, pl.slug, pl.display_name, pl.description, pl.tier_level, pl.group_tag,
 			pl.price_per_period, pl.period_months, pl.credit_rules, pl.model_credit_rates, pl.classic_rules,
 			pl.is_active, pl.created_at, pl.updated_at
@@ -115,17 +116,17 @@ func (s *Store) ListPlansForProject(projectID string) ([]types.Plan, error) {
 func (s *Store) UpdatePlan(id string, updates map[string]interface{}) error {
 	updates["updated_at"] = time.Now()
 	query, args := buildUpdateQuery("plans", "id", id, updates)
-	_, err := s.db.Exec(query, args...)
+	_, err := s.pool.Exec(context.Background(), query, args...)
 	return err
 }
 
 // DeletePlan soft-deletes a plan by setting is_active to FALSE.
 func (s *Store) DeletePlan(id string) error {
-	_, err := s.db.Exec(`UPDATE plans SET is_active = FALSE, updated_at = NOW() WHERE id = $1`, id)
+	_, err := s.pool.Exec(context.Background(), `UPDATE plans SET is_active = FALSE, updated_at = NOW() WHERE id = $1`, id)
 	return err
 }
 
-func scanPlans(rows *sql.Rows) ([]types.Plan, error) {
+func scanPlans(rows pgx.Rows) ([]types.Plan, error) {
 	var plans []types.Plan
 	for rows.Next() {
 		var p types.Plan

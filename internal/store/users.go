@@ -1,15 +1,16 @@
 package store
 
 import (
-	"database/sql"
+	"context"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/modelserver/modelserver/internal/types"
 )
 
 // scanUser scans a user row (without auth fields).
-func scanUser(row interface{ Scan(...interface{}) error }) (*types.User, error) {
+func scanUser(row pgx.Row) (*types.User, error) {
 	u := &types.User{}
 	err := row.Scan(&u.ID, &u.Email, &u.Name, &u.Picture,
 		&u.IsSuperadmin, &u.MaxProjects, &u.Status, &u.CreatedAt, &u.UpdatedAt)
@@ -20,7 +21,7 @@ const userColumns = `id, email, name, COALESCE(picture, ''), is_superadmin, max_
 
 // CreateUser inserts a new user.
 func (s *Store) CreateUser(u *types.User) error {
-	return s.db.QueryRow(`
+	return s.pool.QueryRow(context.Background(), `
 		INSERT INTO users (email, name, picture, is_superadmin, max_projects, status)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, created_at, updated_at`,
@@ -31,8 +32,8 @@ func (s *Store) CreateUser(u *types.User) error {
 
 // GetUserByID returns a user by ID.
 func (s *Store) GetUserByID(id string) (*types.User, error) {
-	u, err := scanUser(s.db.QueryRow(`SELECT `+userColumns+` FROM users WHERE id = $1`, id))
-	if err == sql.ErrNoRows {
+	u, err := scanUser(s.pool.QueryRow(context.Background(), `SELECT `+userColumns+` FROM users WHERE id = $1`, id))
+	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
@@ -43,8 +44,8 @@ func (s *Store) GetUserByID(id string) (*types.User, error) {
 
 // GetUserByEmail returns a user by email.
 func (s *Store) GetUserByEmail(email string) (*types.User, error) {
-	u, err := scanUser(s.db.QueryRow(`SELECT `+userColumns+` FROM users WHERE email = $1`, email))
-	if err == sql.ErrNoRows {
+	u, err := scanUser(s.pool.QueryRow(context.Background(), `SELECT `+userColumns+` FROM users WHERE email = $1`, email))
+	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
@@ -55,12 +56,12 @@ func (s *Store) GetUserByEmail(email string) (*types.User, error) {
 
 // GetUserByOAuth returns a user who has an OAuth connection with the given provider and provider ID.
 func (s *Store) GetUserByOAuth(provider, providerID string) (*types.User, error) {
-	u, err := scanUser(s.db.QueryRow(`
+	u, err := scanUser(s.pool.QueryRow(context.Background(), `
 		SELECT u.id, u.email, u.name, COALESCE(u.picture, ''), u.is_superadmin, u.max_projects, u.status, u.created_at, u.updated_at
 		FROM users u
 		JOIN user_oauth_connections oc ON oc.user_id = u.id
 		WHERE oc.provider = $1 AND oc.provider_id = $2`, provider, providerID))
-	if err == sql.ErrNoRows {
+	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
@@ -71,12 +72,13 @@ func (s *Store) GetUserByOAuth(provider, providerID string) (*types.User, error)
 
 // ListUsers returns all users with pagination.
 func (s *Store) ListUsers(p types.PaginationParams) ([]types.User, int, error) {
+	ctx := context.Background()
 	var total int
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count users: %w", err)
 	}
 
-	rows, err := s.db.Query(fmt.Sprintf(`
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT `+userColumns+`
 		FROM users ORDER BY %s %s LIMIT $1 OFFSET $2`,
 		sanitizeSort(p.Sort, "created_at"), sanitizeOrder(p.Order)),
@@ -105,14 +107,14 @@ func (s *Store) ListUsers(p types.PaginationParams) ([]types.User, int, error) {
 func (s *Store) UpdateUser(id string, updates map[string]interface{}) error {
 	updates["updated_at"] = time.Now()
 	query, args := buildUpdateQuery("users", "id", id, updates)
-	_, err := s.db.Exec(query, args...)
+	_, err := s.pool.Exec(context.Background(), query, args...)
 	return err
 }
 
 // CountUserOwnedProjects returns the number of projects a user owns.
 func (s *Store) CountUserOwnedProjects(userID string) (int, error) {
 	var count int
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT COUNT(*) FROM project_members
 		WHERE user_id = $1 AND role = 'owner'`, userID,
 	).Scan(&count)
@@ -122,7 +124,7 @@ func (s *Store) CountUserOwnedProjects(userID string) (int, error) {
 // UserExists returns true if any user exists in the system.
 func (s *Store) UserExists() (bool, error) {
 	var exists bool
-	err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM users LIMIT 1)").Scan(&exists)
+	err := s.pool.QueryRow(context.Background(), "SELECT EXISTS(SELECT 1 FROM users LIMIT 1)").Scan(&exists)
 	return exists, err
 }
 
@@ -133,8 +135,8 @@ func (s *Store) UserExists() (bool, error) {
 // GetPasswordHash returns the bcrypt hash for a user, or "" if none is set.
 func (s *Store) GetPasswordHash(userID string) (string, error) {
 	var hash string
-	err := s.db.QueryRow(`SELECT password_hash FROM user_passwords WHERE user_id = $1`, userID).Scan(&hash)
-	if err == sql.ErrNoRows {
+	err := s.pool.QueryRow(context.Background(), `SELECT password_hash FROM user_passwords WHERE user_id = $1`, userID).Scan(&hash)
+	if err == pgx.ErrNoRows {
 		return "", nil
 	}
 	return hash, err
@@ -142,7 +144,7 @@ func (s *Store) GetPasswordHash(userID string) (string, error) {
 
 // SetPasswordHash upserts the password hash for a user.
 func (s *Store) SetPasswordHash(userID, hash string) error {
-	_, err := s.db.Exec(`
+	_, err := s.pool.Exec(context.Background(), `
 		INSERT INTO user_passwords (user_id, password_hash) VALUES ($1, $2)
 		ON CONFLICT (user_id) DO UPDATE SET password_hash = $2, updated_at = NOW()`,
 		userID, hash)
@@ -155,7 +157,7 @@ func (s *Store) SetPasswordHash(userID, hash string) error {
 
 // CreateOAuthConnection links an OAuth identity to a user.
 func (s *Store) CreateOAuthConnection(userID, provider, providerID string) error {
-	_, err := s.db.Exec(`
+	_, err := s.pool.Exec(context.Background(), `
 		INSERT INTO user_oauth_connections (user_id, provider, provider_id)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (provider, provider_id) DO NOTHING`,
@@ -165,7 +167,7 @@ func (s *Store) CreateOAuthConnection(userID, provider, providerID string) error
 
 // GetOAuthConnections returns all OAuth connections for a user.
 func (s *Store) GetOAuthConnections(userID string) ([]types.OAuthConnection, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.pool.Query(context.Background(), `
 		SELECT id, user_id, provider, provider_id, created_at
 		FROM user_oauth_connections WHERE user_id = $1
 		ORDER BY created_at`, userID)

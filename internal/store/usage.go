@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -39,7 +40,7 @@ type ChannelUsageSummary struct {
 
 // GetUsageByChannel returns usage aggregated by channel across all projects.
 func (s *Store) GetUsageByChannel(since, until time.Time) ([]ChannelUsageSummary, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.pool.Query(context.Background(), `
 		SELECT channel_id, COUNT(*) as request_count,
 			COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
 			COALESCE(SUM(credits_consumed), 0), COALESCE(AVG(latency_ms), 0),
@@ -74,7 +75,7 @@ func (s *Store) GetUsageByChannel(since, until time.Time) ([]ChannelUsageSummary
 
 // GetUsageByModel returns usage aggregated by model for a project.
 func (s *Store) GetUsageByModel(projectID string, since, until time.Time) ([]UsageSummary, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.pool.Query(context.Background(), `
 		SELECT model, COUNT(*) as request_count,
 			COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
 			COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0),
@@ -107,7 +108,7 @@ func (s *Store) GetUsageByModel(projectID string, since, until time.Time) ([]Usa
 
 // GetUsageByAPIKey returns usage aggregated by API key.
 func (s *Store) GetUsageByAPIKey(projectID string, since, until time.Time) ([]map[string]interface{}, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.pool.Query(context.Background(), `
 		SELECT r.api_key_id, k.name, k.key_prefix, COUNT(*) as request_count,
 			COALESCE(SUM(r.input_tokens + r.output_tokens), 0) as total_tokens,
 			COALESCE(SUM(r.credits_consumed), 0) as total_credits
@@ -147,7 +148,7 @@ func (s *Store) GetUsageByAPIKey(projectID string, since, until time.Time) ([]ma
 
 // GetDailyUsage returns daily usage breakdown.
 func (s *Store) GetDailyUsage(projectID string, since, until time.Time) ([]DailyUsage, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.pool.Query(context.Background(), `
 		SELECT DATE(created_at) as date, COUNT(*) as request_count,
 			COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
 			COALESCE(SUM(credits_consumed), 0) as total_credits
@@ -177,7 +178,7 @@ func (s *Store) GetDailyUsage(projectID string, since, until time.Time) ([]Daily
 // SumCreditsInWindow returns total credits consumed by an API key within a time window.
 func (s *Store) SumCreditsInWindow(apiKeyID string, windowStart time.Time) (float64, error) {
 	var total float64
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT COALESCE(SUM(credits_consumed), 0)
 		FROM requests
 		WHERE api_key_id = $1 AND created_at >= $2`,
@@ -189,7 +190,7 @@ func (s *Store) SumCreditsInWindow(apiKeyID string, windowStart time.Time) (floa
 // CountRequestsInWindow returns the number of requests by an API key within a time window.
 func (s *Store) CountRequestsInWindow(apiKeyID string, windowStart time.Time) (int64, error) {
 	var count int64
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT COUNT(*) FROM requests
 		WHERE api_key_id = $1 AND created_at >= $2`,
 		apiKeyID, windowStart,
@@ -200,7 +201,7 @@ func (s *Store) CountRequestsInWindow(apiKeyID string, windowStart time.Time) (i
 // SumTokensInWindow returns total tokens (input+output) by an API key within a time window.
 func (s *Store) SumTokensInWindow(apiKeyID string, windowStart time.Time) (int64, error) {
 	var total int64
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT COALESCE(SUM(input_tokens + output_tokens), 0)
 		FROM requests
 		WHERE api_key_id = $1 AND created_at >= $2`,
@@ -212,7 +213,7 @@ func (s *Store) SumTokensInWindow(apiKeyID string, windowStart time.Time) (int64
 // SumTokensInWindowForModel returns total tokens for a specific model.
 func (s *Store) SumTokensInWindowForModel(apiKeyID, model string, windowStart time.Time) (int64, error) {
 	var total int64
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT COALESCE(SUM(input_tokens + output_tokens), 0)
 		FROM requests
 		WHERE api_key_id = $1 AND model = $2 AND created_at >= $3`,
@@ -224,7 +225,7 @@ func (s *Store) SumTokensInWindowForModel(apiKeyID, model string, windowStart ti
 // CountRequestsInWindowForModel returns request count for a specific model.
 func (s *Store) CountRequestsInWindowForModel(apiKeyID, model string, windowStart time.Time) (int64, error) {
 	var count int64
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT COUNT(*) FROM requests
 		WHERE api_key_id = $1 AND model = $2 AND created_at >= $3`,
 		apiKeyID, model, windowStart,
@@ -237,7 +238,7 @@ func (s *Store) CountRequestsInWindowForModel(apiKeyID, model string, windowStar
 // SumCreditsInWindowByProject returns total credits consumed by all keys in a project within a time window.
 func (s *Store) SumCreditsInWindowByProject(projectID string, windowStart time.Time) (float64, error) {
 	var total float64
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT COALESCE(SUM(credits_consumed), 0)
 		FROM requests
 		WHERE project_id = $1 AND created_at >= $2`,
@@ -249,7 +250,7 @@ func (s *Store) SumCreditsInWindowByProject(projectID string, windowStart time.T
 // CountRequestsInWindowByProject returns the number of requests by all keys in a project within a time window.
 func (s *Store) CountRequestsInWindowByProject(projectID string, windowStart time.Time) (int64, error) {
 	var count int64
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT COUNT(*) FROM requests
 		WHERE project_id = $1 AND created_at >= $2`,
 		projectID, windowStart,
@@ -260,7 +261,7 @@ func (s *Store) CountRequestsInWindowByProject(projectID string, windowStart tim
 // SumTokensInWindowByProject returns total tokens for all keys in a project within a time window.
 func (s *Store) SumTokensInWindowByProject(projectID string, windowStart time.Time) (int64, error) {
 	var total int64
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT COALESCE(SUM(input_tokens + output_tokens), 0)
 		FROM requests
 		WHERE project_id = $1 AND created_at >= $2`,
@@ -274,7 +275,7 @@ func (s *Store) GetUsageOverview(projectID string, since, until time.Time) (map[
 	var requestCount int64
 	var totalTokens int64
 	var totalCredits float64
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT COUNT(*), COALESCE(SUM(input_tokens + output_tokens), 0), COALESCE(SUM(credits_consumed), 0)
 		FROM requests WHERE project_id = $1 AND created_at >= $2 AND created_at <= $3`,
 		projectID, since, until,

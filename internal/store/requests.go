@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -9,7 +10,7 @@ import (
 
 // CreateRequest inserts a new request log.
 func (s *Store) CreateRequest(r *types.Request) error {
-	return s.db.QueryRow(`
+	return s.pool.QueryRow(context.Background(), `
 		INSERT INTO requests (project_id, api_key_id, channel_id, trace_id, msg_id, provider, model, streaming,
 			status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 			credits_consumed, latency_ms, ttft_ms, error_message)
@@ -24,13 +25,14 @@ func (s *Store) CreateRequest(r *types.Request) error {
 
 // BatchCreateRequests inserts multiple request logs efficiently.
 func (s *Store) BatchCreateRequests(requests []types.Request) error {
-	tx, err := s.db.Begin()
+	ctx := context.Background()
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	for i := range requests {
 		r := &requests[i]
-		err := tx.QueryRow(`
+		err := tx.QueryRow(ctx, `
 			INSERT INTO requests (project_id, api_key_id, channel_id, trace_id, msg_id, provider, model, streaming,
 				status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 				credits_consumed, latency_ms, ttft_ms, error_message)
@@ -42,24 +44,25 @@ func (s *Store) BatchCreateRequests(requests []types.Request) error {
 			r.CreditsConsumed, r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage),
 		).Scan(&r.ID, &r.CreatedAt)
 		if err != nil {
-			tx.Rollback()
+			tx.Rollback(ctx)
 			return err
 		}
 	}
-	return tx.Commit()
+	return tx.Commit(ctx)
 }
 
 // ListRequests returns request logs for a project with pagination and filters.
 func (s *Store) ListRequests(projectID string, p types.PaginationParams, filters RequestFilters) ([]types.Request, int, error) {
+	ctx := context.Background()
 	where, args, argN := buildRequestFilters(projectID, filters)
 
 	var total int
-	if err := s.db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM requests %s", where), args...).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, fmt.Sprintf("SELECT COUNT(*) FROM requests %s", where), args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
 	args = append(args, p.Limit(), p.Offset())
-	rows, err := s.db.Query(fmt.Sprintf(`
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT id, project_id, api_key_id, channel_id, COALESCE(trace_id::text, ''), COALESCE(msg_id, ''),
 			provider, model, streaming, status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 			credits_consumed, latency_ms, ttft_ms, COALESCE(error_message, ''), created_at
@@ -135,7 +138,7 @@ func buildRequestFilters(projectID string, f RequestFilters) (string, []interfac
 
 // ListRequestsByTraceID returns all request logs associated with a trace ID.
 func (s *Store) ListRequestsByTraceID(traceID string) ([]types.Request, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.pool.Query(context.Background(), `
 		SELECT id, project_id, api_key_id, channel_id, COALESCE(trace_id::text, ''), COALESCE(msg_id, ''),
 			provider, model, streaming, status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 			credits_consumed, latency_ms, ttft_ms, COALESCE(error_message, ''), created_at

@@ -1,16 +1,17 @@
 package store
 
 import (
-	"database/sql"
+	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/modelserver/modelserver/internal/types"
 )
 
 // CreateTrace inserts a new trace.
 func (s *Store) CreateTrace(t *types.Trace) error {
 	threadID := nullString(t.ThreadID)
-	return s.db.QueryRow(`
+	return s.pool.QueryRow(context.Background(), `
 		INSERT INTO traces (project_id, thread_id, source)
 		VALUES ($1, $2, $3)
 		RETURNING id, created_at, updated_at`,
@@ -21,31 +22,28 @@ func (s *Store) CreateTrace(t *types.Trace) error {
 // GetTraceByID returns a trace by ID.
 func (s *Store) GetTraceByID(id string) (*types.Trace, error) {
 	t := &types.Trace{}
-	var threadID sql.NullString
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT id, project_id, COALESCE(thread_id::text, ''), source, created_at, updated_at
 		FROM traces WHERE id = $1`, id,
 	).Scan(&t.ID, &t.ProjectID, &t.ThreadID, &t.Source, &t.CreatedAt, &t.UpdatedAt)
-	if err == sql.ErrNoRows {
+	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get trace: %w", err)
-	}
-	if threadID.Valid {
-		t.ThreadID = threadID.String
 	}
 	return t, nil
 }
 
 // ListTraces returns traces for a project with pagination.
 func (s *Store) ListTraces(projectID string, p types.PaginationParams) ([]types.Trace, int, error) {
+	ctx := context.Background()
 	var total int
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM traces WHERE project_id = $1", projectID).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM traces WHERE project_id = $1", projectID).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
-	rows, err := s.db.Query(fmt.Sprintf(`
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT id, project_id, COALESCE(thread_id::text, ''), source, created_at, updated_at
 		FROM traces WHERE project_id = $1
 		ORDER BY %s %s LIMIT $2 OFFSET $3`,
@@ -73,7 +71,7 @@ func (s *Store) ListTraces(projectID string, p types.PaginationParams) ([]types.
 
 // CreateThread inserts a new thread.
 func (s *Store) CreateThread(t *types.Thread) error {
-	return s.db.QueryRow(`
+	return s.pool.QueryRow(context.Background(), `
 		INSERT INTO threads (project_id)
 		VALUES ($1)
 		RETURNING id, created_at, updated_at`,
@@ -84,11 +82,11 @@ func (s *Store) CreateThread(t *types.Thread) error {
 // GetThreadByID returns a thread by ID.
 func (s *Store) GetThreadByID(id string) (*types.Thread, error) {
 	t := &types.Thread{}
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT id, project_id, created_at, updated_at
 		FROM threads WHERE id = $1`, id,
 	).Scan(&t.ID, &t.ProjectID, &t.CreatedAt, &t.UpdatedAt)
-	if err == sql.ErrNoRows {
+	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
@@ -99,12 +97,13 @@ func (s *Store) GetThreadByID(id string) (*types.Thread, error) {
 
 // ListThreads returns threads for a project with pagination.
 func (s *Store) ListThreads(projectID string, p types.PaginationParams) ([]types.Thread, int, error) {
+	ctx := context.Background()
 	var total int
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM threads WHERE project_id = $1", projectID).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM threads WHERE project_id = $1", projectID).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
-	rows, err := s.db.Query(fmt.Sprintf(`
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT id, project_id, created_at, updated_at
 		FROM threads WHERE project_id = $1
 		ORDER BY %s %s LIMIT $2 OFFSET $3`,
@@ -134,7 +133,7 @@ func (s *Store) ListThreads(projectID string, p types.PaginationParams) ([]types
 // This is used by the proxy to lazily register traces on first use.
 func (s *Store) EnsureTrace(projectID, traceID, threadID, source string) error {
 	tidArg := nullString(threadID)
-	_, err := s.db.Exec(`
+	_, err := s.pool.Exec(context.Background(), `
 		INSERT INTO traces (id, project_id, thread_id, source)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (id) DO NOTHING`,

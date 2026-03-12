@@ -1,11 +1,12 @@
 package store
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/modelserver/modelserver/internal/types"
 )
 
@@ -15,7 +16,7 @@ func (s *Store) CreatePolicy(p *types.RateLimitPolicy) error {
 	ratesJSON, _ := json.Marshal(p.ModelCreditRates)
 	classicJSON, _ := json.Marshal(p.ClassicRules)
 
-	return s.db.QueryRow(`
+	return s.pool.QueryRow(context.Background(), `
 		INSERT INTO rate_limit_policies (project_id, name, is_default, credit_rules, model_credit_rates, classic_rules, starts_at, expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, created_at, updated_at`,
@@ -28,13 +29,13 @@ func (s *Store) CreatePolicy(p *types.RateLimitPolicy) error {
 func (s *Store) GetPolicyByID(id string) (*types.RateLimitPolicy, error) {
 	p := &types.RateLimitPolicy{}
 	var creditRules, rates, classic []byte
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT id, project_id, name, is_default, credit_rules, model_credit_rates, classic_rules,
 			starts_at, expires_at, created_at, updated_at
 		FROM rate_limit_policies WHERE id = $1`, id,
 	).Scan(&p.ID, &p.ProjectID, &p.Name, &p.IsDefault, &creditRules, &rates, &classic,
 		&p.StartsAt, &p.ExpiresAt, &p.CreatedAt, &p.UpdatedAt)
-	if err == sql.ErrNoRows {
+	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
@@ -50,14 +51,14 @@ func (s *Store) GetPolicyByID(id string) (*types.RateLimitPolicy, error) {
 func (s *Store) GetDefaultPolicy(projectID string) (*types.RateLimitPolicy, error) {
 	p := &types.RateLimitPolicy{}
 	var creditRules, rates, classic []byte
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT id, project_id, name, is_default, credit_rules, model_credit_rates, classic_rules,
 			starts_at, expires_at, created_at, updated_at
 		FROM rate_limit_policies WHERE project_id = $1 AND is_default = TRUE
 		LIMIT 1`, projectID,
 	).Scan(&p.ID, &p.ProjectID, &p.Name, &p.IsDefault, &creditRules, &rates, &classic,
 		&p.StartsAt, &p.ExpiresAt, &p.CreatedAt, &p.UpdatedAt)
-	if err == sql.ErrNoRows {
+	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
@@ -71,7 +72,7 @@ func (s *Store) GetDefaultPolicy(projectID string) (*types.RateLimitPolicy, erro
 
 // ListPolicies returns policies for a project.
 func (s *Store) ListPolicies(projectID string) ([]types.RateLimitPolicy, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.pool.Query(context.Background(), `
 		SELECT id, project_id, name, is_default, credit_rules, model_credit_rates, classic_rules,
 			starts_at, expires_at, created_at, updated_at
 		FROM rate_limit_policies WHERE project_id = $1
@@ -105,13 +106,13 @@ func (s *Store) ListPolicies(projectID string) ([]types.RateLimitPolicy, error) 
 func (s *Store) UpdatePolicy(id string, updates map[string]interface{}) error {
 	updates["updated_at"] = time.Now()
 	query, args := buildUpdateQuery("rate_limit_policies", "id", id, updates)
-	_, err := s.db.Exec(query, args...)
+	_, err := s.pool.Exec(context.Background(), query, args...)
 	return err
 }
 
 // DeletePolicy deletes a policy.
 func (s *Store) DeletePolicy(id string) error {
-	_, err := s.db.Exec("DELETE FROM rate_limit_policies WHERE id = $1", id)
+	_, err := s.pool.Exec(context.Background(), "DELETE FROM rate_limit_policies WHERE id = $1", id)
 	return err
 }
 

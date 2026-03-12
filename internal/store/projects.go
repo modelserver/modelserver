@@ -1,27 +1,28 @@
 package store
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5"
 	"github.com/modelserver/modelserver/internal/types"
 )
 
 const projectColumns = `id, name, COALESCE(description, ''), created_by, status, settings, billing_tags, created_at, updated_at`
 
-func scanProject(row interface{ Scan(...interface{}) error }) (*types.Project, error) {
+func scanProject(row pgx.Row) (*types.Project, error) {
 	p := &types.Project{}
 	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.CreatedBy, &p.Status,
-		&p.Settings, pq.Array(&p.BillingTags), &p.CreatedAt, &p.UpdatedAt)
+		&p.Settings, &p.BillingTags, &p.CreatedAt, &p.UpdatedAt)
 	return p, err
 }
 
 // CreateProject inserts a new project and adds the creator as owner.
 func (s *Store) CreateProject(p *types.Project) error {
-	tx, err := s.db.Begin()
+	ctx := context.Background()
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -31,32 +32,32 @@ func (s *Store) CreateProject(p *types.Project) error {
 		settings = json.RawMessage(`{}`)
 	}
 
-	err = tx.QueryRow(`
+	err = tx.QueryRow(ctx, `
 		INSERT INTO projects (name, description, created_by, status, settings, billing_tags)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, created_at, updated_at`,
-		p.Name, nullString(p.Description), p.CreatedBy, p.Status, settings, pq.Array(p.BillingTags),
+		p.Name, nullString(p.Description), p.CreatedBy, p.Status, settings, p.BillingTags,
 	).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
-		tx.Rollback()
+		tx.Rollback(ctx)
 		return fmt.Errorf("insert project: %w", err)
 	}
 
-	_, err = tx.Exec(`
+	_, err = tx.Exec(ctx, `
 		INSERT INTO project_members (user_id, project_id, role)
 		VALUES ($1, $2, 'owner')`, p.CreatedBy, p.ID)
 	if err != nil {
-		tx.Rollback()
+		tx.Rollback(ctx)
 		return fmt.Errorf("add owner member: %w", err)
 	}
 
-	return tx.Commit()
+	return tx.Commit(ctx)
 }
 
 // GetProjectByID returns a project by ID.
 func (s *Store) GetProjectByID(id string) (*types.Project, error) {
-	p, err := scanProject(s.db.QueryRow(`SELECT `+projectColumns+` FROM projects WHERE id = $1`, id))
-	if err == sql.ErrNoRows {
+	p, err := scanProject(s.pool.QueryRow(context.Background(), `SELECT `+projectColumns+` FROM projects WHERE id = $1`, id))
+	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
@@ -67,8 +68,9 @@ func (s *Store) GetProjectByID(id string) (*types.Project, error) {
 
 // ListUserProjects returns projects the user is a member of.
 func (s *Store) ListUserProjects(userID string, p types.PaginationParams) ([]types.Project, int, error) {
+	ctx := context.Background()
 	var total int
-	if err := s.db.QueryRow(`
+	if err := s.pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM projects
 		JOIN project_members ON projects.id = project_members.project_id
 		WHERE project_members.user_id = $1`, userID,
@@ -76,7 +78,7 @@ func (s *Store) ListUserProjects(userID string, p types.PaginationParams) ([]typ
 		return nil, 0, fmt.Errorf("count projects: %w", err)
 	}
 
-	rows, err := s.db.Query(fmt.Sprintf(`
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT p.id, p.name, COALESCE(p.description, ''), p.created_by, p.status, p.settings, p.billing_tags, p.created_at, p.updated_at
 		FROM projects p
 		JOIN project_members pm ON p.id = pm.project_id
@@ -106,12 +108,13 @@ func (s *Store) ListUserProjects(userID string, p types.PaginationParams) ([]typ
 
 // ListAllProjects returns all projects with pagination (for superadmin).
 func (s *Store) ListAllProjects(p types.PaginationParams) ([]types.Project, int, error) {
+	ctx := context.Background()
 	var total int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM projects`).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM projects`).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count projects: %w", err)
 	}
 
-	rows, err := s.db.Query(fmt.Sprintf(`
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT `+projectColumns+`
 		FROM projects
 		ORDER BY %s %s LIMIT $1 OFFSET $2`,
@@ -141,13 +144,13 @@ func (s *Store) ListAllProjects(p types.PaginationParams) ([]types.Project, int,
 func (s *Store) UpdateProject(id string, updates map[string]interface{}) error {
 	updates["updated_at"] = time.Now()
 	query, args := buildUpdateQuery("projects", "id", id, updates)
-	_, err := s.db.Exec(query, args...)
+	_, err := s.pool.Exec(context.Background(), query, args...)
 	return err
 }
 
 // DeleteProject deletes a project by ID.
 func (s *Store) DeleteProject(id string) error {
-	_, err := s.db.Exec("DELETE FROM projects WHERE id = $1", id)
+	_, err := s.pool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", id)
 	return err
 }
 
@@ -155,7 +158,7 @@ func (s *Store) DeleteProject(id string) error {
 
 // AddProjectMember adds a member to a project.
 func (s *Store) AddProjectMember(projectID, userID, role string) error {
-	_, err := s.db.Exec(`
+	_, err := s.pool.Exec(context.Background(), `
 		INSERT INTO project_members (user_id, project_id, role)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (user_id, project_id) DO UPDATE SET role = EXCLUDED.role`,
@@ -166,12 +169,12 @@ func (s *Store) AddProjectMember(projectID, userID, role string) error {
 // GetProjectMember returns a single member.
 func (s *Store) GetProjectMember(projectID, userID string) (*types.ProjectMember, error) {
 	m := &types.ProjectMember{}
-	err := s.db.QueryRow(`
+	err := s.pool.QueryRow(context.Background(), `
 		SELECT user_id, project_id, role, created_at
 		FROM project_members WHERE project_id = $1 AND user_id = $2`,
 		projectID, userID,
 	).Scan(&m.UserID, &m.ProjectID, &m.Role, &m.CreatedAt)
-	if err == sql.ErrNoRows {
+	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
@@ -182,7 +185,7 @@ func (s *Store) GetProjectMember(projectID, userID string) (*types.ProjectMember
 
 // ListProjectMembers returns all members of a project with user info.
 func (s *Store) ListProjectMembers(projectID string) ([]types.ProjectMember, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.pool.Query(context.Background(), `
 		SELECT pm.user_id, pm.project_id, pm.role, pm.created_at,
 			u.id, u.email, u.name, COALESCE(u.picture, '')
 		FROM project_members pm
@@ -213,7 +216,7 @@ func (s *Store) ListProjectMembers(projectID string) ([]types.ProjectMember, err
 
 // UpdateProjectMemberRole updates a member's role.
 func (s *Store) UpdateProjectMemberRole(projectID, userID, role string) error {
-	_, err := s.db.Exec(`
+	_, err := s.pool.Exec(context.Background(), `
 		UPDATE project_members SET role = $1
 		WHERE project_id = $2 AND user_id = $3`, role, projectID, userID)
 	return err
@@ -221,7 +224,7 @@ func (s *Store) UpdateProjectMemberRole(projectID, userID, role string) error {
 
 // RemoveProjectMember removes a member from a project.
 func (s *Store) RemoveProjectMember(projectID, userID string) error {
-	_, err := s.db.Exec(`
+	_, err := s.pool.Exec(context.Background(), `
 		DELETE FROM project_members WHERE project_id = $1 AND user_id = $2`,
 		projectID, userID)
 	return err

@@ -73,7 +73,7 @@ func main() {
 		log.Fatalf("failed to connect to database: %v", err)
 	}
 	defer st.Close()
-	logger.Info("connected to database")
+	logger.Info("connected to database (pgxpool)")
 
 	// Initialize encryption key.
 	var encryptionKey []byte
@@ -154,7 +154,7 @@ func main() {
 		w.Write([]byte("ok"))
 	})
 	proxyRouter.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		if err := st.DB().Ping(); err != nil {
+		if err := st.Ping(r.Context()); err != nil {
 			http.Error(w, "database not ready", http.StatusServiceUnavailable)
 			return
 		}
@@ -190,7 +190,7 @@ func main() {
 		w.Write([]byte("ok"))
 	})
 	adminRouter.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		if err := st.DB().Ping(); err != nil {
+		if err := st.Ping(r.Context()); err != nil {
 			http.Error(w, "database not ready", http.StatusServiceUnavailable)
 			return
 		}
