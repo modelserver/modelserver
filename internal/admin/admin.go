@@ -84,6 +84,23 @@ func RequireSuperadmin(next http.Handler) http.Handler {
 	})
 }
 
+// requireRole returns true if the caller has one of the allowed roles (or is superadmin).
+// Returns false and writes a 403 error if not authorized.
+func requireRole(w http.ResponseWriter, r *http.Request, roles ...string) bool {
+	member := MemberFromContext(r.Context())
+	if member == nil {
+		// No member = superadmin (bypassed projectAccessMiddleware)
+		return true
+	}
+	for _, role := range roles {
+		if member.Role == role {
+			return true
+		}
+	}
+	writeError(w, http.StatusForbidden, "forbidden", "insufficient permissions")
+	return false
+}
+
 func extractBearer(r *http.Request) string {
 	h := r.Header.Get("Authorization")
 	if strings.HasPrefix(h, "Bearer ") {

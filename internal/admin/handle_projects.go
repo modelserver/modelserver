@@ -88,6 +88,9 @@ func handleGetProject(st *store.Store) http.HandlerFunc {
 
 func handleUpdateProject(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireRole(w, r, types.RoleOwner, types.RoleMaintainer) {
+			return
+		}
 		projectID := chi.URLParam(r, "projectID")
 		var body map[string]interface{}
 		if err := decodeBody(r, &body); err != nil {
@@ -118,6 +121,9 @@ func handleUpdateProject(st *store.Store) http.HandlerFunc {
 
 func handleDeleteProject(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireRole(w, r, types.RoleOwner) {
+			return
+		}
 		projectID := chi.URLParam(r, "projectID")
 		if err := st.DeleteProject(projectID); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to delete project")
@@ -143,6 +149,9 @@ func handleListMembers(st *store.Store) http.HandlerFunc {
 
 func handleAddMember(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireRole(w, r, types.RoleOwner, types.RoleMaintainer) {
+			return
+		}
 		projectID := chi.URLParam(r, "projectID")
 		var body struct {
 			UserID string `json:"user_id"`
@@ -166,6 +175,9 @@ func handleAddMember(st *store.Store) http.HandlerFunc {
 
 func handleUpdateMember(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireRole(w, r, types.RoleOwner, types.RoleMaintainer) {
+			return
+		}
 		projectID := chi.URLParam(r, "projectID")
 		userID := chi.URLParam(r, "userID")
 		var body struct {
@@ -185,6 +197,9 @@ func handleUpdateMember(st *store.Store) http.HandlerFunc {
 
 func handleRemoveMember(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireRole(w, r, types.RoleOwner, types.RoleMaintainer) {
+			return
+		}
 		projectID := chi.URLParam(r, "projectID")
 		userID := chi.URLParam(r, "userID")
 		if err := st.RemoveProjectMember(projectID, userID); err != nil {

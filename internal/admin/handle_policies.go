@@ -24,6 +24,9 @@ func handleListPolicies(st *store.Store) http.HandlerFunc {
 
 func handleCreatePolicy(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireRole(w, r, types.RoleOwner, types.RoleMaintainer) {
+			return
+		}
 		projectID := chi.URLParam(r, "projectID")
 		var body struct {
 			Name             string                       `json:"name"`
@@ -83,6 +86,9 @@ func handleGetPolicy(st *store.Store) http.HandlerFunc {
 
 func handleUpdatePolicy(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireRole(w, r, types.RoleOwner, types.RoleMaintainer) {
+			return
+		}
 		policyID := chi.URLParam(r, "policyID")
 		var body map[string]interface{}
 		if err := decodeBody(r, &body); err != nil {
@@ -120,6 +126,9 @@ func handleUpdatePolicy(st *store.Store) http.HandlerFunc {
 
 func handleDeletePolicy(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireRole(w, r, types.RoleOwner, types.RoleMaintainer) {
+			return
+		}
 		if err := st.DeletePolicy(chi.URLParam(r, "policyID")); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to delete policy")
 			return
