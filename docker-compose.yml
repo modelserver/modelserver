@@ -1,11 +1,7 @@
-version: "3.8"
 services:
   postgres:
-    image: postgres:17
-    environment:
-      POSTGRES_DB: modelserver
-      POSTGRES_USER: modelserver
-      POSTGRES_PASSWORD: modelserver
+    image: postgres:18-alpine
+    env_file: .env.postgres
     ports:
       - "5432:5432"
     volumes:
@@ -19,40 +15,37 @@ services:
 
   modelserver:
     build: .
-    ports:
-      - "8080:8080"
-      - "8081:8081"
-    environment:
-      - MODELSERVER_DB_URL=postgres://modelserver:modelserver@postgres:5432/modelserver?sslmode=disable
-      - MODELSERVER_AUTH_JWT_SECRET=change-me-in-production-must-be-at-least-32-chars
-      - MODELSERVER_ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-      - MODELSERVER_BILLING_WEBHOOK_SECRET=payserver-webhook-secret-change-me
-      - MODELSERVER_BILLING_PAYSERVER_URL=http://payserver:8090
+    env_file: .env.modelserver
+    expose:
+      - "8080"
+      - "8081"
     depends_on:
       postgres:
         condition: service_healthy
 
   payserver:
     build: ./services/payserver
-    ports:
-      - "8090:8090"
-    environment:
-      - PAYSERVER_DB_URL=postgres://modelserver:modelserver@postgres:5432/payserver?sslmode=disable
-      - PAYSERVER_API_KEY=payserver-api-key-change-me
-      - PAYSERVER_CALLBACK_MODELSERVER_URL=http://modelserver:8081/api/v1/billing/webhook/delivery
-      - PAYSERVER_CALLBACK_WEBHOOK_SECRET=payserver-webhook-secret-change-me
+    env_file: .env.payserver
+    expose:
+      - "8090"
     depends_on:
       postgres:
         condition: service_healthy
       modelserver:
         condition: service_started
 
-  dashboard:
-    build: ./dashboard
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://codeapi.cs.ac.cn}
+    env_file: .env.gateway
     ports:
-      - "3000:80"
+      - "80:80"
     depends_on:
       - modelserver
+      - payserver
 
 volumes:
   pgdata:
