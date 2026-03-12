@@ -1,0 +1,147 @@
+import { useCurrentProject } from "@/hooks/useCurrentProject";
+import { useProject } from "@/api/projects";
+import { useUsageOverview, useDailyUsage } from "@/api/usage";
+import { useRequests } from "@/api/requests";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { StatCard } from "@/components/shared/StatCard";
+import { DataTable, type Column } from "@/components/shared/DataTable";
+import { StatusBadge } from "@/components/shared/StatusBadge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import type { Request } from "@/api/types";
+import { Activity, Zap, Coins, Clock } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+
+function formatNumber(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+const recentColumns: Column<Request>[] = [
+  { header: "Model", accessor: "model" },
+  {
+    header: "Status",
+    accessor: (r) => <StatusBadge status={r.status} />,
+  },
+  {
+    header: "Tokens",
+    accessor: (r) => formatNumber(r.input_tokens + r.output_tokens),
+    className: "text-right",
+  },
+  {
+    header: "Latency",
+    accessor: (r) => `${r.latency_ms}ms`,
+    className: "text-right",
+  },
+  {
+    header: "Time",
+    accessor: (r) => new Date(r.created_at).toLocaleString(),
+  },
+];
+
+export function OverviewPage() {
+  const projectId = useCurrentProject();
+  const { data: project } = useProject(projectId);
+  const { data: usage } = useUsageOverview(projectId);
+  const { data: daily } = useDailyUsage(projectId);
+  const { data: recentData } = useRequests(projectId, { per_page: 5 });
+
+  const overview = usage?.data;
+  const dailyData = daily?.data ?? [];
+  const recentRequests = recentData?.data ?? [];
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title={project?.data.name ?? "Project"}
+        description={project?.data.description}
+      />
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          title="Total Requests"
+          value={formatNumber(overview?.request_count ?? 0)}
+          description="Last 30 days"
+          icon={<Activity className="h-4 w-4" />}
+        />
+        <StatCard
+          title="Total Tokens"
+          value={formatNumber(overview?.total_tokens ?? 0)}
+          description="Last 30 days"
+          icon={<Zap className="h-4 w-4" />}
+        />
+        <StatCard
+          title="Credits Used"
+          value={formatNumber(overview?.total_credits ?? 0)}
+          description="Last 30 days"
+          icon={<Coins className="h-4 w-4" />}
+        />
+        <StatCard
+          title="Avg Daily"
+          value={formatNumber(
+            dailyData.length > 0
+              ? Math.round(
+                  dailyData.reduce((s, d) => s + d.request_count, 0) /
+                    dailyData.length,
+                )
+              : 0,
+          )}
+          description="Requests/day"
+          icon={<Clock className="h-4 w-4" />}
+        />
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Daily Requests</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {dailyData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={250}>
+              <BarChart data={dailyData}>
+                <XAxis
+                  dataKey="date"
+                  tickFormatter={(d: string) => d.slice(5)}
+                  fontSize={12}
+                  stroke="currentColor"
+                  opacity={0.5}
+                />
+                <YAxis fontSize={12} stroke="currentColor" opacity={0.5} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "hsl(var(--card))",
+                    border: "1px solid hsl(var(--border))",
+                    borderRadius: "var(--radius)",
+                  }}
+                />
+                <Bar
+                  dataKey="request_count"
+                  fill="oklch(0.488 0.243 264.376)"
+                  radius={[4, 4, 0, 0]}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <p className="py-8 text-center text-muted-foreground">
+              No data yet
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Recent Requests</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <DataTable
+            columns={recentColumns}
+            data={recentRequests}
+            keyFn={(r) => r.id}
+            emptyMessage="No requests yet"
+          />
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
