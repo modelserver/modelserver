@@ -46,10 +46,9 @@ func handleCreateKey(st *store.Store, encKey []byte) http.HandlerFunc {
 		projectID := chi.URLParam(r, "projectID")
 		user := UserFromContext(r.Context())
 		var body struct {
-			Name              string   `json:"name"`
-			Description       string   `json:"description"`
-			AllowedModels     []string `json:"allowed_models"`
-			RateLimitPolicyID string   `json:"rate_limit_policy_id"`
+			Name          string   `json:"name"`
+			Description   string   `json:"description"`
+			AllowedModels []string `json:"allowed_models"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
@@ -78,15 +77,14 @@ func handleCreateKey(st *store.Store, encKey []byte) http.HandlerFunc {
 		hash := sha256.Sum256([]byte(plaintext))
 
 		key := &types.APIKey{
-			ProjectID:         projectID,
-			CreatedBy:         user.ID,
-			KeyHash:           hex.EncodeToString(hash[:]),
-			KeyPrefix:         plaintext[:len(types.APIKeyPrefix)+8],
-			Name:              body.Name,
-			Description:       body.Description,
-			Status:            types.APIKeyStatusActive,
-			RateLimitPolicyID: body.RateLimitPolicyID,
-			AllowedModels:     body.AllowedModels,
+			ProjectID:     projectID,
+			CreatedBy:     user.ID,
+			KeyHash:       hex.EncodeToString(hash[:]),
+			KeyPrefix:     plaintext[:len(types.APIKeyPrefix)+8],
+			Name:          body.Name,
+			Description:   body.Description,
+			Status:        types.APIKeyStatusActive,
+			AllowedModels: body.AllowedModels,
 		}
 
 		if err := st.CreateAPIKey(key); err != nil {
@@ -138,7 +136,7 @@ func handleUpdateKey(st *store.Store) http.HandlerFunc {
 		}
 
 		updates := make(map[string]interface{})
-		for _, field := range []string{"name", "description", "status", "rate_limit_policy_id", "allowed_models"} {
+		for _, field := range []string{"name", "description", "status", "allowed_models"} {
 			if v, ok := body[field]; ok {
 				updates[field] = v
 			}

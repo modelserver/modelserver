@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useCurrentProject } from "@/hooks/useCurrentProject";
 import { useKeys, useCreateKey, useUpdateKey } from "@/api/keys";
-import { usePolicies } from "@/api/policies";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { StatusBadge } from "@/components/shared/StatusBadge";
@@ -21,13 +20,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
 import type { APIKey } from "@/api/types";
 import { Plus, MoreHorizontal, Copy, Check } from "lucide-react";
@@ -35,27 +27,22 @@ import { Plus, MoreHorizontal, Copy, Check } from "lucide-react";
 export function KeysPage() {
   const projectId = useCurrentProject();
   const { data, isLoading } = useKeys(projectId);
-  const { data: policiesData } = usePolicies(projectId);
   const createKey = useCreateKey(projectId);
   const updateKey = useUpdateKey(projectId);
 
   const [showCreate, setShowCreate] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
-  const [newKeyPolicyId, setNewKeyPolicyId] = useState("");
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   const keys = data?.data ?? [];
-  const policies = policiesData?.data ?? [];
 
   async function handleCreate() {
     const res = await createKey.mutateAsync({
       name: newKeyName,
-      rate_limit_policy_id: newKeyPolicyId || undefined,
     });
     setShowCreate(false);
     setNewKeyName("");
-    setNewKeyPolicyId("");
     setRevealedKey(res.key);
   }
 
@@ -67,22 +54,12 @@ export function KeysPage() {
     }
   }
 
-  function policyName(policyId: string | undefined) {
-    if (!policyId) return "—";
-    const p = policies.find((pol) => pol.id === policyId);
-    return p ? p.name : policyId.slice(0, 8);
-  }
-
   const columns: Column<APIKey>[] = [
     { header: "Name", accessor: "name" },
     { header: "Prefix", accessor: "key_prefix" },
     {
       header: "Status",
       accessor: (k) => <StatusBadge status={k.status} />,
-    },
-    {
-      header: "Policy",
-      accessor: (k) => policyName(k.rate_limit_policy_id),
     },
     {
       header: "Last Used",
@@ -184,27 +161,6 @@ export function KeysPage() {
                 placeholder="Production key"
               />
             </div>
-            {policies.length > 0 && (
-              <div className="space-y-2">
-                <Label>Rate Limit Policy</Label>
-                <Select
-                  value={newKeyPolicyId}
-                  onValueChange={(v) => setNewKeyPolicyId(v ?? "")}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Default (none)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {policies.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.name}
-                        {p.is_default ? " (default)" : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
           </div>
           <DialogFooter>
             <Button

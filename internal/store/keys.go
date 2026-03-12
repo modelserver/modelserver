@@ -12,33 +12,28 @@ import (
 // CreateAPIKey inserts a new API key.
 func (s *Store) CreateAPIKey(k *types.APIKey) error {
 	return s.pool.QueryRow(context.Background(), `
-		INSERT INTO api_keys (project_id, created_by, key_hash, key_prefix, name, description, status, rate_limit_policy_id, allowed_models)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO api_keys (project_id, created_by, key_hash, key_prefix, name, description, status, allowed_models)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, created_at, updated_at`,
 		k.ProjectID, k.CreatedBy, k.KeyHash, k.KeyPrefix, k.Name,
-		nullString(k.Description), k.Status,
-		nullString(k.RateLimitPolicyID), k.AllowedModels,
+		nullString(k.Description), k.Status, k.AllowedModels,
 	).Scan(&k.ID, &k.CreatedAt, &k.UpdatedAt)
 }
 
 // GetAPIKeyByHash returns an API key by its hash (used for authentication).
 func (s *Store) GetAPIKeyByHash(hash string) (*types.APIKey, error) {
 	k := &types.APIKey{}
-	var policyID *string
 	err := s.pool.QueryRow(context.Background(), `
 		SELECT id, project_id, created_by, key_hash, key_prefix, name, COALESCE(description, ''),
-			status, rate_limit_policy_id, allowed_models, expires_at, last_used_at, created_at, updated_at
+			status, allowed_models, expires_at, last_used_at, created_at, updated_at
 		FROM api_keys WHERE key_hash = $1`, hash,
 	).Scan(&k.ID, &k.ProjectID, &k.CreatedBy, &k.KeyHash, &k.KeyPrefix, &k.Name, &k.Description,
-		&k.Status, &policyID, &k.AllowedModels, &k.ExpiresAt, &k.LastUsedAt, &k.CreatedAt, &k.UpdatedAt)
+		&k.Status, &k.AllowedModels, &k.ExpiresAt, &k.LastUsedAt, &k.CreatedAt, &k.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get api key by hash: %w", err)
-	}
-	if policyID != nil {
-		k.RateLimitPolicyID = *policyID
 	}
 	return k, nil
 }
@@ -46,21 +41,17 @@ func (s *Store) GetAPIKeyByHash(hash string) (*types.APIKey, error) {
 // GetAPIKeyByID returns an API key by ID.
 func (s *Store) GetAPIKeyByID(id string) (*types.APIKey, error) {
 	k := &types.APIKey{}
-	var policyID *string
 	err := s.pool.QueryRow(context.Background(), `
 		SELECT id, project_id, created_by, key_prefix, name, COALESCE(description, ''),
-			status, rate_limit_policy_id, allowed_models, expires_at, last_used_at, created_at, updated_at
+			status, allowed_models, expires_at, last_used_at, created_at, updated_at
 		FROM api_keys WHERE id = $1`, id,
 	).Scan(&k.ID, &k.ProjectID, &k.CreatedBy, &k.KeyPrefix, &k.Name, &k.Description,
-		&k.Status, &policyID, &k.AllowedModels, &k.ExpiresAt, &k.LastUsedAt, &k.CreatedAt, &k.UpdatedAt)
+		&k.Status, &k.AllowedModels, &k.ExpiresAt, &k.LastUsedAt, &k.CreatedAt, &k.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get api key by id: %w", err)
-	}
-	if policyID != nil {
-		k.RateLimitPolicyID = *policyID
 	}
 	return k, nil
 }
@@ -93,7 +84,7 @@ func (s *Store) listAPIKeys(projectID, createdBy string, p types.PaginationParam
 	offsetIdx := len(args) + 2
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT id, project_id, created_by, key_prefix, name, COALESCE(description, ''),
-			status, rate_limit_policy_id, allowed_models, expires_at, last_used_at, created_at, updated_at
+			status, allowed_models, expires_at, last_used_at, created_at, updated_at
 		FROM api_keys WHERE %s
 		ORDER BY %s %s LIMIT $%d OFFSET $%d`,
 		where, sanitizeSort(p.Sort, "created_at"), sanitizeOrder(p.Order), limitIdx, offsetIdx),
@@ -107,13 +98,9 @@ func (s *Store) listAPIKeys(projectID, createdBy string, p types.PaginationParam
 	var keys []types.APIKey
 	for rows.Next() {
 		var k types.APIKey
-		var policyID *string
 		if err := rows.Scan(&k.ID, &k.ProjectID, &k.CreatedBy, &k.KeyPrefix, &k.Name, &k.Description,
-			&k.Status, &policyID, &k.AllowedModels, &k.ExpiresAt, &k.LastUsedAt, &k.CreatedAt, &k.UpdatedAt); err != nil {
+			&k.Status, &k.AllowedModels, &k.ExpiresAt, &k.LastUsedAt, &k.CreatedAt, &k.UpdatedAt); err != nil {
 			return nil, 0, err
-		}
-		if policyID != nil {
-			k.RateLimitPolicyID = *policyID
 		}
 		keys = append(keys, k)
 	}

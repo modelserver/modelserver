@@ -16,7 +16,6 @@ export function useCreateKey(projectId: string) {
     mutationFn: (body: {
       name: string;
       description?: string;
-      rate_limit_policy_id?: string;
       allowed_models?: string[];
       expires_at?: string;
     }) => api.post<{ data: APIKey; key: string }>(`/api/v1/projects/${projectId}/keys`, body),
@@ -35,7 +34,6 @@ export function useUpdateKey(projectId: string) {
       name?: string;
       status?: string;
       description?: string;
-      rate_limit_policy_id?: string;
     }) => api.put<DataResponse<APIKey>>(`/api/v1/projects/${projectId}/keys/${keyId}`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["keys", projectId] }),
   });

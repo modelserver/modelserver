@@ -78,7 +78,6 @@ export interface APIKey {
   name: string;
   description?: string;
   status: "active" | "disabled" | "revoked";
-  rate_limit_policy_id?: string;
   allowed_models?: string[];
   expires_at?: string;
   last_used_at?: string;

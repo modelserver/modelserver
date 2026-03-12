@@ -131,22 +131,16 @@ func AuthMiddleware(st *store.Store, encKey []byte) func(http.Handler) http.Hand
 				return
 			}
 
-			// Resolve rate limit policy: key-specific > subscription > project default.
+			// Resolve rate limit policy: subscription > project default.
 			var policy *types.RateLimitPolicy
 			var subscription *types.Subscription
 
-			if apiKey.RateLimitPolicyID != "" {
-				policy, _ = st.GetPolicyByID(apiKey.RateLimitPolicyID)
-			}
-
-			if policy == nil {
-				// Try loading active subscription for this project.
-				subscription, _ = st.GetActiveSubscription(project.ID)
-				if subscription != nil && subscription.PlanID != "" {
-					plan, _ := st.GetPlanByID(subscription.PlanID)
-					if plan != nil {
-						policy = plan.ToPolicy(project.ID)
-					}
+			// Try loading active subscription for this project.
+			subscription, _ = st.GetActiveSubscription(project.ID)
+			if subscription != nil && subscription.PlanID != "" {
+				plan, _ := st.GetPlanByID(subscription.PlanID)
+				if plan != nil {
+					policy = plan.ToPolicy(project.ID)
 				}
 			}
 

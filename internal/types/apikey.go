@@ -22,8 +22,7 @@ type APIKey struct {
 	Name              string     `json:"name"`
 	Description       string     `json:"description,omitempty"`
 	Status            string     `json:"status"`
-	RateLimitPolicyID string     `json:"rate_limit_policy_id,omitempty"`
-	AllowedModels     []string   `json:"allowed_models,omitempty"`
+	AllowedModels []string `json:"allowed_models,omitempty"`
 	ExpiresAt         *time.Time `json:"expires_at,omitempty"`
 	LastUsedAt        *time.Time `json:"last_used_at,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`

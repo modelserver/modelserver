@@ -43,13 +43,13 @@ export function AdminProjectsPage() {
           <div className="flex items-center gap-2">
             <Avatar className="h-6 w-6">
               {owner.picture && (
-                <AvatarImage src={owner.picture} alt={owner.name || owner.email} />
+                <AvatarImage src={owner.picture} alt={owner.nickname || owner.email} />
               )}
               <AvatarFallback className="text-[10px]">
-                {initials(owner.name)}
+                {initials(owner.nickname)}
               </AvatarFallback>
             </Avatar>
-            <span className="truncate">{owner.name || owner.email}</span>
+            <span className="truncate">{owner.nickname || owner.email}</span>
           </div>
         );
       },
