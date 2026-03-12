@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rsa"
 	"flag"
 	"log"
 	"log/slog"
@@ -99,6 +100,7 @@ func main() {
 			MchAPIv3Key:       cfg.WeChat.MchAPIv3Key,
 			MchSerialNo:       cfg.WeChat.MchSerialNo,
 			MchPrivateKeyPath: cfg.WeChat.MchPrivateKeyPath,
+			MchPrivateKeyPEM:  cfg.WeChat.MchPrivateKeyPEM,
 			NotifyURL:         cfg.WeChat.NotifyURL,
 		})
 		if err != nil {
@@ -107,7 +109,12 @@ func main() {
 		gateways["wechat"] = wg
 
 		// WeChat notify handler needs the SDK's certificate downloader for signature verification
-		privKey, err := utils.LoadPrivateKeyWithPath(cfg.WeChat.MchPrivateKeyPath)
+		var privKey *rsa.PrivateKey
+		if cfg.WeChat.MchPrivateKeyPEM != "" {
+			privKey, err = utils.LoadPrivateKey(cfg.WeChat.MchPrivateKeyPEM)
+		} else {
+			privKey, err = utils.LoadPrivateKeyWithPath(cfg.WeChat.MchPrivateKeyPath)
+		}
 		if err != nil {
 			log.Fatalf("failed to load wechat private key for notify: %v", err)
 		}
@@ -126,7 +133,9 @@ func main() {
 		ag, err := gateway.NewAlipayGateway(gateway.AlipayGatewayConfig{
 			AppID:               cfg.Alipay.AppID,
 			PrivateKeyPath:      cfg.Alipay.PrivateKeyPath,
+			PrivateKeyPEM:       cfg.Alipay.PrivateKeyPEM,
 			AlipayPublicKeyPath: cfg.Alipay.AlipayPublicKeyPath,
+			AlipayPublicKeyPEM:  cfg.Alipay.AlipayPublicKeyPEM,
 			NotifyURL:           cfg.Alipay.NotifyURL,
 			ReturnURL:           cfg.Alipay.ReturnURL,
 		})

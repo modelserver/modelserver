@@ -3,8 +3,6 @@ package admin
 import (
 	"log"
 	"net/http"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -39,7 +37,6 @@ func handleCreateProject(st *store.Store) http.HandlerFunc {
 		user := UserFromContext(r.Context())
 		var body struct {
 			Name        string `json:"name"`
-			Slug        string `json:"slug"`
 			Description string `json:"description"`
 		}
 		if err := decodeBody(r, &body); err != nil {
@@ -49,9 +46,6 @@ func handleCreateProject(st *store.Store) http.HandlerFunc {
 		if body.Name == "" {
 			writeError(w, http.StatusBadRequest, "bad_request", "name is required")
 			return
-		}
-		if body.Slug == "" {
-			body.Slug = slugify(body.Name)
 		}
 
 		// Check project limit.
@@ -65,7 +59,6 @@ func handleCreateProject(st *store.Store) http.HandlerFunc {
 
 		project := &types.Project{
 			Name:        body.Name,
-			Slug:        body.Slug,
 			Description: body.Description,
 			CreatedBy:   user.ID,
 			Status:      types.ProjectStatusActive,
@@ -75,14 +68,7 @@ func handleCreateProject(st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		// Auto-assign free plan subscription to the new project.
-		if freePlan, err := st.GetPlanBySlug("free"); err == nil && freePlan != nil && freePlan.IsActive {
-			now := time.Now()
-			expiresAt := now.AddDate(100, 0, 0) // Perpetual free tier.
-			if _, err := st.CreateSubscriptionFromPlan(project.ID, freePlan, now, expiresAt); err != nil {
-				log.Printf("WARN: failed to assign free plan to project %s: %v", project.ID, err)
-			}
-		}
+		assignFreePlan(st, project.ID)
 
 		writeData(w, http.StatusCreated, project)
 	}
@@ -110,7 +96,7 @@ func handleUpdateProject(st *store.Store) http.HandlerFunc {
 		}
 
 		updates := make(map[string]interface{})
-		for _, field := range []string{"name", "description", "status", "settings", "billing_tag"} {
+		for _, field := range []string{"name", "description", "status", "settings", "billing_tags"} {
 			if v, ok := body[field]; ok {
 				updates[field] = v
 			}
@@ -209,14 +195,15 @@ func handleRemoveMember(st *store.Store) http.HandlerFunc {
 	}
 }
 
-var nonAlphaNum = regexp.MustCompile(`[^a-z0-9]+`)
-
-func slugify(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
-	s = nonAlphaNum.ReplaceAllString(s, "-")
-	s = strings.Trim(s, "-")
-	if s == "" {
-		s = "project"
+// assignFreePlan attaches a perpetual free-tier subscription to a project.
+func assignFreePlan(st *store.Store, projectID string) {
+	freePlan, err := st.GetPlanBySlug("free")
+	if err != nil || freePlan == nil || !freePlan.IsActive {
+		return
 	}
-	return s
+	now := time.Now()
+	expiresAt := now.AddDate(100, 0, 0)
+	if _, err := st.CreateSubscriptionFromPlan(projectID, freePlan, now, expiresAt); err != nil {
+		log.Printf("WARN: failed to assign free plan to project %s: %v", projectID, err)
+	}
 }

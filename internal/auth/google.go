@@ -28,6 +28,11 @@ func NewGoogleOAuth(clientID, clientSecret, redirectURL string) *GoogleOAuth {
 	}
 }
 
+// AuthCodeURL returns the authorization URL the user should visit.
+func (g *GoogleOAuth) AuthCodeURL(state, redirectURL string) string {
+	return g.config.AuthCodeURL(state, oauth2.SetAuthURLParam("redirect_uri", redirectURL))
+}
+
 // ExchangeAndGetUser exchanges an auth code for user info.
 func (g *GoogleOAuth) ExchangeAndGetUser(ctx context.Context, code string) (*OAuthUserInfo, error) {
 	token, err := g.config.Exchange(ctx, code)
@@ -58,7 +63,7 @@ func (g *GoogleOAuth) ExchangeAndGetUser(ctx context.Context, code string) (*OAu
 	return &OAuthUserInfo{
 		Email:      profile.Email,
 		Name:       profile.Name,
-		AvatarURL:  profile.Picture,
+		Picture:    profile.Picture,
 		ProviderID: profile.ID,
 		Provider:   "google",
 	}, nil

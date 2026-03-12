@@ -4,7 +4,7 @@ package auth
 type OAuthUserInfo struct {
 	Email      string
 	Name       string
-	AvatarURL  string
+	Picture    string
 	ProviderID string
 	Provider   string
 }

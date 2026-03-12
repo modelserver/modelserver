@@ -8,27 +8,30 @@ import (
 	"github.com/modelserver/modelserver/internal/types"
 )
 
+// scanUser scans a user row (without auth fields).
+func scanUser(row interface{ Scan(...interface{}) error }) (*types.User, error) {
+	u := &types.User{}
+	err := row.Scan(&u.ID, &u.Email, &u.Name, &u.Picture,
+		&u.IsSuperadmin, &u.MaxProjects, &u.Status, &u.CreatedAt, &u.UpdatedAt)
+	return u, err
+}
+
+const userColumns = `id, email, name, COALESCE(picture, ''), is_superadmin, max_projects, status, created_at, updated_at`
+
 // CreateUser inserts a new user.
 func (s *Store) CreateUser(u *types.User) error {
 	return s.db.QueryRow(`
-		INSERT INTO users (email, password_hash, name, avatar_url, oauth_provider, oauth_id, is_superadmin, max_projects, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO users (email, name, picture, is_superadmin, max_projects, status)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, created_at, updated_at`,
-		u.Email, nullString(u.PasswordHash), u.Name, nullString(u.AvatarURL),
-		nullString(u.OAuthProvider), nullString(u.OAuthID),
+		u.Email, u.Name, nullString(u.Picture),
 		u.IsSuperadmin, u.MaxProjects, u.Status,
 	).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt)
 }
 
 // GetUserByID returns a user by ID.
 func (s *Store) GetUserByID(id string) (*types.User, error) {
-	u := &types.User{}
-	err := s.db.QueryRow(`
-		SELECT id, email, password_hash, name, COALESCE(avatar_url, ''), COALESCE(oauth_provider, ''), COALESCE(oauth_id, ''),
-			is_superadmin, max_projects, status, created_at, updated_at
-		FROM users WHERE id = $1`, id,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Name, &u.AvatarURL, &u.OAuthProvider, &u.OAuthID,
-		&u.IsSuperadmin, &u.MaxProjects, &u.Status, &u.CreatedAt, &u.UpdatedAt)
+	u, err := scanUser(s.db.QueryRow(`SELECT `+userColumns+` FROM users WHERE id = $1`, id))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -40,13 +43,7 @@ func (s *Store) GetUserByID(id string) (*types.User, error) {
 
 // GetUserByEmail returns a user by email.
 func (s *Store) GetUserByEmail(email string) (*types.User, error) {
-	u := &types.User{}
-	err := s.db.QueryRow(`
-		SELECT id, email, password_hash, name, COALESCE(avatar_url, ''), COALESCE(oauth_provider, ''), COALESCE(oauth_id, ''),
-			is_superadmin, max_projects, status, created_at, updated_at
-		FROM users WHERE email = $1`, email,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Name, &u.AvatarURL, &u.OAuthProvider, &u.OAuthID,
-		&u.IsSuperadmin, &u.MaxProjects, &u.Status, &u.CreatedAt, &u.UpdatedAt)
+	u, err := scanUser(s.db.QueryRow(`SELECT `+userColumns+` FROM users WHERE email = $1`, email))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -56,15 +53,13 @@ func (s *Store) GetUserByEmail(email string) (*types.User, error) {
 	return u, nil
 }
 
-// GetUserByOAuth returns a user by OAuth provider and ID.
-func (s *Store) GetUserByOAuth(provider, oauthID string) (*types.User, error) {
-	u := &types.User{}
-	err := s.db.QueryRow(`
-		SELECT id, email, password_hash, name, COALESCE(avatar_url, ''), COALESCE(oauth_provider, ''), COALESCE(oauth_id, ''),
-			is_superadmin, max_projects, status, created_at, updated_at
-		FROM users WHERE oauth_provider = $1 AND oauth_id = $2`, provider, oauthID,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Name, &u.AvatarURL, &u.OAuthProvider, &u.OAuthID,
-		&u.IsSuperadmin, &u.MaxProjects, &u.Status, &u.CreatedAt, &u.UpdatedAt)
+// GetUserByOAuth returns a user who has an OAuth connection with the given provider and provider ID.
+func (s *Store) GetUserByOAuth(provider, providerID string) (*types.User, error) {
+	u, err := scanUser(s.db.QueryRow(`
+		SELECT u.id, u.email, u.name, COALESCE(u.picture, ''), u.is_superadmin, u.max_projects, u.status, u.created_at, u.updated_at
+		FROM users u
+		JOIN user_oauth_connections oc ON oc.user_id = u.id
+		WHERE oc.provider = $1 AND oc.provider_id = $2`, provider, providerID))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -82,8 +77,7 @@ func (s *Store) ListUsers(p types.PaginationParams) ([]types.User, int, error) {
 	}
 
 	rows, err := s.db.Query(fmt.Sprintf(`
-		SELECT id, email, name, COALESCE(avatar_url, ''), COALESCE(oauth_provider, ''),
-			is_superadmin, max_projects, status, created_at, updated_at
+		SELECT `+userColumns+`
 		FROM users ORDER BY %s %s LIMIT $1 OFFSET $2`,
 		sanitizeSort(p.Sort, "created_at"), sanitizeOrder(p.Order)),
 		p.Limit(), p.Offset(),
@@ -95,12 +89,11 @@ func (s *Store) ListUsers(p types.PaginationParams) ([]types.User, int, error) {
 
 	var users []types.User
 	for rows.Next() {
-		var u types.User
-		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.AvatarURL, &u.OAuthProvider,
-			&u.IsSuperadmin, &u.MaxProjects, &u.Status, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		u, err := scanUser(rows)
+		if err != nil {
 			return nil, 0, fmt.Errorf("scan user: %w", err)
 		}
-		users = append(users, u)
+		users = append(users, *u)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("iterate users: %w", err)
@@ -132,6 +125,69 @@ func (s *Store) UserExists() (bool, error) {
 	err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM users LIMIT 1)").Scan(&exists)
 	return exists, err
 }
+
+// ---------------------------------------------------------------------------
+// Password credentials
+// ---------------------------------------------------------------------------
+
+// GetPasswordHash returns the bcrypt hash for a user, or "" if none is set.
+func (s *Store) GetPasswordHash(userID string) (string, error) {
+	var hash string
+	err := s.db.QueryRow(`SELECT password_hash FROM user_passwords WHERE user_id = $1`, userID).Scan(&hash)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return hash, err
+}
+
+// SetPasswordHash upserts the password hash for a user.
+func (s *Store) SetPasswordHash(userID, hash string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO user_passwords (user_id, password_hash) VALUES ($1, $2)
+		ON CONFLICT (user_id) DO UPDATE SET password_hash = $2, updated_at = NOW()`,
+		userID, hash)
+	return err
+}
+
+// ---------------------------------------------------------------------------
+// OAuth connections
+// ---------------------------------------------------------------------------
+
+// CreateOAuthConnection links an OAuth identity to a user.
+func (s *Store) CreateOAuthConnection(userID, provider, providerID string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO user_oauth_connections (user_id, provider, provider_id)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (provider, provider_id) DO NOTHING`,
+		userID, provider, providerID)
+	return err
+}
+
+// GetOAuthConnections returns all OAuth connections for a user.
+func (s *Store) GetOAuthConnections(userID string) ([]types.OAuthConnection, error) {
+	rows, err := s.db.Query(`
+		SELECT id, user_id, provider, provider_id, created_at
+		FROM user_oauth_connections WHERE user_id = $1
+		ORDER BY created_at`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var conns []types.OAuthConnection
+	for rows.Next() {
+		var c types.OAuthConnection
+		if err := rows.Scan(&c.ID, &c.UserID, &c.Provider, &c.ProviderID, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		conns = append(conns, c)
+	}
+	return conns, rows.Err()
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 func nullString(s string) interface{} {
 	if s == "" {

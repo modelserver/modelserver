@@ -2,6 +2,9 @@ package admin
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -14,6 +17,11 @@ import (
 
 func handleLogin(st *store.Store, jwtMgr *auth.JWTManager, authCfg config.AuthConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !authCfg.PasswordLoginEnabled {
+			writeError(w, http.StatusForbidden, "forbidden", "password login is disabled")
+			return
+		}
+
 		var body struct {
 			Email    string `json:"email"`
 			Password string `json:"password"`
@@ -28,12 +36,18 @@ func handleLogin(st *store.Store, jwtMgr *auth.JWTManager, authCfg config.AuthCo
 		}
 
 		user, err := st.GetUserByEmail(body.Email)
-		if err != nil || user == nil || user.PasswordHash == "" {
+		if err != nil || user == nil {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid credentials")
 			return
 		}
 
-		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(body.Password)); err != nil {
+		hash, err := st.GetPasswordHash(user.ID)
+		if err != nil || hash == "" {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid credentials")
+			return
+		}
+
+		if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(body.Password)); err != nil {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid credentials")
 			return
 		}
@@ -49,6 +63,10 @@ func handleLogin(st *store.Store, jwtMgr *auth.JWTManager, authCfg config.AuthCo
 
 func handleRegister(st *store.Store, jwtMgr *auth.JWTManager, authCfg config.AuthConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !authCfg.PasswordLoginEnabled {
+			writeError(w, http.StatusForbidden, "forbidden", "password login is disabled")
+			return
+		}
 		if !authCfg.AllowRegistration {
 			writeError(w, http.StatusForbidden, "forbidden", "registration is disabled")
 			return
@@ -88,7 +106,6 @@ func handleRegister(st *store.Store, jwtMgr *auth.JWTManager, authCfg config.Aut
 
 		user := &types.User{
 			Email:        body.Email,
-			PasswordHash: string(hash),
 			Name:         body.Name,
 			IsSuperadmin: isFirst,
 			MaxProjects:  5,
@@ -101,15 +118,22 @@ func handleRegister(st *store.Store, jwtMgr *auth.JWTManager, authCfg config.Aut
 			writeError(w, http.StatusInternalServerError, "internal", "failed to create user")
 			return
 		}
+		if err := st.SetPasswordHash(user.ID, string(hash)); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to save password")
+			return
+		}
 
 		// Auto-create default project for new user.
 		project := &types.Project{
 			Name:      "Default Project",
-			Slug:      "default-" + user.ID[:8],
 			CreatedBy: user.ID,
 			Status:    types.ProjectStatusActive,
 		}
-		_ = st.CreateProject(project)
+		if err := st.CreateProject(project); err != nil {
+			log.Printf("WARN: failed to create default project for user %s: %v", user.ID, err)
+		} else {
+			assignFreePlan(st, project.ID)
+		}
 
 		issueTokens(w, jwtMgr, user)
 	}
@@ -170,7 +194,6 @@ func handleInitialize(st *store.Store, jwtMgr *auth.JWTManager) http.HandlerFunc
 		hash, _ := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
 		user := &types.User{
 			Email:        body.Email,
-			PasswordHash: string(hash),
 			Name:         body.Name,
 			IsSuperadmin: true,
 			MaxProjects:  100,
@@ -180,15 +203,22 @@ func handleInitialize(st *store.Store, jwtMgr *auth.JWTManager) http.HandlerFunc
 			writeError(w, http.StatusInternalServerError, "internal", "failed to create user")
 			return
 		}
+		if err := st.SetPasswordHash(user.ID, string(hash)); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to save password")
+			return
+		}
 
 		// Auto-create default project for superadmin.
 		project := &types.Project{
 			Name:      "Default Project",
-			Slug:      "default-" + user.ID[:8],
 			CreatedBy: user.ID,
 			Status:    types.ProjectStatusActive,
 		}
-		_ = st.CreateProject(project)
+		if err := st.CreateProject(project); err != nil {
+			log.Printf("WARN: failed to create default project for user %s: %v", user.ID, err)
+		} else {
+			assignFreePlan(st, project.ID)
+		}
 
 		issueTokens(w, jwtMgr, user)
 	}
@@ -211,8 +241,9 @@ func handleChangePassword(st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		if user.PasswordHash != "" {
-			if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(body.CurrentPassword)); err != nil {
+		currentHash, _ := st.GetPasswordHash(user.ID)
+		if currentHash != "" {
+			if err := bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(body.CurrentPassword)); err != nil {
 				writeError(w, http.StatusUnauthorized, "unauthorized", "incorrect current password")
 				return
 			}
@@ -224,7 +255,7 @@ func handleChangePassword(st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		if err := st.UpdateUser(user.ID, map[string]interface{}{"password_hash": string(hash)}); err != nil {
+		if err := st.SetPasswordHash(user.ID, string(hash)); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to update password")
 			return
 		}
@@ -266,7 +297,7 @@ func handleOAuthCallback(st *store.Store, jwtMgr *auth.JWTManager, cfg *config.C
 				writeError(w, http.StatusNotImplemented, "not_configured", "OIDC not configured")
 				return
 			}
-			oidcProvider, oidcErr := auth.NewOIDCProvider(ctx, cfg.Auth.OAuth.OIDC.IssuerURL, cfg.Auth.OAuth.OIDC.ClientID, cfg.Auth.OAuth.OIDC.ClientSecret, "")
+			oidcProvider, oidcErr := auth.NewOIDCProvider(ctx, cfg.Auth.OAuth.OIDC.IssuerURL, cfg.Auth.OAuth.OIDC.ClientID, cfg.Auth.OAuth.OIDC.ClientSecret, cfg.Auth.OAuth.OIDC.RedirectURI)
 			if oidcErr != nil {
 				writeError(w, http.StatusInternalServerError, "internal", "failed to initialize OIDC")
 				return
@@ -281,39 +312,78 @@ func handleOAuthCallback(st *store.Store, jwtMgr *auth.JWTManager, cfg *config.C
 			writeError(w, http.StatusUnauthorized, "unauthorized", "OAuth exchange failed: "+err.Error())
 			return
 		}
+		if info.Email == "" {
+			writeError(w, http.StatusBadRequest, "bad_request", "OAuth provider did not return an email address")
+			return
+		}
 
-		// Try to find existing user by OAuth provider ID.
+		// Try to find existing user by OAuth provider ID, then by email.
 		user, _ := st.GetUserByOAuth(info.Provider, info.ProviderID)
-		if user == nil && info.Email != "" {
+		if user == nil {
 			user, _ = st.GetUserByEmail(info.Email)
-			if user != nil {
-				// Link OAuth to existing email account.
-				if err := st.UpdateUser(user.ID, map[string]interface{}{
-					"oauth_provider": info.Provider,
-					"oauth_id":       info.ProviderID,
-					"avatar_url":     info.AvatarURL,
-				}); err != nil {
-					// Non-fatal: log and continue with login.
-					_ = err
+		}
+
+		if user != nil {
+			// Existing user — ensure OAuth connection exists and sync profile fields.
+			_ = st.CreateOAuthConnection(user.ID, info.Provider, info.ProviderID)
+			updates := map[string]interface{}{}
+			if info.Name != "" && info.Name != user.Name {
+				updates["name"] = info.Name
+			}
+			if info.Picture != "" && info.Picture != user.Picture {
+				updates["picture"] = info.Picture
+			}
+			if len(updates) > 0 {
+				if err := st.UpdateUser(user.ID, updates); err != nil {
+					log.Printf("WARN: failed to update OAuth user %s: %v", user.ID, err)
+				}
+				if fresh, err := st.GetUserByID(user.ID); err == nil && fresh != nil {
+					user = fresh
 				}
 			}
 		}
 
 		if user == nil {
+			// First registered user becomes superadmin.
+			isFirst := false
+			if exists, err := st.UserExists(); err == nil && !exists {
+				isFirst = true
+			}
+
 			// Create new user from OAuth.
 			user = &types.User{
-				Email:         info.Email,
-				Name:          info.Name,
-				AvatarURL:     info.AvatarURL,
-				OAuthProvider: info.Provider,
-				OAuthID:       info.ProviderID,
-				MaxProjects:   5,
-				Status:        types.UserStatusActive,
+				Email:        info.Email,
+				Name:         info.Name,
+				Picture:      info.Picture,
+				IsSuperadmin: isFirst,
+				MaxProjects:  5,
+				Status:       types.UserStatusActive,
+			}
+			if isFirst {
+				user.MaxProjects = 100
 			}
 			if err := st.CreateUser(user); err != nil {
-				writeError(w, http.StatusInternalServerError, "internal", "failed to create user")
-				return
+				// Likely a duplicate email — race or stale lookup. Retry by email.
+				log.Printf("WARN: create OAuth user failed (email=%s): %v, retrying lookup", info.Email, err)
+				user, _ = st.GetUserByEmail(info.Email)
+				if user == nil {
+					writeError(w, http.StatusInternalServerError, "internal", "failed to create user")
+					return
+				}
+			} else {
+				// Auto-create default project for new OAuth user.
+				project := &types.Project{
+					Name:      "Default Project",
+					CreatedBy: user.ID,
+					Status:    types.ProjectStatusActive,
+				}
+				if err := st.CreateProject(project); err != nil {
+					log.Printf("WARN: failed to create default project for OAuth user %s: %v", user.ID, err)
+				} else {
+					assignFreePlan(st, project.ID)
+				}
 			}
+			_ = st.CreateOAuthConnection(user.ID, info.Provider, info.ProviderID)
 		}
 
 		if user.Status != types.UserStatusActive {
@@ -386,6 +456,92 @@ func handleUpdateUser(st *store.Store) http.HandlerFunc {
 
 		user, _ := st.GetUserByID(userID)
 		writeData(w, http.StatusOK, user)
+	}
+}
+
+func handleOAuthRedirect(cfg *config.Config, provider string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Build the callback URL pointing to the frontend's /auth/callback page.
+		// Prefer explicit config; fall back to inferring from request headers.
+		var callbackURL string
+		switch provider {
+		case "oidc":
+			callbackURL = cfg.Auth.OAuth.OIDC.RedirectURI
+		}
+		if callbackURL == "" {
+			scheme := "https"
+			if r.TLS == nil {
+				if fwd := r.Header.Get("X-Forwarded-Proto"); fwd != "" {
+					scheme = fwd
+				} else {
+					scheme = "http"
+				}
+			}
+			callbackURL = scheme + "://" + r.Host + "/auth/callback/" + provider
+		}
+
+		// Generate a random state parameter.
+		stateBytes := make([]byte, 16)
+		_, _ = rand.Read(stateBytes)
+		state := hex.EncodeToString(stateBytes)
+
+		ctx := r.Context()
+		var authURL string
+
+		switch provider {
+		case "github":
+			if cfg.Auth.OAuth.GitHub.ClientID == "" {
+				writeError(w, http.StatusNotImplemented, "not_configured", "GitHub OAuth not configured")
+				return
+			}
+			gh := auth.NewGitHubOAuth(cfg.Auth.OAuth.GitHub.ClientID, cfg.Auth.OAuth.GitHub.ClientSecret, "")
+			authURL = gh.AuthCodeURL(state, callbackURL)
+		case "google":
+			if cfg.Auth.OAuth.Google.ClientID == "" {
+				writeError(w, http.StatusNotImplemented, "not_configured", "Google OAuth not configured")
+				return
+			}
+			g := auth.NewGoogleOAuth(cfg.Auth.OAuth.Google.ClientID, cfg.Auth.OAuth.Google.ClientSecret, "")
+			authURL = g.AuthCodeURL(state, callbackURL)
+		case "oidc":
+			if cfg.Auth.OAuth.OIDC.IssuerURL == "" {
+				writeError(w, http.StatusNotImplemented, "not_configured", "OIDC not configured")
+				return
+			}
+			oidcProvider, err := auth.NewOIDCProvider(ctx, cfg.Auth.OAuth.OIDC.IssuerURL, cfg.Auth.OAuth.OIDC.ClientID, cfg.Auth.OAuth.OIDC.ClientSecret, callbackURL)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "internal", "failed to initialize OIDC")
+				return
+			}
+			authURL = oidcProvider.AuthCodeURL(state, callbackURL)
+		default:
+			writeError(w, http.StatusBadRequest, "bad_request", "unsupported provider")
+			return
+		}
+
+		http.Redirect(w, r, authURL, http.StatusFound)
+	}
+}
+
+func handleAuthConfig(cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]interface{}{
+			"password_login_enabled": cfg.Auth.PasswordLoginEnabled,
+			"allow_registration":     cfg.Auth.AllowRegistration,
+			"oauth_providers":        []string{},
+		}
+		var providers []string
+		if cfg.Auth.OAuth.GitHub.ClientID != "" {
+			providers = append(providers, "github")
+		}
+		if cfg.Auth.OAuth.Google.ClientID != "" {
+			providers = append(providers, "google")
+		}
+		if cfg.Auth.OAuth.OIDC.IssuerURL != "" {
+			providers = append(providers, "oidc")
+		}
+		resp["oauth_providers"] = providers
+		writeJSON(w, http.StatusOK, resp)
 	}
 }
 

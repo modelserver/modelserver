@@ -10,13 +10,13 @@ import (
 // CreateRequest inserts a new request log.
 func (s *Store) CreateRequest(r *types.Request) error {
 	return s.db.QueryRow(`
-		INSERT INTO requests (project_id, api_key_id, channel_id, trace_id, provider, model, streaming,
-			status, status_code, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+		INSERT INTO requests (project_id, api_key_id, channel_id, trace_id, msg_id, provider, model, streaming,
+			status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 			credits_consumed, latency_ms, ttft_ms, error_message)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		RETURNING id, created_at`,
-		r.ProjectID, r.APIKeyID, r.ChannelID, nullString(r.TraceID),
-		r.Provider, r.Model, r.Streaming, r.Status, r.StatusCode,
+		r.ProjectID, r.APIKeyID, r.ChannelID, nullString(r.TraceID), nullString(r.MsgID),
+		r.Provider, r.Model, r.Streaming, r.Status,
 		r.InputTokens, r.OutputTokens, r.CacheCreationTokens, r.CacheReadTokens,
 		r.CreditsConsumed, r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage),
 	).Scan(&r.ID, &r.CreatedAt)
@@ -31,13 +31,13 @@ func (s *Store) BatchCreateRequests(requests []types.Request) error {
 	for i := range requests {
 		r := &requests[i]
 		err := tx.QueryRow(`
-			INSERT INTO requests (project_id, api_key_id, channel_id, trace_id, provider, model, streaming,
-				status, status_code, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+			INSERT INTO requests (project_id, api_key_id, channel_id, trace_id, msg_id, provider, model, streaming,
+				status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 				credits_consumed, latency_ms, ttft_ms, error_message)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 			RETURNING id, created_at`,
-			r.ProjectID, r.APIKeyID, r.ChannelID, nullString(r.TraceID),
-			r.Provider, r.Model, r.Streaming, r.Status, r.StatusCode,
+			r.ProjectID, r.APIKeyID, r.ChannelID, nullString(r.TraceID), nullString(r.MsgID),
+			r.Provider, r.Model, r.Streaming, r.Status,
 			r.InputTokens, r.OutputTokens, r.CacheCreationTokens, r.CacheReadTokens,
 			r.CreditsConsumed, r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage),
 		).Scan(&r.ID, &r.CreatedAt)
@@ -60,8 +60,8 @@ func (s *Store) ListRequests(projectID string, p types.PaginationParams, filters
 
 	args = append(args, p.Limit(), p.Offset())
 	rows, err := s.db.Query(fmt.Sprintf(`
-		SELECT id, project_id, api_key_id, channel_id, COALESCE(trace_id::text, ''), provider, model,
-			streaming, status, status_code, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+		SELECT id, project_id, api_key_id, channel_id, COALESCE(trace_id::text, ''), COALESCE(msg_id, ''),
+			provider, model, streaming, status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 			credits_consumed, latency_ms, ttft_ms, COALESCE(error_message, ''), created_at
 		FROM requests %s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
 		where, sanitizeSort(p.Sort, "created_at"), sanitizeOrder(p.Order), argN, argN+1),
@@ -75,8 +75,8 @@ func (s *Store) ListRequests(projectID string, p types.PaginationParams, filters
 	var requests []types.Request
 	for rows.Next() {
 		var r types.Request
-		if err := rows.Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.ChannelID, &r.TraceID,
-			&r.Provider, &r.Model, &r.Streaming, &r.Status, &r.StatusCode,
+		if err := rows.Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.ChannelID, &r.TraceID, &r.MsgID,
+			&r.Provider, &r.Model, &r.Streaming, &r.Status,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
 			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.CreatedAt); err != nil {
 			return nil, 0, err
@@ -131,4 +131,30 @@ func buildRequestFilters(projectID string, f RequestFilters) (string, []interfac
 
 	where := "WHERE " + joinStrings(conditions, " AND ")
 	return where, args, n
+}
+
+// ListRequestsByTraceID returns all request logs associated with a trace ID.
+func (s *Store) ListRequestsByTraceID(traceID string) ([]types.Request, error) {
+	rows, err := s.db.Query(`
+		SELECT id, project_id, api_key_id, channel_id, COALESCE(trace_id::text, ''), COALESCE(msg_id, ''),
+			provider, model, streaming, status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+			credits_consumed, latency_ms, ttft_ms, COALESCE(error_message, ''), created_at
+		FROM requests WHERE trace_id = $1 ORDER BY created_at ASC`, traceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var requests []types.Request
+	for rows.Next() {
+		var r types.Request
+		if err := rows.Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.ChannelID, &r.TraceID, &r.MsgID,
+			&r.Provider, &r.Model, &r.Streaming, &r.Status,
+			&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
+			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		requests = append(requests, r)
+	}
+	return requests, rows.Err()
 }

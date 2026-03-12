@@ -16,7 +16,7 @@ func DefaultPagination() PaginationParams {
 // Offset returns the SQL OFFSET value derived from the current page and per-page size.
 func (p PaginationParams) Offset() int { return (p.Page - 1) * p.PerPage }
 
-// Limit returns the effective per-page limit, capped at 100 and floored at 20.
+// Limit returns the effective per-page limit, capped at 100 and floored at 1.
 func (p PaginationParams) Limit() int {
 	if p.PerPage > 100 {
 		return 100
@@ -35,9 +35,10 @@ type ListResponse[T any] struct {
 
 // Meta carries pagination metadata returned alongside list responses.
 type Meta struct {
-	Total   int `json:"total"`
-	Page    int `json:"page"`
-	PerPage int `json:"per_page"`
+	Total      int `json:"total"`
+	Page       int `json:"page"`
+	PerPage    int `json:"per_page"`
+	TotalPages int `json:"total_pages"`
 }
 
 // DataResponse wraps a single item in a standard envelope.

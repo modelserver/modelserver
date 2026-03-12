@@ -28,6 +28,11 @@ func NewGitHubOAuth(clientID, clientSecret, redirectURL string) *GitHubOAuth {
 	}
 }
 
+// AuthCodeURL returns the authorization URL the user should visit.
+func (g *GitHubOAuth) AuthCodeURL(state, redirectURL string) string {
+	return g.config.AuthCodeURL(state, oauth2.SetAuthURLParam("redirect_uri", redirectURL))
+}
+
 // ExchangeAndGetUser exchanges an auth code for user info.
 func (g *GitHubOAuth) ExchangeAndGetUser(ctx context.Context, code string) (*OAuthUserInfo, error) {
 	token, err := g.config.Exchange(ctx, code)
@@ -67,7 +72,7 @@ func (g *GitHubOAuth) ExchangeAndGetUser(ctx context.Context, code string) (*OAu
 	return &OAuthUserInfo{
 		Email:      email,
 		Name:       coalesce(profile.Name, profile.Login),
-		AvatarURL:  profile.AvatarURL,
+		Picture:    profile.AvatarURL,
 		ProviderID: fmt.Sprintf("%d", profile.ID),
 		Provider:   "github",
 	}, nil

@@ -22,7 +22,9 @@ const alipayGatewayURL = "https://openapi.alipay.com/gateway.do"
 type AlipayGatewayConfig struct {
 	AppID               string
 	PrivateKeyPath      string
+	PrivateKeyPEM       string
 	AlipayPublicKeyPath string
+	AlipayPublicKeyPEM  string
 	NotifyURL           string
 	ReturnURL           string
 }
@@ -34,12 +36,23 @@ type AlipayGateway struct {
 }
 
 func NewAlipayGateway(cfg AlipayGatewayConfig) (*AlipayGateway, error) {
-	privKey, err := loadPrivateKey(cfg.PrivateKeyPath)
+	var privKey *rsa.PrivateKey
+	var err error
+	if cfg.PrivateKeyPEM != "" {
+		privKey, err = parsePrivateKey([]byte(cfg.PrivateKeyPEM))
+	} else {
+		privKey, err = loadPrivateKey(cfg.PrivateKeyPath)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("load private key: %w", err)
 	}
 
-	pubKey, err := loadPublicKey(cfg.AlipayPublicKeyPath)
+	var pubKey *rsa.PublicKey
+	if cfg.AlipayPublicKeyPEM != "" {
+		pubKey, err = parsePublicKey([]byte(cfg.AlipayPublicKeyPEM))
+	} else {
+		pubKey, err = loadPublicKey(cfg.AlipayPublicKeyPath)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("load alipay public key: %w", err)
 	}
@@ -171,9 +184,14 @@ func loadPrivateKey(path string) (*rsa.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parsePrivateKey(data)
+}
+
+func parsePrivateKey(data []byte) (*rsa.PrivateKey, error) {
+	data = wrapPEM(data, "PRIVATE KEY")
 	block, _ := pem.Decode(data)
 	if block == nil {
-		return nil, fmt.Errorf("no PEM block found in %s", path)
+		return nil, fmt.Errorf("no PEM block found")
 	}
 
 	if key, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
@@ -195,9 +213,14 @@ func loadPublicKey(path string) (*rsa.PublicKey, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parsePublicKey(data)
+}
+
+func parsePublicKey(data []byte) (*rsa.PublicKey, error) {
+	data = wrapPEM(data, "PUBLIC KEY")
 	block, _ := pem.Decode(data)
 	if block == nil {
-		return nil, fmt.Errorf("no PEM block found in %s", path)
+		return nil, fmt.Errorf("no PEM block found")
 	}
 	parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
@@ -208,4 +231,13 @@ func loadPublicKey(path string) (*rsa.PublicKey, error) {
 		return nil, fmt.Errorf("not an RSA public key")
 	}
 	return rsaKey, nil
+}
+
+// wrapPEM adds PEM headers if the data is raw base64 without -----BEGIN markers.
+func wrapPEM(data []byte, label string) []byte {
+	s := strings.TrimSpace(string(data))
+	if strings.HasPrefix(s, "-----") {
+		return data
+	}
+	return []byte("-----BEGIN " + label + "-----\n" + s + "\n-----END " + label + "-----\n")
 }

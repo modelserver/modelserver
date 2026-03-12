@@ -67,18 +67,36 @@ func (s *Store) GetAPIKeyByID(id string) (*types.APIKey, error) {
 
 // ListAPIKeys returns API keys for a project.
 func (s *Store) ListAPIKeys(projectID string, p types.PaginationParams) ([]types.APIKey, int, error) {
+	return s.listAPIKeys(projectID, "", p)
+}
+
+// ListAPIKeysByCreator returns API keys for a project created by a specific user.
+func (s *Store) ListAPIKeysByCreator(projectID, createdBy string, p types.PaginationParams) ([]types.APIKey, int, error) {
+	return s.listAPIKeys(projectID, createdBy, p)
+}
+
+func (s *Store) listAPIKeys(projectID, createdBy string, p types.PaginationParams) ([]types.APIKey, int, error) {
+	where := "project_id = $1"
+	args := []interface{}{projectID}
+	if createdBy != "" {
+		where += " AND created_by = $2"
+		args = append(args, createdBy)
+	}
+
 	var total int
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM api_keys WHERE project_id = $1", projectID).Scan(&total); err != nil {
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM api_keys WHERE "+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
+	limitIdx := len(args) + 1
+	offsetIdx := len(args) + 2
 	rows, err := s.db.Query(fmt.Sprintf(`
 		SELECT id, project_id, created_by, key_prefix, name, COALESCE(description, ''),
 			status, rate_limit_policy_id, allowed_models, expires_at, last_used_at, created_at, updated_at
-		FROM api_keys WHERE project_id = $1
-		ORDER BY %s %s LIMIT $2 OFFSET $3`,
-		sanitizeSort(p.Sort, "created_at"), sanitizeOrder(p.Order)),
-		projectID, p.Limit(), p.Offset(),
+		FROM api_keys WHERE %s
+		ORDER BY %s %s LIMIT $%d OFFSET $%d`,
+		where, sanitizeSort(p.Sort, "created_at"), sanitizeOrder(p.Order), limitIdx, offsetIdx),
+		append(args, p.Limit(), p.Offset())...,
 	)
 	if err != nil {
 		return nil, 0, err

@@ -14,12 +14,24 @@ import (
 
 type adminCtxKey string
 
-const ctxUser adminCtxKey = "admin_user"
+const (
+	ctxUser   adminCtxKey = "admin_user"
+	ctxMember adminCtxKey = "admin_member"
+)
 
 // UserFromContext returns the authenticated user from the request context.
 func UserFromContext(ctx context.Context) *types.User {
 	if u, ok := ctx.Value(ctxUser).(*types.User); ok {
 		return u
+	}
+	return nil
+}
+
+// MemberFromContext returns the project member from the request context.
+// Only available inside project-scoped routes (after projectAccessMiddleware).
+func MemberFromContext(ctx context.Context) *types.ProjectMember {
+	if m, ok := ctx.Value(ctxMember).(*types.ProjectMember); ok {
+		return m
 	}
 	return nil
 }
@@ -99,9 +111,13 @@ func writeData(w http.ResponseWriter, status int, data interface{}) {
 }
 
 func writeList(w http.ResponseWriter, data interface{}, total, page, perPage int) {
+	totalPages := total / perPage
+	if total%perPage != 0 {
+		totalPages++
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"data": data,
-		"meta": types.Meta{Total: total, Page: page, PerPage: perPage},
+		"meta": types.Meta{Total: total, Page: page, PerPage: perPage, TotalPages: totalPages},
 	})
 }
 
@@ -129,4 +145,13 @@ func parsePagination(r *http.Request) types.PaginationParams {
 func decodeBody(r *http.Request, v interface{}) error {
 	defer r.Body.Close()
 	return json.NewDecoder(r.Body).Decode(v)
+}
+
+func containsString(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }

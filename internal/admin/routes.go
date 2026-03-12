@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -20,6 +21,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 
 	r.Route("/api/v1", func(r chi.Router) {
 		// Public auth endpoints.
+		r.Get("/auth/config", handleAuthConfig(cfg))
 		r.Post("/auth/login", handleLogin(st, jwtMgr, cfg.Auth))
 		r.Post("/auth/register", handleRegister(st, jwtMgr, cfg.Auth))
 		r.Post("/auth/refresh", handleRefresh(st, jwtMgr))
@@ -29,6 +31,11 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 		r.Post("/auth/oauth/github", handleOAuthCallback(st, jwtMgr, cfg, "github"))
 		r.Post("/auth/oauth/google", handleOAuthCallback(st, jwtMgr, cfg, "google"))
 		r.Post("/auth/oauth/oidc", handleOAuthCallback(st, jwtMgr, cfg, "oidc"))
+
+		// OAuth redirects — send user to provider's authorization page.
+		r.Get("/auth/oauth/github/redirect", handleOAuthRedirect(cfg, "github"))
+		r.Get("/auth/oauth/google/redirect", handleOAuthRedirect(cfg, "google"))
+		r.Get("/auth/oauth/oidc/redirect", handleOAuthRedirect(cfg, "oidc"))
 
 		// Billing webhook (HMAC auth, not JWT).
 		if cfg.Billing.WebhookSecret != "" {
@@ -102,6 +109,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 					// Subscriptions.
 					r.Get("/subscriptions", handleListSubscriptions(st))
 					r.Post("/subscriptions", handleCreateSubscription(st))
+					r.Get("/subscription/usage", handleSubscriptionUsage(st))
 					r.Route("/subscriptions/{subID}", func(r chi.Router) {
 						r.Get("/", handleGetSubscription(st))
 						r.Put("/", handleUpdateSubscription(st))
@@ -112,6 +120,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 					r.Get("/orders", handleListOrders(st))
 					r.Post("/orders", handleCreateOrder(st, payClient, cfg.Billing))
 					r.Get("/orders/{orderID}", handleGetOrder(st))
+					r.Post("/orders/{orderID}/cancel", handleCancelOrder(st))
 
 					// Requests & Usage.
 					r.Get("/requests", handleListRequests(st))
@@ -120,6 +129,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 					// Traces & Threads.
 					r.Get("/traces", handleListTraces(st))
 					r.Get("/traces/{traceID}", handleGetTrace(st))
+					r.Get("/traces/{traceID}/requests", handleListTraceRequests(st))
 					r.Get("/threads", handleListThreads(st))
 					r.Get("/threads/{threadID}", handleGetThread(st))
 				})
@@ -180,7 +190,8 @@ func projectAccessMiddleware(st *store.Store) func(http.Handler) http.Handler {
 				return
 			}
 
-			next.ServeHTTP(w, r)
+			ctx := context.WithValue(r.Context(), ctxMember, member)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }

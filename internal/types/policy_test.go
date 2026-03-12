@@ -13,13 +13,13 @@ func TestComputeCredits(t *testing.T) {
 				InputRate:         0.667,
 				OutputRate:        3.333,
 				CacheCreationRate: 0.667,
-				CacheReadRate:     0.667,
+				CacheReadRate:     0,
 			},
 			"_default": {
 				InputRate:         0.4,
 				OutputRate:        2.0,
 				CacheCreationRate: 0.4,
-				CacheReadRate:     0.4,
+				CacheReadRate:     0,
 			},
 		},
 	}
@@ -39,7 +39,7 @@ func TestComputeCredits(t *testing.T) {
 			out:      500,
 			cacheW:   200,
 			cacheR:   100,
-			expected: 0.667*1000 + 3.333*500 + 0.667*200 + 0.667*100,
+			expected: 0.667*1000 + 3.333*500 + 0.667*200 + 0*100,
 		},
 		{
 			name:     "unknown model uses default",

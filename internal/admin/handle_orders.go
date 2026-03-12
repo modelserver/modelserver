@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/modelserver/modelserver/internal/billing"
 	"github.com/modelserver/modelserver/internal/config"
+	"github.com/modelserver/modelserver/internal/ratelimit"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
@@ -15,12 +16,13 @@ import (
 func handleListOrders(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "projectID")
-		orders, err := st.ListOrdersByProject(projectID)
+		p := parsePagination(r)
+		orders, total, err := st.ListOrdersByProject(projectID, p)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to list orders")
 			return
 		}
-		writeData(w, http.StatusOK, orders)
+		writeList(w, orders, total, p.Page, p.Limit())
 	}
 }
 
@@ -31,6 +33,32 @@ func handleGetOrder(st *store.Store) http.HandlerFunc {
 			writeError(w, http.StatusNotFound, "not_found", "order not found")
 			return
 		}
+		writeData(w, http.StatusOK, order)
+	}
+}
+
+func handleCancelOrder(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orderID := chi.URLParam(r, "orderID")
+		order, err := st.GetOrderByID(orderID)
+		if err != nil || order == nil {
+			writeError(w, http.StatusNotFound, "not_found", "order not found")
+			return
+		}
+		if order.Status != types.OrderStatusPending && order.Status != types.OrderStatusPaying {
+			writeError(w, http.StatusConflict, "not_cancellable", "only pending or paying orders can be cancelled")
+			return
+		}
+		ok, err := st.CancelOrder(orderID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to cancel order")
+			return
+		}
+		if !ok {
+			writeError(w, http.StatusConflict, "not_cancellable", "order status has changed")
+			return
+		}
+		order.Status = types.OrderStatusCancelled
 		writeData(w, http.StatusOK, order)
 	}
 }
@@ -73,54 +101,61 @@ func handleCreateOrder(st *store.Store, payClient billing.PaymentClient, billing
 			writeError(w, http.StatusNotFound, "not_found", "project not found")
 			return
 		}
-		if plan.GroupTag != "" && plan.GroupTag != project.BillingTag {
+		if plan.GroupTag != "" && !containsString(project.BillingTags, plan.GroupTag) {
 			writeError(w, http.StatusForbidden, "forbidden", "plan not available for this project")
 			return
 		}
 
-		// Check for active subscription.
+		// Every project must have an active subscription (at minimum, free).
 		activeSub, err := st.GetActiveSubscription(projectID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to check active subscription")
 			return
 		}
+		if activeSub == nil {
+			writeError(w, http.StatusBadRequest, "no_subscription", "no active subscription — cannot create order")
+			return
+		}
+		if activeSub.PlanID == plan.ID || activeSub.PlanName == plan.Slug {
+			writeError(w, http.StatusConflict, "already_on_plan", "already on this plan")
+			return
+		}
 
-		var orderType string
+		// Must be an upgrade.
+		activePlan, err := st.GetPlanBySlug(activeSub.PlanName)
+		if err != nil || activePlan == nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to look up active plan")
+			return
+		}
+		if plan.TierLevel <= activePlan.TierLevel {
+			writeError(w, http.StatusConflict, "downgrade_not_allowed", "cannot downgrade to a lower or same tier plan")
+			return
+		}
+
+		// Prevent duplicate orders — only one paying order allowed at a time.
+		hasPaying, err := st.HasPayingOrder(projectID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to check existing orders")
+			return
+		}
+		if hasPaying {
+			writeError(w, http.StatusConflict, "paying_order_exists", "a paying order already exists — please cancel it first or wait for it to complete")
+			return
+		}
+
 		var unitPrice int64
 		var amount int64
-		var existingSubID string
 		periods := body.Periods
+		existingSubID := activeSub.ID
 
-		if activeSub == nil {
-			// No active subscription — new order.
-			orderType = types.OrderTypeNew
+		if activePlan.PricePerPeriod == 0 {
+			// Free → paid: user picks periods, full price.
 			unitPrice = plan.PricePerPeriod
 			amount = unitPrice * int64(periods)
-		} else if activeSub.PlanID == plan.ID || activeSub.PlanName == plan.Slug {
-			// Same plan — renew.
-			orderType = types.OrderTypeRenew
-			unitPrice = plan.PricePerPeriod
-			amount = unitPrice * int64(periods)
-			existingSubID = activeSub.ID
 		} else {
-			// Different plan — check tier.
-			activePlan, err := st.GetPlanBySlug(activeSub.PlanName)
-			if err != nil || activePlan == nil {
-				writeError(w, http.StatusInternalServerError, "internal", "failed to look up active plan")
-				return
-			}
-			if plan.TierLevel <= activePlan.TierLevel {
-				writeError(w, http.StatusConflict, "downgrade_not_allowed", "cannot downgrade to a lower or same tier plan")
-				return
-			}
-
-			// Upgrade — calculate prorated price.
-			orderType = types.OrderTypeUpgrade
-			existingSubID = activeSub.ID
-
+			// Paid → paid: prorate remaining time.
 			now := time.Now()
 			remaining := activeSub.ExpiresAt.Sub(now)
-			// Use real calendar month duration for proration instead of 30-day approximation.
 			periodStart := now
 			periodEnd := periodStart.AddDate(0, activePlan.PeriodMonths, 0)
 			periodDuration := periodEnd.Sub(periodStart)
@@ -128,7 +163,6 @@ func handleCreateOrder(st *store.Store, payClient billing.PaymentClient, billing
 			if remainingPeriods < 1 {
 				remainingPeriods = 1
 			}
-
 			unitPrice = plan.PricePerPeriod - activePlan.PricePerPeriod
 			if unitPrice < 0 {
 				unitPrice = 0
@@ -137,11 +171,11 @@ func handleCreateOrder(st *store.Store, payClient billing.PaymentClient, billing
 			periods = remainingPeriods
 		}
 
-		// Create order.
+		// Create order — all orders are upgrades.
 		order := &types.Order{
 			ProjectID:              projectID,
 			PlanID:                 plan.ID,
-			OrderType:              orderType,
+			OrderType:              types.OrderTypeUpgrade,
 			Periods:                periods,
 			UnitPrice:              unitPrice,
 			Amount:                 amount,
@@ -155,31 +189,74 @@ func handleCreateOrder(st *store.Store, payClient billing.PaymentClient, billing
 			return
 		}
 
-		// Call payment provider if configured.
-		if payClient != nil {
-			payResp, err := payClient.CreatePayment(r.Context(), billing.PaymentRequest{
-				OrderID:     order.ID,
-				ProductName: plan.DisplayName,
-				Channel:     body.Channel,
-				Currency:    order.Currency,
-				Amount:      order.Amount,
-				NotifyURL:   billingCfg.NotifyURL,
-				ReturnURL:   billingCfg.ReturnURL,
-			})
-			if err != nil {
-				_ = st.UpdateOrderStatus(order.ID, types.OrderStatusFailed)
-				writeError(w, http.StatusBadGateway, "payment_error", "failed to create payment")
-				return
-			}
-			if err := st.UpdateOrderPayment(order.ID, payResp.PaymentRef, payResp.PaymentURL, types.OrderStatusPaying); err != nil {
-				writeError(w, http.StatusInternalServerError, "internal", "failed to update order payment")
-				return
-			}
-			order.PaymentRef = payResp.PaymentRef
-			order.PaymentURL = payResp.PaymentURL
-			order.Status = types.OrderStatusPaying
+		// Call payment provider — required for paid orders.
+		if payClient == nil {
+			_ = st.UpdateOrderStatus(order.ID, types.OrderStatusFailed)
+			writeError(w, http.StatusServiceUnavailable, "payment_not_configured", "payment provider is not configured")
+			return
 		}
+		payResp, err := payClient.CreatePayment(r.Context(), billing.PaymentRequest{
+			OrderID:     order.ID,
+			ProductName: plan.DisplayName,
+			Channel:     body.Channel,
+			Currency:    order.Currency,
+			Amount:      order.Amount,
+			NotifyURL:   billingCfg.NotifyURL,
+			ReturnURL:   billingCfg.ReturnURL,
+		})
+		if err != nil {
+			_ = st.UpdateOrderStatus(order.ID, types.OrderStatusFailed)
+			writeError(w, http.StatusBadGateway, "payment_error", "failed to create payment")
+			return
+		}
+		if err := st.UpdateOrderPayment(order.ID, payResp.PaymentRef, payResp.PaymentURL, types.OrderStatusPaying); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to update order payment")
+			return
+		}
+		order.PaymentRef = payResp.PaymentRef
+		order.PaymentURL = payResp.PaymentURL
+		order.Status = types.OrderStatusPaying
 
 		writeData(w, http.StatusCreated, order)
+	}
+}
+
+func handleSubscriptionUsage(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		projectID := chi.URLParam(r, "projectID")
+
+		activeSub, err := st.GetActiveSubscription(projectID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to get active subscription")
+			return
+		}
+		if activeSub == nil {
+			writeData(w, http.StatusOK, []ratelimit.CreditWindowStatus{})
+			return
+		}
+
+		plan, err := st.GetPlanBySlug(activeSub.PlanName)
+		if err != nil || plan == nil {
+			writeData(w, http.StatusOK, []ratelimit.CreditWindowStatus{})
+			return
+		}
+
+		statuses := make([]ratelimit.CreditWindowStatus, 0, len(plan.CreditRules))
+		for _, rule := range plan.CreditRules {
+			windowStart := ratelimit.WindowStartTime(rule.Window, rule.WindowType)
+			used, err := st.SumCreditsInWindowByProject(projectID, windowStart)
+			if err != nil {
+				used = 0
+			}
+			resetDur := ratelimit.WindowResetDuration(rule.Window, rule.WindowType)
+			statuses = append(statuses, ratelimit.CreditWindowStatus{
+				Window:      rule.Window,
+				MaxCredits:  rule.MaxCredits,
+				UsedCredits: used,
+				ResetsAt:    time.Now().UTC().Add(resetDur).Format(time.RFC3339),
+			})
+		}
+
+		writeData(w, http.StatusOK, statuses)
 	}
 }

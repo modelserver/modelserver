@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -37,12 +36,11 @@ func main() {
 	} else if _, statErr := os.Stat("config.yml"); statErr == nil {
 		cfg, err = config.LoadFile("config.yml")
 	} else {
-		cfg, err = config.Load(strings.NewReader(""))
+		cfg, err = config.Load(nil)
 	}
 	if err != nil {
 		log.Fatalf("failed to load config: %v", err)
 	}
-	cfg.ApplyEnvOverrides()
 
 	// Set up logger.
 	var logLevel slog.Level
@@ -125,6 +123,19 @@ func main() {
 				continue
 			}
 			channelRouter.Reload(ch, rt, encryptionKey, logger)
+		}
+	}()
+
+	// Periodically expire paid subscriptions and fall back to free plan.
+	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			if n, err := st.ExpireAndFallbackToFree(); err != nil {
+				logger.Error("subscription expiry failed", "error", err)
+			} else if n > 0 {
+				logger.Info("expired subscriptions with free fallback", "count", n)
+			}
 		}
 	}()
 

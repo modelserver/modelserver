@@ -96,10 +96,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 
 	// Lazily register the trace in the database.
 	if traceID != "" {
-		source := types.TraceSourceAuto
-		if r.Header.Get("x-trace-id") != "" {
-			source = types.TraceSourceHeader
-		}
+		source := TraceSourceFromContext(r.Context())
 		go h.store.EnsureTrace(project.ID, traceID, threadID, source)
 	}
 
@@ -126,16 +123,15 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 					status = types.RequestStatusRateLimited
 				}
 				h.collector.Record(types.Request{
-					ProjectID:  project.ID,
-					APIKeyID:   apiKey.ID,
-					ChannelID:  channel.ID,
-					TraceID:    traceID,
-					Provider:   channel.Provider,
-					Model:      model,
-					Streaming:  isStreaming,
-					Status:     status,
-					StatusCode: resp.StatusCode,
-					LatencyMs:  duration,
+					ProjectID: project.ID,
+					APIKeyID:  apiKey.ID,
+					ChannelID: channel.ID,
+					TraceID:   traceID,
+					Provider:  channel.Provider,
+					Model:     model,
+					Streaming: isStreaming,
+					Status:    status,
+					LatencyMs: duration,
 				})
 				return nil
 			}
@@ -165,7 +161,7 @@ func (h *Handler) interceptNonStreaming(resp *http.Response, project *types.Proj
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 
-	parsedModel, _, usage, err := ParseNonStreamingResponse(body)
+	parsedModel, msgID, usage, err := ParseNonStreamingResponse(body)
 	if err != nil {
 		logger.Warn("failed to parse response", "error", err)
 		return nil
@@ -186,11 +182,11 @@ func (h *Handler) interceptNonStreaming(resp *http.Response, project *types.Proj
 		APIKeyID:            apiKey.ID,
 		ChannelID:           channel.ID,
 		TraceID:             traceID,
+		MsgID:               msgID,
 		Provider:            channel.Provider,
 		Model:               model,
 		Streaming:           false,
 		Status:              types.RequestStatusSuccess,
-		StatusCode:          resp.StatusCode,
 		InputTokens:         usage.InputTokens,
 		OutputTokens:        usage.OutputTokens,
 		CacheCreationTokens: usage.CacheCreationInputTokens,
@@ -199,7 +195,17 @@ func (h *Handler) interceptNonStreaming(resp *http.Response, project *types.Proj
 		LatencyMs:           duration,
 	})
 
-	logger.Info("request completed", "input_tokens", usage.InputTokens, "output_tokens", usage.OutputTokens, "credits", credits, "duration_ms", duration)
+	logger.Info("request completed",
+		"msg_id", msgID,
+		"status", types.RequestStatusSuccess,
+		"streaming", false,
+		"input_tokens", usage.InputTokens,
+		"output_tokens", usage.OutputTokens,
+		"cache_creation_tokens", usage.CacheCreationInputTokens,
+		"cache_read_tokens", usage.CacheReadInputTokens,
+		"credits", credits,
+		"duration_ms", duration,
+	)
 
 	if h.rateLimiter != nil {
 		h.rateLimiter.PostRecord(context.Background(), project.ID, apiKey.ID, model, types.TokenUsage{
@@ -230,11 +236,11 @@ func (h *Handler) interceptStreaming(resp *http.Response, project *types.Project
 			APIKeyID:            apiKey.ID,
 			ChannelID:           channel.ID,
 			TraceID:             traceID,
+			MsgID:               msgID,
 			Provider:            channel.Provider,
 			Model:               model,
 			Streaming:           true,
 			Status:              types.RequestStatusSuccess,
-			StatusCode:          resp.StatusCode,
 			InputTokens:         usage.InputTokens,
 			OutputTokens:        usage.OutputTokens,
 			CacheCreationTokens: usage.CacheCreationInputTokens,
@@ -244,9 +250,18 @@ func (h *Handler) interceptStreaming(resp *http.Response, project *types.Project
 			TTFTMs:              ttft,
 		})
 
-		logger.Info("streaming request completed",
-			"input_tokens", usage.InputTokens, "output_tokens", usage.OutputTokens,
-			"credits", credits, "duration_ms", duration, "ttft_ms", ttft)
+		logger.Info("request completed",
+			"msg_id", msgID,
+			"status", types.RequestStatusSuccess,
+			"streaming", true,
+			"input_tokens", usage.InputTokens,
+			"output_tokens", usage.OutputTokens,
+			"cache_creation_tokens", usage.CacheCreationInputTokens,
+			"cache_read_tokens", usage.CacheReadInputTokens,
+			"credits", credits,
+			"duration_ms", duration,
+			"ttft_ms", ttft,
+		)
 
 		if h.rateLimiter != nil {
 			h.rateLimiter.PostRecord(context.Background(), project.ID, apiKey.ID, model, types.TokenUsage{
@@ -260,6 +275,65 @@ func (h *Handler) interceptStreaming(resp *http.Response, project *types.Project
 	return nil
 }
 
+// HandleCountTokens proxies Anthropic /v1/messages/count_tokens requests.
+func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
+	apiKey := APIKeyFromContext(r.Context())
+	project := ProjectFromContext(r.Context())
+	if apiKey == nil || project == nil {
+		writeProxyError(w, http.StatusInternalServerError, "missing auth context")
+		return
+	}
+
+	bodyBytes, err := io.ReadAll(http.MaxBytesReader(w, r.Body, h.maxBodySize))
+	if err != nil {
+		writeProxyError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+	var reqShape struct {
+		Model string `json:"model"`
+	}
+	json.Unmarshal(bodyBytes, &reqShape)
+	model := reqShape.Model
+
+	if len(apiKey.AllowedModels) > 0 && !modelInList(apiKey.AllowedModels, model) {
+		writeProxyError(w, http.StatusForbidden, "model not allowed for this API key")
+		return
+	}
+
+	candidates := h.channelRouter.MatchChannels(project.ID, model)
+	if len(candidates) == 0 {
+		writeProxyError(w, http.StatusServiceUnavailable, "no channels available for model "+model)
+		return
+	}
+
+	channel := SelectChannel(candidates)
+	if channel == nil {
+		writeProxyError(w, http.StatusServiceUnavailable, "no channels available")
+		return
+	}
+
+	channelAPIKey := h.channelRouter.GetChannelKey(channel.ID)
+	if channelAPIKey == "" {
+		h.logger.Error("no decrypted key for channel", "channel_id", channel.ID)
+		writeProxyError(w, http.StatusInternalServerError, "channel configuration error")
+		return
+	}
+
+	proxy := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			directorSetUpstream(req, channel.BaseURL, channelAPIKey)
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			h.logger.Error("count_tokens proxy error", "error", err, "project_id", project.ID, "model", model)
+			writeProxyError(w, http.StatusBadGateway, "upstream error")
+		},
+	}
+
+	proxy.ServeHTTP(w, r)
+}
+
 func directorSetUpstream(req *http.Request, baseURL, apiKey string) {
 	req.URL.Scheme = "https"
 	if baseURL != "" {
@@ -269,6 +343,12 @@ func directorSetUpstream(req *http.Request, baseURL, apiKey string) {
 		}
 	}
 	req.Host = req.URL.Host
+
+	// Remove user credentials so they are never forwarded to the upstream provider.
+	req.Header.Del("Authorization")
+	req.Header.Del("x-api-key")
+
+	// Set the channel's own API key for the upstream request.
 	req.Header.Set("x-api-key", apiKey)
 	if req.Header.Get("anthropic-version") == "" {
 		req.Header.Set("anthropic-version", "2023-06-01")

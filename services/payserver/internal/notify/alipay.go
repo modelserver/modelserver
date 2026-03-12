@@ -49,7 +49,7 @@ func (h *AlipayNotifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	orderID := r.PostFormValue("out_trade_no")
+	orderID := uuidFromCompact(r.PostFormValue("out_trade_no"))
 	tradeNo := r.PostFormValue("trade_no")
 	totalAmountStr := r.PostFormValue("total_amount")
 	paidAmount, err := parseYuanToFen(totalAmountStr)

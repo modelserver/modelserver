@@ -83,7 +83,7 @@ func handleCreatePayment(st *store.Store, gateways map[string]gateway.Gateway, l
 
 		// New record inserted — call payment gateway.
 		result, err := gw.CreatePayment(r.Context(), &gateway.PaymentRequest{
-			OutTradeNo:  req.OrderID,
+			OutTradeNo:  strings.ReplaceAll(req.OrderID, "-", ""),
 			Description: req.ProductName,
 			Amount:      req.Amount,
 		})

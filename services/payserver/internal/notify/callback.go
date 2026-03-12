@@ -64,3 +64,13 @@ func (c *CallbackClient) Send(ctx context.Context, payload DeliveryPayload) erro
 	}
 	return nil
 }
+
+// uuidFromCompact restores a 32-hex-char compact UUID to the standard
+// 8-4-4-4-12 format. If the input is already formatted or has an unexpected
+// length it is returned unchanged.
+func uuidFromCompact(s string) string {
+	if len(s) != 32 {
+		return s
+	}
+	return s[:8] + "-" + s[8:12] + "-" + s[12:16] + "-" + s[16:20] + "-" + s[20:]
+}

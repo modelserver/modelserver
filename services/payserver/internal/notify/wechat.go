@@ -46,7 +46,7 @@ func (h *WeChatNotifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	orderID := *tx.OutTradeNo
+	orderID := uuidFromCompact(*tx.OutTradeNo)
 	tradeNo := *tx.TransactionId
 	gatewayAmount := *tx.Amount.Total
 	paidAt := time.Now()

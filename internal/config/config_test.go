@@ -2,16 +2,15 @@ package config
 
 import (
 	"os"
-	"strings"
 	"testing"
 	"time"
 )
 
-// TestLoadDefaults verifies that an empty YAML document yields all defaults.
+// TestLoadDefaults verifies that an empty config yields all defaults.
 func TestLoadDefaults(t *testing.T) {
-	cfg, err := Load(strings.NewReader(""))
+	cfg, err := Load(nil)
 	if err != nil {
-		t.Fatalf("Load empty reader: %v", err)
+		t.Fatalf("Load nil: %v", err)
 	}
 
 	if cfg.Server.ProxyAddr != ":8080" {
@@ -34,6 +33,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if !cfg.Auth.AllowRegistration {
 		t.Error("Auth.AllowRegistration = false, want true")
+	}
+	if !cfg.Auth.PasswordLoginEnabled {
+		t.Error("Auth.PasswordLoginEnabled = false, want true")
 	}
 	if cfg.Trace.TraceHeader != "X-Trace-Id" {
 		t.Errorf("Trace.TraceHeader = %q, want %q", cfg.Trace.TraceHeader, "X-Trace-Id")
@@ -60,7 +62,7 @@ func TestLoadDefaults(t *testing.T) {
 
 // TestLoadCustomValues verifies that YAML values override defaults.
 func TestLoadCustomValues(t *testing.T) {
-	yaml := `
+	yaml := []byte(`
 server:
   proxy_addr: ":9090"
   admin_addr: ":9091"
@@ -73,6 +75,7 @@ auth:
   access_token_ttl: 5m
   refresh_token_ttl: 24h
   allow_registration: false
+  password_login_enabled: false
   oauth:
     github:
       client_id: "gh-id"
@@ -100,9 +103,9 @@ cors:
   allowed_origins:
     - "https://app.example.com"
     - "https://admin.example.com"
-`
+`)
 
-	cfg, err := Load(strings.NewReader(yaml))
+	cfg, err := Load(yaml)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -133,6 +136,9 @@ cors:
 	}
 	if cfg.Auth.AllowRegistration {
 		t.Error("Auth.AllowRegistration = true, want false")
+	}
+	if cfg.Auth.PasswordLoginEnabled {
+		t.Error("Auth.PasswordLoginEnabled = true, want false")
 	}
 	if cfg.Auth.OAuth.GitHub.ClientID != "gh-id" {
 		t.Errorf("OAuth.GitHub.ClientID = %q, want %q", cfg.Auth.OAuth.GitHub.ClientID, "gh-id")
@@ -233,26 +239,18 @@ func TestLoadFileNotFound(t *testing.T) {
 	}
 }
 
-// TestApplyEnvOverrides verifies that environment variables override config values.
-func TestApplyEnvOverrides(t *testing.T) {
-	cfg, err := Load(strings.NewReader(""))
+// TestEnvOverrides verifies that environment variables take priority over YAML and defaults.
+func TestEnvOverrides(t *testing.T) {
+	t.Setenv("MODELSERVER_SERVER_PROXY_ADDR", ":5050")
+	t.Setenv("MODELSERVER_SERVER_ADMIN_ADDR", ":5051")
+	t.Setenv("MODELSERVER_DB_URL", "postgres://env-override/db")
+	t.Setenv("MODELSERVER_AUTH_JWT_SECRET", "env-jwt-secret")
+	t.Setenv("MODELSERVER_ENCRYPTION_KEY", "env-enc-key")
+
+	cfg, err := Load(nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-
-	// Set env vars for this test only; clean up afterward.
-	envVars := map[string]string{
-		"MODELSERVER_SERVER_PROXY_ADDR": ":5050",
-		"MODELSERVER_SERVER_ADMIN_ADDR": ":5051",
-		"MODELSERVER_DB_URL":            "postgres://env-override/db",
-		"MODELSERVER_AUTH_JWT_SECRET":   "env-jwt-secret",
-		"MODELSERVER_ENCRYPTION_KEY":    "env-enc-key",
-	}
-	for k, v := range envVars {
-		t.Setenv(k, v)
-	}
-
-	cfg.ApplyEnvOverrides()
 
 	if cfg.Server.ProxyAddr != ":5050" {
 		t.Errorf("Server.ProxyAddr = %q, want %q", cfg.Server.ProxyAddr, ":5050")
@@ -271,23 +269,22 @@ func TestApplyEnvOverrides(t *testing.T) {
 	}
 }
 
-// TestApplyEnvOverridesPartial verifies that unset env vars do not overwrite existing values.
-func TestApplyEnvOverridesPartial(t *testing.T) {
-	yaml := `
+// TestEnvOverridesPartial verifies that unset env vars do not overwrite YAML values.
+func TestEnvOverridesPartial(t *testing.T) {
+	yaml := []byte(`
 server:
   proxy_addr: ":6060"
 auth:
   jwt_secret: "yaml-secret"
-`
-	cfg, err := Load(strings.NewReader(yaml))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+`)
 
 	// Only set one env var; the others should remain as loaded from YAML.
 	t.Setenv("MODELSERVER_SERVER_ADMIN_ADDR", ":6061")
 
-	cfg.ApplyEnvOverrides()
+	cfg, err := Load(yaml)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
 
 	// Was set by env.
 	if cfg.Server.AdminAddr != ":6061" {
@@ -300,5 +297,128 @@ auth:
 	// Was set by YAML and not overridden.
 	if cfg.Auth.JWTSecret != "yaml-secret" {
 		t.Errorf("Auth.JWTSecret = %q, want %q", cfg.Auth.JWTSecret, "yaml-secret")
+	}
+}
+
+// TestEnvOIDC verifies that OIDC settings can be provided via the short-form env vars.
+func TestEnvOIDC(t *testing.T) {
+	t.Setenv("MODELSERVER_AUTH_PASSWORD_LOGIN_ENABLED", "false")
+	t.Setenv("MODELSERVER_AUTH_OIDC_ISSUER_URL", "https://idp.example.com")
+	t.Setenv("MODELSERVER_AUTH_OIDC_CLIENT_ID", "my-client")
+	t.Setenv("MODELSERVER_AUTH_OIDC_CLIENT_SECRET", "my-secret")
+
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Auth.PasswordLoginEnabled {
+		t.Error("Auth.PasswordLoginEnabled = true, want false")
+	}
+	if cfg.Auth.OAuth.OIDC.IssuerURL != "https://idp.example.com" {
+		t.Errorf("OIDC.IssuerURL = %q", cfg.Auth.OAuth.OIDC.IssuerURL)
+	}
+	if cfg.Auth.OAuth.OIDC.ClientID != "my-client" {
+		t.Errorf("OIDC.ClientID = %q", cfg.Auth.OAuth.OIDC.ClientID)
+	}
+	if cfg.Auth.OAuth.OIDC.ClientSecret != "my-secret" {
+		t.Errorf("OIDC.ClientSecret = %q", cfg.Auth.OAuth.OIDC.ClientSecret)
+	}
+}
+
+// TestTraceConfigDefaults verifies that new TraceConfig fields have correct defaults.
+func TestTraceConfigDefaults(t *testing.T) {
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(cfg.Trace.ExtraTraceHeaders) != 0 {
+		t.Errorf("Trace.ExtraTraceHeaders = %v, want empty", cfg.Trace.ExtraTraceHeaders)
+	}
+	if len(cfg.Trace.ExtraTraceBodyFields) != 0 {
+		t.Errorf("Trace.ExtraTraceBodyFields = %v, want empty", cfg.Trace.ExtraTraceBodyFields)
+	}
+	if !cfg.Trace.ClaudeCodeTraceEnabled {
+		t.Error("Trace.ClaudeCodeTraceEnabled = false, want true")
+	}
+	if !cfg.Trace.CodexTraceEnabled {
+		t.Error("Trace.CodexTraceEnabled = false, want true")
+	}
+}
+
+// TestTraceConfigYAML verifies that TraceConfig fields are populated from YAML.
+func TestTraceConfigYAML(t *testing.T) {
+	yaml := []byte(`
+trace:
+  trace_header: "X-Custom-Trace"
+  thread_header: "X-Custom-Thread"
+  extra_trace_headers:
+    - "X-Request-Id"
+    - "X-Correlation-Id"
+  extra_trace_body_fields:
+    - "metadata.trace_id"
+    - "context.request_id"
+  claude_code_trace_enabled: true
+  codex_trace_enabled: true
+`)
+
+	cfg, err := Load(yaml)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Trace.TraceHeader != "X-Custom-Trace" {
+		t.Errorf("Trace.TraceHeader = %q, want %q", cfg.Trace.TraceHeader, "X-Custom-Trace")
+	}
+	if cfg.Trace.ThreadHeader != "X-Custom-Thread" {
+		t.Errorf("Trace.ThreadHeader = %q, want %q", cfg.Trace.ThreadHeader, "X-Custom-Thread")
+	}
+	if len(cfg.Trace.ExtraTraceHeaders) != 2 {
+		t.Fatalf("Trace.ExtraTraceHeaders len = %d, want 2", len(cfg.Trace.ExtraTraceHeaders))
+	}
+	if cfg.Trace.ExtraTraceHeaders[0] != "X-Request-Id" {
+		t.Errorf("ExtraTraceHeaders[0] = %q, want %q", cfg.Trace.ExtraTraceHeaders[0], "X-Request-Id")
+	}
+	if cfg.Trace.ExtraTraceHeaders[1] != "X-Correlation-Id" {
+		t.Errorf("ExtraTraceHeaders[1] = %q, want %q", cfg.Trace.ExtraTraceHeaders[1], "X-Correlation-Id")
+	}
+	if len(cfg.Trace.ExtraTraceBodyFields) != 2 {
+		t.Fatalf("Trace.ExtraTraceBodyFields len = %d, want 2", len(cfg.Trace.ExtraTraceBodyFields))
+	}
+	if cfg.Trace.ExtraTraceBodyFields[0] != "metadata.trace_id" {
+		t.Errorf("ExtraTraceBodyFields[0] = %q", cfg.Trace.ExtraTraceBodyFields[0])
+	}
+	if !cfg.Trace.ClaudeCodeTraceEnabled {
+		t.Error("Trace.ClaudeCodeTraceEnabled = false, want true")
+	}
+	if !cfg.Trace.CodexTraceEnabled {
+		t.Error("Trace.CodexTraceEnabled = false, want true")
+	}
+}
+
+// TestTraceConfigEnv verifies TraceConfig fields can be set via environment variables.
+func TestTraceConfigEnv(t *testing.T) {
+	t.Setenv("MODELSERVER_TRACE_EXTRA_TRACE_HEADERS", "X-Req-Id,X-Corr-Id")
+	t.Setenv("MODELSERVER_TRACE_EXTRA_TRACE_BODY_FIELDS", "meta.trace_id")
+	t.Setenv("MODELSERVER_TRACE_CLAUDE_CODE_TRACE_ENABLED", "true")
+	t.Setenv("MODELSERVER_TRACE_CODEX_TRACE_ENABLED", "true")
+
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(cfg.Trace.ExtraTraceHeaders) != 2 {
+		t.Fatalf("Trace.ExtraTraceHeaders len = %d, want 2", len(cfg.Trace.ExtraTraceHeaders))
+	}
+	if cfg.Trace.ExtraTraceHeaders[0] != "X-Req-Id" {
+		t.Errorf("ExtraTraceHeaders[0] = %q, want %q", cfg.Trace.ExtraTraceHeaders[0], "X-Req-Id")
+	}
+	if !cfg.Trace.ClaudeCodeTraceEnabled {
+		t.Error("Trace.ClaudeCodeTraceEnabled = false, want true")
+	}
+	if !cfg.Trace.CodexTraceEnabled {
+		t.Error("Trace.CodexTraceEnabled = false, want true")
 	}
 }

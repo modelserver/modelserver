@@ -101,15 +101,79 @@ func (s *Store) UpdateSubscriptionStatus(id, status string) error {
 	return err
 }
 
-// ExpireSubscriptions marks all expired active subscriptions as expired.
-func (s *Store) ExpireSubscriptions() (int64, error) {
-	result, err := s.db.Exec(`
-		UPDATE subscriptions SET status = 'expired', updated_at = NOW()
-		WHERE status = 'active' AND expires_at < NOW()`)
+// ExpireAndFallbackToFree marks expired paid subscriptions as expired and
+// creates a new free-tier subscription for each affected project.
+func (s *Store) ExpireAndFallbackToFree() (int64, error) {
+	// Fetch the free plan once.
+	freePlan, err := s.GetPlanBySlug("free")
 	if err != nil {
+		return 0, fmt.Errorf("look up free plan: %w", err)
+	}
+	if freePlan == nil || !freePlan.IsActive {
+		// No free plan configured — just expire without fallback.
+		result, err := s.db.Exec(`
+			UPDATE subscriptions SET status = 'expired', updated_at = NOW()
+			WHERE status = 'active' AND plan_name != 'free' AND expires_at < NOW()`)
+		if err != nil {
+			return 0, err
+		}
+		return result.RowsAffected()
+	}
+
+	// Find expired paid subscriptions.
+	rows, err := s.db.Query(`
+		SELECT id, project_id FROM subscriptions
+		WHERE status = 'active' AND plan_name != 'free' AND expires_at < NOW()`)
+	if err != nil {
+		return 0, fmt.Errorf("query expired subscriptions: %w", err)
+	}
+	defer rows.Close()
+
+	type expired struct {
+		id        string
+		projectID string
+	}
+	var items []expired
+	for rows.Next() {
+		var e expired
+		if err := rows.Scan(&e.id, &e.projectID); err != nil {
+			return 0, err
+		}
+		items = append(items, e)
+	}
+	if err := rows.Err(); err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+
+	now := time.Now()
+	freeExpiry := now.AddDate(100, 0, 0)
+	var count int64
+
+	for _, e := range items {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return count, fmt.Errorf("begin tx: %w", err)
+		}
+		// Mark as expired.
+		if _, err := tx.Exec(`UPDATE subscriptions SET status = 'expired', updated_at = NOW() WHERE id = $1`, e.id); err != nil {
+			tx.Rollback()
+			return count, fmt.Errorf("expire subscription %s: %w", e.id, err)
+		}
+		// Create free plan subscription.
+		if _, err := tx.Exec(`
+			INSERT INTO subscriptions (project_id, plan_id, plan_name, status, starts_at, expires_at)
+			VALUES ($1, $2, $3, $4, $5, $6)`,
+			e.projectID, freePlan.ID, freePlan.Slug, "active", now, freeExpiry,
+		); err != nil {
+			tx.Rollback()
+			return count, fmt.Errorf("create free fallback for project %s: %w", e.projectID, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return count, fmt.Errorf("commit fallback for project %s: %w", e.projectID, err)
+		}
+		count++
+	}
+	return count, nil
 }
 
 // CreateSubscriptionFromPlan creates a subscription linking a project to a plan.
@@ -187,70 +251,16 @@ func (s *Store) DeliverOrder(orderID string, plan *types.Plan, project *types.Pr
 	var sub *types.Subscription
 
 	switch order.OrderType {
-	case types.OrderTypeNew:
-		expiresAt := now.AddDate(0, plan.PeriodMonths*order.Periods, 0)
-
-		// Revoke any existing active subscription to satisfy the unique constraint.
-		_, err = tx.Exec(`UPDATE subscriptions SET status = $1, updated_at = NOW()
-			WHERE project_id = $2 AND status = 'active'`,
-			types.SubscriptionStatusRevoked, order.ProjectID)
-		if err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("revoke existing subscriptions: %w", err)
-		}
-
-		// Create subscription (no policy snapshot).
-		sub = &types.Subscription{ProjectID: order.ProjectID, PlanID: plan.ID, PlanName: plan.Slug, Status: types.SubscriptionStatusActive, StartsAt: now, ExpiresAt: expiresAt}
-		err = tx.QueryRow(`
-			INSERT INTO subscriptions (project_id, plan_id, plan_name, status, starts_at, expires_at)
-			VALUES ($1, $2, $3, $4, $5, $6)
-			RETURNING id, created_at, updated_at`,
-			sub.ProjectID, sub.PlanID, sub.PlanName, sub.Status, sub.StartsAt, sub.ExpiresAt,
-		).Scan(&sub.ID, &sub.CreatedAt, &sub.UpdatedAt)
-		if err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("create subscription for new order: %w", err)
-		}
-
-	case types.OrderTypeRenew:
-		if order.ExistingSubscriptionID == "" {
-			tx.Rollback()
-			return nil, fmt.Errorf("renew order has no existing subscription ID")
-		}
-		additionalMonths := plan.PeriodMonths * order.Periods
-		_, err = tx.Exec(`
-			UPDATE subscriptions SET expires_at = expires_at + ($1 || ' months')::interval, updated_at = NOW()
-			WHERE id = $2`, additionalMonths, order.ExistingSubscriptionID)
-		if err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("extend subscription: %w", err)
-		}
-
-		// Fetch updated subscription.
-		sub = &types.Subscription{}
-		var planIDNull sql.NullString
-		err = tx.QueryRow(`
-			SELECT id, project_id, COALESCE(plan_id::text, ''), plan_name, status, starts_at, expires_at, created_at, updated_at
-			FROM subscriptions WHERE id = $1`, order.ExistingSubscriptionID,
-		).Scan(&sub.ID, &sub.ProjectID, &planIDNull, &sub.PlanName, &sub.Status,
-			&sub.StartsAt, &sub.ExpiresAt, &sub.CreatedAt, &sub.UpdatedAt)
-		if err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("fetch renewed subscription: %w", err)
-		}
-		if planIDNull.Valid {
-			sub.PlanID = planIDNull.String
-		}
-
 	case types.OrderTypeUpgrade:
 		if order.ExistingSubscriptionID == "" {
 			tx.Rollback()
 			return nil, fmt.Errorf("upgrade order has no existing subscription ID")
 		}
 
-		// Get old subscription's expires_at.
+		// Get old subscription's expires_at and plan_name.
 		var oldExpiresAt time.Time
-		err = tx.QueryRow(`SELECT expires_at FROM subscriptions WHERE id = $1`, order.ExistingSubscriptionID).Scan(&oldExpiresAt)
+		var oldPlanName string
+		err = tx.QueryRow(`SELECT expires_at, plan_name FROM subscriptions WHERE id = $1`, order.ExistingSubscriptionID).Scan(&oldExpiresAt, &oldPlanName)
 		if err != nil {
 			tx.Rollback()
 			return nil, fmt.Errorf("get old subscription: %w", err)
@@ -264,8 +274,16 @@ func (s *Store) DeliverOrder(orderID string, plan *types.Plan, project *types.Pr
 			return nil, fmt.Errorf("revoke old subscription: %w", err)
 		}
 
-		// Create new subscription using old expires_at (no policy snapshot).
-		sub = &types.Subscription{ProjectID: order.ProjectID, PlanID: plan.ID, PlanName: plan.Slug, Status: types.SubscriptionStatusActive, StartsAt: now, ExpiresAt: oldExpiresAt}
+		// Determine expiry: if upgrading from free plan, calculate fresh expiry from now.
+		// Otherwise use old expires_at (prorated upgrade preserves remaining time).
+		var newExpiresAt time.Time
+		if oldPlanName == "free" {
+			newExpiresAt = now.AddDate(0, plan.PeriodMonths*order.Periods, 0)
+		} else {
+			newExpiresAt = oldExpiresAt
+		}
+
+		sub = &types.Subscription{ProjectID: order.ProjectID, PlanID: plan.ID, PlanName: plan.Slug, Status: types.SubscriptionStatusActive, StartsAt: now, ExpiresAt: newExpiresAt}
 		err = tx.QueryRow(`
 			INSERT INTO subscriptions (project_id, plan_id, plan_name, status, starts_at, expires_at)
 			VALUES ($1, $2, $3, $4, $5, $6)

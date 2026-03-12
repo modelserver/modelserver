@@ -3,6 +3,7 @@ package config
 import (
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -43,13 +44,16 @@ type WeChatConfig struct {
 	MchAPIv3Key       string `yaml:"mch_api_v3_key"`
 	MchSerialNo       string `yaml:"mch_serial_no"`
 	MchPrivateKeyPath string `yaml:"mch_private_key_path"`
+	MchPrivateKeyPEM  string `yaml:"mch_private_key_pem"`
 	NotifyURL         string `yaml:"notify_url"`
 }
 
 type AlipayConfig struct {
 	AppID               string `yaml:"app_id"`
 	PrivateKeyPath      string `yaml:"private_key_path"`
+	PrivateKeyPEM       string `yaml:"private_key_pem"`
 	AlipayPublicKeyPath string `yaml:"alipay_public_key_path"`
+	AlipayPublicKeyPEM  string `yaml:"alipay_public_key_pem"`
 	NotifyURL           string `yaml:"notify_url"`
 	ReturnURL           string `yaml:"return_url"`
 }
@@ -113,6 +117,9 @@ func (c *Config) ApplyEnvOverrides() {
 	if v := os.Getenv("PAYSERVER_WECHAT_MCH_PRIVATE_KEY_PATH"); v != "" {
 		c.WeChat.MchPrivateKeyPath = v
 	}
+	if v := os.Getenv("PAYSERVER_WECHAT_MCH_PRIVATE_KEY_PEM"); v != "" {
+		c.WeChat.MchPrivateKeyPEM = v
+	}
 	if v := os.Getenv("PAYSERVER_WECHAT_NOTIFY_URL"); v != "" {
 		c.WeChat.NotifyURL = v
 	}
@@ -122,8 +129,14 @@ func (c *Config) ApplyEnvOverrides() {
 	if v := os.Getenv("PAYSERVER_ALIPAY_PRIVATE_KEY_PATH"); v != "" {
 		c.Alipay.PrivateKeyPath = v
 	}
+	if v := os.Getenv("PAYSERVER_ALIPAY_PRIVATE_KEY_PEM"); v != "" {
+		c.Alipay.PrivateKeyPEM = v
+	}
 	if v := os.Getenv("PAYSERVER_ALIPAY_PUBLIC_KEY_PATH"); v != "" {
 		c.Alipay.AlipayPublicKeyPath = v
+	}
+	if v := os.Getenv("PAYSERVER_ALIPAY_PUBLIC_KEY_PEM"); v != "" {
+		c.Alipay.AlipayPublicKeyPEM = v
 	}
 	if v := os.Getenv("PAYSERVER_ALIPAY_NOTIFY_URL"); v != "" {
 		c.Alipay.NotifyURL = v
@@ -131,4 +144,40 @@ func (c *Config) ApplyEnvOverrides() {
 	if v := os.Getenv("PAYSERVER_ALIPAY_RETURN_URL"); v != "" {
 		c.Alipay.ReturnURL = v
 	}
+
+	// Normalize PEM strings — detect raw base64 and wrap with proper headers.
+	c.WeChat.MchPrivateKeyPEM = normalizePEM(c.WeChat.MchPrivateKeyPEM, "PRIVATE KEY")
+	c.Alipay.PrivateKeyPEM = normalizePEM(c.Alipay.PrivateKeyPEM, "PRIVATE KEY")
+	c.Alipay.AlipayPublicKeyPEM = normalizePEM(c.Alipay.AlipayPublicKeyPEM, "PUBLIC KEY")
+}
+
+// normalizePEM accepts PEM content in any of these forms:
+//   - Standard multi-line PEM with headers
+//   - Single-line PEM with literal \n separators
+//   - Raw base64 without headers (output of scripts/pem-encode.sh)
+//
+// It always returns a valid multi-line PEM string.
+func normalizePEM(s, label string) string {
+	if s == "" {
+		return s
+	}
+	s = strings.ReplaceAll(s, `\n`, "\n")
+	s = strings.TrimSpace(s)
+
+	if strings.HasPrefix(s, "-----") {
+		return s
+	}
+
+	// Raw base64 — fold to 64-char lines and wrap with headers.
+	var lines []string
+	lines = append(lines, "-----BEGIN "+label+"-----")
+	for len(s) > 64 {
+		lines = append(lines, s[:64])
+		s = s[64:]
+	}
+	if len(s) > 0 {
+		lines = append(lines, s)
+	}
+	lines = append(lines, "-----END "+label+"-----")
+	return strings.Join(lines, "\n")
 }

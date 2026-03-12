@@ -36,7 +36,7 @@ func (c *CompositeRateLimiter) PreCheck(ctx context.Context, projectID, apiKeyID
 
 	// Check credit rules.
 	for _, rule := range policy.CreditRules {
-		windowStart := windowStartTime(rule.Window, rule.WindowType)
+		windowStart := WindowStartTime(rule.Window, rule.WindowType)
 		cacheKey := fmt.Sprintf("%s|%s|%s", projectID, apiKeyID, rule.Window)
 		if rule.EffectiveScope() == types.CreditScopeProject {
 			cacheKey = fmt.Sprintf("p:%s|%s", projectID, rule.Window)
@@ -60,7 +60,7 @@ func (c *CompositeRateLimiter) PreCheck(ctx context.Context, projectID, apiKeyID
 		}
 
 		if used >= float64(rule.MaxCredits) {
-			retryAfter := windowResetDuration(rule.Window, rule.WindowType)
+			retryAfter := WindowResetDuration(rule.Window, rule.WindowType)
 			return false, retryAfter, nil
 		}
 	}
@@ -83,8 +83,8 @@ func (c *CompositeRateLimiter) PostRecord(ctx context.Context, projectID, apiKey
 	c.cache.invalidatePrefix("p:" + projectID)
 }
 
-// windowStartTime returns the start of the current window.
-func windowStartTime(window, windowType string) time.Time {
+// WindowStartTime returns the start of the current window.
+func WindowStartTime(window, windowType string) time.Time {
 	now := time.Now().UTC()
 
 	if windowType == "calendar" {
@@ -105,8 +105,8 @@ func windowStartTime(window, windowType string) time.Time {
 	return now.Add(-d)
 }
 
-// windowResetDuration returns how long until the window resets.
-func windowResetDuration(window, windowType string) time.Duration {
+// WindowResetDuration returns how long until the window resets.
+func WindowResetDuration(window, windowType string) time.Duration {
 	now := time.Now().UTC()
 
 	if windowType == "calendar" {
@@ -132,9 +132,18 @@ func parseDurationStr(s string) time.Duration {
 	if d, err := time.ParseDuration(s); err == nil {
 		return d
 	}
-	if len(s) > 1 && s[len(s)-1] == 'd' {
-		if d, err := time.ParseDuration(s[:len(s)-1] + "h"); err == nil {
-			return d * 24
+	if len(s) > 1 {
+		suffix := s[len(s)-1]
+		numPart := s[:len(s)-1]
+		switch suffix {
+		case 'd':
+			if d, err := time.ParseDuration(numPart + "h"); err == nil {
+				return d * 24
+			}
+		case 'w':
+			if d, err := time.ParseDuration(numPart + "h"); err == nil {
+				return d * 24 * 7
+			}
 		}
 	}
 	return time.Hour

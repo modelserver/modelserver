@@ -20,12 +20,20 @@ func writeProxyError(w http.ResponseWriter, status int, message string) {
 
 func httpStatusToErrorType(status int) string {
 	switch status {
+	case http.StatusBadRequest:
+		return "invalid_request_error"
 	case http.StatusUnauthorized:
 		return "authentication_error"
 	case http.StatusForbidden:
 		return "permission_error"
+	case http.StatusNotFound:
+		return "not_found_error"
+	case http.StatusRequestEntityTooLarge:
+		return "request_too_large"
 	case http.StatusTooManyRequests:
 		return "rate_limit_error"
+	case http.StatusInternalServerError:
+		return "api_error"
 	case http.StatusBadGateway:
 		return "api_error"
 	case http.StatusServiceUnavailable:

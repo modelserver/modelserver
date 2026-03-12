@@ -5,6 +5,7 @@
 # Config (may contain secrets)
 config.yml
 !config.example.yml
+.env*
 
 # IDE
 .idea/

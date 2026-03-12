@@ -35,6 +35,11 @@ func NewOIDCProvider(ctx context.Context, issuerURL, clientID, clientSecret, red
 	}, nil
 }
 
+// AuthCodeURL returns the authorization URL the user should visit.
+func (o *OIDCProvider) AuthCodeURL(state, redirectURL string) string {
+	return o.oauthConfig.AuthCodeURL(state, oauth2.SetAuthURLParam("redirect_uri", redirectURL))
+}
+
 // ExchangeAndGetUser exchanges an auth code for user info.
 func (o *OIDCProvider) ExchangeAndGetUser(ctx context.Context, code string) (*OAuthUserInfo, error) {
 	token, err := o.oauthConfig.Exchange(ctx, code)
@@ -53,19 +58,29 @@ func (o *OIDCProvider) ExchangeAndGetUser(ctx context.Context, code string) (*OA
 	}
 
 	var claims struct {
-		Sub     string `json:"sub"`
-		Email   string `json:"email"`
-		Name    string `json:"name"`
-		Picture string `json:"picture"`
+		Sub               string `json:"sub"`
+		Email             string `json:"email"`
+		Name              string `json:"name"`
+		Nickname          string `json:"nickname"`
+		PreferredUsername string `json:"preferred_username"`
+		Picture           string `json:"picture"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
 		return nil, fmt.Errorf("decode claims: %w", err)
 	}
 
+	displayName := claims.Name
+	if displayName == "" {
+		displayName = claims.Nickname
+	}
+	if displayName == "" {
+		displayName = claims.PreferredUsername
+	}
+
 	return &OAuthUserInfo{
 		Email:      claims.Email,
-		Name:       claims.Name,
-		AvatarURL:  claims.Picture,
+		Name:       displayName,
+		Picture:    claims.Picture,
 		ProviderID: claims.Sub,
 		Provider:   o.providerName,
 	}, nil

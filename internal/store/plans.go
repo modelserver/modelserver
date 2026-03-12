@@ -93,7 +93,7 @@ func (s *Store) ListPlans(activeOnly bool) ([]types.Plan, error) {
 	return scanPlans(rows)
 }
 
-// ListPlansForProject returns active plans matching the project's billing_tag.
+// ListPlansForProject returns active plans matching the project's billing_tags.
 func (s *Store) ListPlansForProject(projectID string) ([]types.Plan, error) {
 	rows, err := s.db.Query(`
 		SELECT pl.id, pl.name, pl.slug, pl.display_name, pl.description, pl.tier_level, pl.group_tag,
@@ -102,7 +102,7 @@ func (s *Store) ListPlansForProject(projectID string) ([]types.Plan, error) {
 		FROM plans pl
 		JOIN projects pr ON pr.id = $1
 		WHERE pl.is_active = TRUE
-			AND (pl.group_tag = '' OR pl.group_tag = pr.billing_tag)
+			AND (pl.group_tag = '' OR pl.group_tag = ANY(pr.billing_tags))
 		ORDER BY pl.tier_level ASC, pl.name ASC`, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("list plans for project: %w", err)

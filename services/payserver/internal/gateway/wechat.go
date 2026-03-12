@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/rsa"
 	"fmt"
 
 	"github.com/wechatpay-apiv3/wechatpay-go/core"
@@ -16,6 +17,7 @@ type WeChatGatewayConfig struct {
 	MchAPIv3Key       string
 	MchSerialNo       string
 	MchPrivateKeyPath string
+	MchPrivateKeyPEM  string
 	NotifyURL         string
 }
 
@@ -25,7 +27,13 @@ type WeChatGateway struct {
 }
 
 func NewWeChatGateway(ctx context.Context, cfg WeChatGatewayConfig) (*WeChatGateway, error) {
-	privKey, err := utils.LoadPrivateKeyWithPath(cfg.MchPrivateKeyPath)
+	var privKey *rsa.PrivateKey
+	var err error
+	if cfg.MchPrivateKeyPEM != "" {
+		privKey, err = utils.LoadPrivateKey(cfg.MchPrivateKeyPEM)
+	} else {
+		privKey, err = utils.LoadPrivateKeyWithPath(cfg.MchPrivateKeyPath)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("load wechat private key: %w", err)
 	}

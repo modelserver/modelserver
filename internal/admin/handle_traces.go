@@ -31,6 +31,18 @@ func handleGetTrace(st *store.Store) http.HandlerFunc {
 	}
 }
 
+func handleListTraceRequests(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		traceID := chi.URLParam(r, "traceID")
+		requests, err := st.ListRequestsByTraceID(traceID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to list trace requests")
+			return
+		}
+		writeData(w, http.StatusOK, requests)
+	}
+}
+
 func handleListThreads(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "projectID")

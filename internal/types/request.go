@@ -11,9 +11,11 @@ const (
 
 // TraceSource constants identify how a trace ID was associated with a request.
 const (
-	TraceSourceHeader    = "header"
-	TraceSourceAuto      = "auto"
+	TraceSourceHeader     = "header"
+	TraceSourceAuto       = "auto"
 	TraceSourceClaudeCode = "claude-code"
+	TraceSourceCodex      = "codex"
+	TraceSourceBody       = "body"
 )
 
 // Request records a single proxied API call.
@@ -23,11 +25,11 @@ type Request struct {
 	APIKeyID            string    `json:"api_key_id"`
 	ChannelID           string    `json:"channel_id"`
 	TraceID             string    `json:"trace_id,omitempty"`
+	MsgID               string    `json:"msg_id,omitempty"`
 	Provider            string    `json:"provider"`
 	Model               string    `json:"model"`
 	Streaming           bool      `json:"streaming"`
 	Status              string    `json:"status"`
-	StatusCode          int       `json:"status_code"`
 	InputTokens         int64     `json:"input_tokens"`
 	OutputTokens        int64     `json:"output_tokens"`
 	CacheCreationTokens int64     `json:"cache_creation_tokens"`

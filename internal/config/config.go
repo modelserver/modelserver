@@ -1,195 +1,225 @@
 package config
 
 import (
-	"io"
-	"os"
+	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"github.com/go-viper/mapstructure/v2"
+	"github.com/spf13/viper"
 )
 
 // Config is the top-level configuration struct.
 type Config struct {
-	Server     ServerConfig     `yaml:"server"`
-	DB         DBConfig         `yaml:"db"`
-	Auth       AuthConfig       `yaml:"auth"`
-	Encryption EncryptionConfig `yaml:"encryption"`
-	Trace      TraceConfig      `yaml:"trace"`
-	Collector  CollectorConfig  `yaml:"collector"`
-	Log        LogConfig        `yaml:"log"`
-	CORS       CORSConfig       `yaml:"cors"`
-	Billing    BillingConfig    `yaml:"billing"`
+	Server     ServerConfig     `yaml:"server"     mapstructure:"server"`
+	DB         DBConfig         `yaml:"db"         mapstructure:"db"`
+	Auth       AuthConfig       `yaml:"auth"       mapstructure:"auth"`
+	Encryption EncryptionConfig `yaml:"encryption" mapstructure:"encryption"`
+	Trace      TraceConfig      `yaml:"trace"      mapstructure:"trace"`
+	Collector  CollectorConfig  `yaml:"collector"  mapstructure:"collector"`
+	Log        LogConfig        `yaml:"log"        mapstructure:"log"`
+	CORS       CORSConfig       `yaml:"cors"       mapstructure:"cors"`
+	Billing    BillingConfig    `yaml:"billing"    mapstructure:"billing"`
 }
 
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
-	ProxyAddr      string        `yaml:"proxy_addr"`
-	AdminAddr      string        `yaml:"admin_addr"`
-	RequestTimeout time.Duration `yaml:"request_timeout"`
-	MaxRequestBody int64         `yaml:"max_request_body"`
+	ProxyAddr      string        `yaml:"proxy_addr"       mapstructure:"proxy_addr"`
+	AdminAddr      string        `yaml:"admin_addr"       mapstructure:"admin_addr"`
+	RequestTimeout time.Duration `yaml:"request_timeout"  mapstructure:"request_timeout"`
+	MaxRequestBody int64         `yaml:"max_request_body" mapstructure:"max_request_body"`
 }
 
 // DBConfig holds database connection settings.
 type DBConfig struct {
-	URL string `yaml:"url"`
+	URL string `yaml:"url" mapstructure:"url"`
 }
 
 // AuthConfig holds authentication settings.
 type AuthConfig struct {
-	JWTSecret         string        `yaml:"jwt_secret"`
-	AccessTokenTTL    time.Duration `yaml:"access_token_ttl"`
-	RefreshTokenTTL   time.Duration `yaml:"refresh_token_ttl"`
-	AllowRegistration bool          `yaml:"allow_registration"`
-	OAuth             OAuthConfig   `yaml:"oauth"`
+	JWTSecret            string        `yaml:"jwt_secret"              mapstructure:"jwt_secret"`
+	AccessTokenTTL       time.Duration `yaml:"access_token_ttl"        mapstructure:"access_token_ttl"`
+	RefreshTokenTTL      time.Duration `yaml:"refresh_token_ttl"       mapstructure:"refresh_token_ttl"`
+	AllowRegistration    bool          `yaml:"allow_registration"      mapstructure:"allow_registration"`
+	PasswordLoginEnabled bool          `yaml:"password_login_enabled"  mapstructure:"password_login_enabled"`
+	OAuth                OAuthConfig   `yaml:"oauth"                   mapstructure:"oauth"`
 }
 
 // OAuthConfig holds OAuth provider configurations.
 type OAuthConfig struct {
-	GitHub OAuthProviderConfig `yaml:"github"`
-	Google OAuthProviderConfig `yaml:"google"`
-	OIDC   OIDCConfig          `yaml:"oidc"`
+	GitHub OAuthProviderConfig `yaml:"github" mapstructure:"github"`
+	Google OAuthProviderConfig `yaml:"google" mapstructure:"google"`
+	OIDC   OIDCConfig          `yaml:"oidc"   mapstructure:"oidc"`
 }
 
 // OAuthProviderConfig holds client credentials for a standard OAuth provider.
 type OAuthProviderConfig struct {
-	ClientID     string `yaml:"client_id"`
-	ClientSecret string `yaml:"client_secret"`
+	ClientID     string `yaml:"client_id"     mapstructure:"client_id"`
+	ClientSecret string `yaml:"client_secret" mapstructure:"client_secret"`
 }
 
 // OIDCConfig holds settings for an OpenID Connect provider.
 type OIDCConfig struct {
-	IssuerURL    string `yaml:"issuer_url"`
-	ClientID     string `yaml:"client_id"`
-	ClientSecret string `yaml:"client_secret"`
+	IssuerURL    string `yaml:"issuer_url"    mapstructure:"issuer_url"`
+	ClientID     string `yaml:"client_id"     mapstructure:"client_id"`
+	ClientSecret string `yaml:"client_secret" mapstructure:"client_secret"`
+	RedirectURI  string `yaml:"redirect_uri"  mapstructure:"redirect_uri"`
 }
 
 // EncryptionConfig holds the encryption key used for at-rest data.
 type EncryptionConfig struct {
-	Key string `yaml:"key"`
+	Key string `yaml:"key" mapstructure:"key"`
 }
 
 // TraceConfig holds HTTP header names used for distributed tracing.
 type TraceConfig struct {
-	TraceHeader  string `yaml:"trace_header"`
-	ThreadHeader string `yaml:"thread_header"`
+	TraceHeader            string   `yaml:"trace_header"              mapstructure:"trace_header"`
+	ThreadHeader           string   `yaml:"thread_header"             mapstructure:"thread_header"`
+	ExtraTraceHeaders      []string `yaml:"extra_trace_headers"       mapstructure:"extra_trace_headers"`
+	ExtraTraceBodyFields   []string `yaml:"extra_trace_body_fields"   mapstructure:"extra_trace_body_fields"`
+	ClaudeCodeTraceEnabled bool     `yaml:"claude_code_trace_enabled" mapstructure:"claude_code_trace_enabled"`
+	CodexTraceEnabled      bool     `yaml:"codex_trace_enabled"       mapstructure:"codex_trace_enabled"`
 }
 
 // CollectorConfig holds settings for the metrics/event collector.
 type CollectorConfig struct {
-	BatchSize     int           `yaml:"batch_size"`
-	FlushInterval time.Duration `yaml:"flush_interval"`
-	BufferSize    int           `yaml:"buffer_size"`
+	BatchSize     int           `yaml:"batch_size"      mapstructure:"batch_size"`
+	FlushInterval time.Duration `yaml:"flush_interval"  mapstructure:"flush_interval"`
+	BufferSize    int           `yaml:"buffer_size"     mapstructure:"buffer_size"`
 }
 
 // LogConfig holds logging settings.
 type LogConfig struct {
-	Level  string `yaml:"level"`
-	Format string `yaml:"format"`
+	Level  string `yaml:"level"  mapstructure:"level"`
+	Format string `yaml:"format" mapstructure:"format"`
 }
 
 // CORSConfig holds Cross-Origin Resource Sharing settings.
 type CORSConfig struct {
-	AllowedOrigins []string `yaml:"allowed_origins"`
+	AllowedOrigins []string `yaml:"allowed_origins" mapstructure:"allowed_origins"`
 }
 
 // BillingConfig holds settings for the billing and payment integration.
 type BillingConfig struct {
-	WebhookSecret string `yaml:"webhook_secret"`
-	PaymentAPIURL string `yaml:"payment_api_url"`
-	PaymentAPIKey string `yaml:"payment_api_key"`
-	NotifyURL     string `yaml:"notify_url"`
-	ReturnURL     string `yaml:"return_url"`
+	WebhookSecret string `yaml:"webhook_secret"  mapstructure:"webhook_secret"`
+	PaymentAPIURL string `yaml:"payment_api_url"  mapstructure:"payment_api_url"`
+	PaymentAPIKey string `yaml:"payment_api_key"  mapstructure:"payment_api_key"`
+	NotifyURL     string `yaml:"notify_url"       mapstructure:"notify_url"`
+	ReturnURL     string `yaml:"return_url"       mapstructure:"return_url"`
 }
 
-// defaults returns a Config populated with all default values.
-func defaults() Config {
-	return Config{
-		Server: ServerConfig{
-			ProxyAddr:      ":8080",
-			AdminAddr:      ":8081",
-			RequestTimeout: 600 * time.Second,
-			MaxRequestBody: 52428800, // 50 MB
-		},
-		Auth: AuthConfig{
-			AccessTokenTTL:    15 * time.Minute,
-			RefreshTokenTTL:   168 * time.Hour,
-			AllowRegistration: true,
-		},
-		Trace: TraceConfig{
-			TraceHeader:  "X-Trace-Id",
-			ThreadHeader: "X-Thread-Id",
-		},
-		Collector: CollectorConfig{
-			BatchSize:     100,
-			FlushInterval: 1 * time.Second,
-			BufferSize:    10000,
-		},
-		Log: LogConfig{
-			Level:  "info",
-			Format: "json",
-		},
-	}
+// setDefaults registers all default values with the viper instance.
+// Keys without meaningful defaults are bound via BindEnv so they can
+// still be populated from MODELSERVER_* environment variables.
+func setDefaults(v *viper.Viper) {
+	// Server
+	v.SetDefault("server.proxy_addr", ":8080")
+	v.SetDefault("server.admin_addr", ":8081")
+	v.SetDefault("server.request_timeout", 600*time.Second)
+	v.SetDefault("server.max_request_body", 52428800)
+
+	// DB
+	_ = v.BindEnv("db.url")
+
+	// Auth
+	_ = v.BindEnv("auth.jwt_secret")
+	v.SetDefault("auth.access_token_ttl", 15*time.Minute)
+	v.SetDefault("auth.refresh_token_ttl", 168*time.Hour)
+	v.SetDefault("auth.allow_registration", true)
+	v.SetDefault("auth.password_login_enabled", true)
+
+	// OAuth / OIDC
+	// BindEnv with explicit env var names so both the canonical form
+	// (MODELSERVER_AUTH_OAUTH_OIDC_*) and the short form (MODELSERVER_AUTH_OIDC_*)
+	// work. The short form is more user-friendly for docker-compose.
+	_ = v.BindEnv("auth.oauth.github.client_id")
+	_ = v.BindEnv("auth.oauth.github.client_secret")
+	_ = v.BindEnv("auth.oauth.google.client_id")
+	_ = v.BindEnv("auth.oauth.google.client_secret")
+	_ = v.BindEnv("auth.oauth.oidc.issuer_url", "MODELSERVER_AUTH_OIDC_ISSUER_URL")
+	_ = v.BindEnv("auth.oauth.oidc.client_id", "MODELSERVER_AUTH_OIDC_CLIENT_ID")
+	_ = v.BindEnv("auth.oauth.oidc.client_secret", "MODELSERVER_AUTH_OIDC_CLIENT_SECRET")
+	_ = v.BindEnv("auth.oauth.oidc.redirect_uri", "MODELSERVER_AUTH_OIDC_REDIRECT_URI")
+
+	// Encryption
+	_ = v.BindEnv("encryption.key")
+
+	// Trace
+	v.SetDefault("trace.trace_header", "X-Trace-Id")
+	v.SetDefault("trace.thread_header", "X-Thread-Id")
+	_ = v.BindEnv("trace.extra_trace_headers")
+	_ = v.BindEnv("trace.extra_trace_body_fields")
+	v.SetDefault("trace.claude_code_trace_enabled", true)
+	v.SetDefault("trace.codex_trace_enabled", true)
+
+	// Collector
+	v.SetDefault("collector.batch_size", 100)
+	v.SetDefault("collector.flush_interval", 1*time.Second)
+	v.SetDefault("collector.buffer_size", 10000)
+
+	// Log
+	v.SetDefault("log.level", "info")
+	v.SetDefault("log.format", "json")
+
+	// CORS
+	_ = v.BindEnv("cors.allowed_origins")
+
+	// Billing
+	_ = v.BindEnv("billing.webhook_secret")
+	_ = v.BindEnv("billing.payment_api_url")
+	_ = v.BindEnv("billing.payment_api_key")
+	_ = v.BindEnv("billing.notify_url")
+	_ = v.BindEnv("billing.return_url")
 }
 
-// Load reads YAML configuration from r and merges it on top of the defaults.
-// Fields not present in the YAML retain their default values.
-func Load(r io.Reader) (*Config, error) {
-	cfg := defaults()
+// newViper creates a pre-configured viper instance with defaults, env binding,
+// and the MODELSERVER_ prefix. Environment variables are automatically mapped:
+//
+//	MODELSERVER_DB_URL           -> db.url
+//	MODELSERVER_AUTH_JWT_SECRET  -> auth.jwt_secret
+//	MODELSERVER_AUTH_OAUTH_OIDC_ISSUER_URL -> auth.oauth.oidc.issuer_url
+func newViper() *viper.Viper {
+	v := viper.New()
+	v.SetConfigType("yaml")
+	v.SetEnvPrefix("MODELSERVER")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+	setDefaults(v)
+	return v
+}
 
-	data, err := io.ReadAll(r)
-	if err != nil {
+func unmarshal(v *viper.Viper) (*Config, error) {
+	var cfg Config
+	if err := v.Unmarshal(&cfg, viper.DecodeHook(
+		mapstructure.ComposeDecodeHookFunc(
+			mapstructure.StringToTimeDurationHookFunc(),
+			mapstructure.StringToSliceHookFunc(","),
+		),
+	)); err != nil {
 		return nil, err
 	}
-
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, err
-	}
-
 	return &cfg, nil
 }
 
-// LoadFile opens the file at path and delegates to Load.
-func LoadFile(path string) (*Config, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
+// Load reads YAML configuration from a byte slice and merges it with defaults
+// and environment variables. Env vars always take highest priority.
+func Load(data []byte) (*Config, error) {
+	v := newViper()
+	if len(data) > 0 {
+		v.SetConfigType("yaml")
+		if err := v.ReadConfig(strings.NewReader(string(data))); err != nil {
+			return nil, err
+		}
 	}
-	defer f.Close()
-
-	return Load(f)
+	return unmarshal(v)
 }
 
-// ApplyEnvOverrides replaces specific config fields with values from
-// MODELSERVER_* environment variables when those variables are non-empty.
-func (c *Config) ApplyEnvOverrides() {
-	if v := os.Getenv("MODELSERVER_SERVER_PROXY_ADDR"); v != "" {
-		c.Server.ProxyAddr = v
+// LoadFile reads YAML configuration from the file at path and merges it with
+// defaults and environment variables. Env vars always take highest priority.
+func LoadFile(path string) (*Config, error) {
+	v := newViper()
+	v.SetConfigFile(path)
+	if err := v.ReadInConfig(); err != nil {
+		return nil, err
 	}
-	if v := os.Getenv("MODELSERVER_SERVER_ADMIN_ADDR"); v != "" {
-		c.Server.AdminAddr = v
-	}
-	if v := os.Getenv("MODELSERVER_DB_URL"); v != "" {
-		c.DB.URL = v
-	}
-	if v := os.Getenv("MODELSERVER_AUTH_JWT_SECRET"); v != "" {
-		c.Auth.JWTSecret = v
-	}
-	if v := os.Getenv("MODELSERVER_ENCRYPTION_KEY"); v != "" {
-		c.Encryption.Key = v
-	}
-	if v := os.Getenv("MODELSERVER_BILLING_WEBHOOK_SECRET"); v != "" {
-		c.Billing.WebhookSecret = v
-	}
-	if v := os.Getenv("MODELSERVER_BILLING_PAYMENT_API_URL"); v != "" {
-		c.Billing.PaymentAPIURL = v
-	}
-	if v := os.Getenv("MODELSERVER_BILLING_PAYMENT_API_KEY"); v != "" {
-		c.Billing.PaymentAPIKey = v
-	}
-	if v := os.Getenv("MODELSERVER_BILLING_NOTIFY_URL"); v != "" {
-		c.Billing.NotifyURL = v
-	}
-	if v := os.Getenv("MODELSERVER_BILLING_RETURN_URL"); v != "" {
-		c.Billing.ReturnURL = v
-	}
+	return unmarshal(v)
 }

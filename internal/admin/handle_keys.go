@@ -17,6 +17,21 @@ func handleListKeys(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "projectID")
 		p := parsePagination(r)
+
+		user := UserFromContext(r.Context())
+		member := MemberFromContext(r.Context())
+
+		// Developers can only see their own keys; owner/maintainer/superadmin see all.
+		if member != nil && member.Role == types.RoleDeveloper {
+			keys, total, err := st.ListAPIKeysByCreator(projectID, user.ID, p)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "internal", "failed to list keys")
+				return
+			}
+			writeList(w, keys, total, p.Page, p.Limit())
+			return
+		}
+
 		keys, total, err := st.ListAPIKeys(projectID, p)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to list keys")
@@ -94,6 +109,10 @@ func handleGetKey(st *store.Store) http.HandlerFunc {
 			writeError(w, http.StatusNotFound, "not_found", "key not found")
 			return
 		}
+		if !canAccessKey(r, key) {
+			writeError(w, http.StatusForbidden, "forbidden", "you can only access your own keys")
+			return
+		}
 		writeData(w, http.StatusOK, key)
 	}
 }
@@ -101,6 +120,17 @@ func handleGetKey(st *store.Store) http.HandlerFunc {
 func handleUpdateKey(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		keyID := chi.URLParam(r, "keyID")
+
+		key, err := st.GetAPIKeyByID(keyID)
+		if err != nil || key == nil {
+			writeError(w, http.StatusNotFound, "not_found", "key not found")
+			return
+		}
+		if !canAccessKey(r, key) {
+			writeError(w, http.StatusForbidden, "forbidden", "you can only manage your own keys")
+			return
+		}
+
 		var body map[string]interface{}
 		if err := decodeBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
@@ -123,7 +153,23 @@ func handleUpdateKey(st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		key, _ := st.GetAPIKeyByID(keyID)
+		key, _ = st.GetAPIKeyByID(keyID)
 		writeData(w, http.StatusOK, key)
 	}
+}
+
+// canAccessKey checks whether the current user can access the given API key.
+// Superadmins and owner/maintainer roles can access all keys.
+// Developers can only access keys they created.
+func canAccessKey(r *http.Request, key *types.APIKey) bool {
+	member := MemberFromContext(r.Context())
+	// No member in context means superadmin (bypassed projectAccessMiddleware).
+	if member == nil {
+		return true
+	}
+	if member.Role == types.RoleOwner || member.Role == types.RoleMaintainer {
+		return true
+	}
+	user := UserFromContext(r.Context())
+	return user != nil && key.CreatedBy == user.ID
 }
