@@ -41,7 +41,10 @@ jobs:
           COS_BUCKET: ${{ vars.COS_BUCKET }}
           COS_REGION: ${{ vars.COS_REGION }}
         run: |
-          aws configure set default.s3.addressing_style path
-          aws s3 sync dashboard/dist "s3://${COS_BUCKET}/" \
-            --endpoint-url "https://${COS_BUCKET}.cos.${COS_REGION}.myqcloud.com" \
-            --delete
+          pip install -q coscmd
+          coscmd config \
+            -a "$AWS_ACCESS_KEY_ID" \
+            -s "$AWS_SECRET_ACCESS_KEY" \
+            -b "$COS_BUCKET" \
+            -r "$COS_REGION"
+          coscmd upload -rs --delete dashboard/dist/ /
