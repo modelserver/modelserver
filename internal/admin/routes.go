@@ -22,10 +22,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 	r.Route("/api/v1", func(r chi.Router) {
 		// Public auth endpoints.
 		r.Get("/auth/config", handleAuthConfig(cfg))
-		r.Post("/auth/login", handleLogin(st, jwtMgr, cfg.Auth))
-		r.Post("/auth/register", handleRegister(st, jwtMgr, cfg.Auth))
 		r.Post("/auth/refresh", handleRefresh(st, jwtMgr))
-		r.Post("/system/initialize", handleInitialize(st, jwtMgr))
 
 		// OAuth callbacks (public).
 		r.Post("/auth/oauth/github", handleOAuthCallback(st, jwtMgr, cfg, "github"))
@@ -51,7 +48,6 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 
 			// Current user.
 			r.Get("/me", handleGetMe())
-			r.Patch("/auth/password", handleChangePassword(st))
 
 			// Users (superadmin only).
 			r.Route("/users", func(r chi.Router) {

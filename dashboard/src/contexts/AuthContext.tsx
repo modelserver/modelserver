@@ -17,9 +17,6 @@ import {
 export interface AuthContextValue {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  register: (name: string, email: string, password: string) => Promise<void>;
-  initialize: (name: string, email: string, password: string) => Promise<void>;
   oauthLogin: (provider: string, code: string) => Promise<void>;
   logout: () => void;
   refreshUser: () => Promise<void>;
@@ -71,41 +68,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     restore();
   }, [handleAuthResponse, refreshUser]);
 
-  const login = useCallback(
-    async (email: string, password: string) => {
-      const res = await api.post<AuthResponse>("/api/v1/auth/login", {
-        email,
-        password,
-      });
-      handleAuthResponse(res);
-    },
-    [handleAuthResponse],
-  );
-
-  const register = useCallback(
-    async (name: string, email: string, password: string) => {
-      const res = await api.post<AuthResponse>("/api/v1/auth/register", {
-        name,
-        email,
-        password,
-      });
-      handleAuthResponse(res);
-    },
-    [handleAuthResponse],
-  );
-
-  const initialize = useCallback(
-    async (name: string, email: string, password: string) => {
-      const res = await api.post<AuthResponse>("/api/v1/system/initialize", {
-        name,
-        email,
-        password,
-      });
-      handleAuthResponse(res);
-    },
-    [handleAuthResponse],
-  );
-
   const oauthLogin = useCallback(
     async (provider: string, code: string) => {
       const res = await api.post<AuthResponse>(
@@ -127,9 +89,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         user,
         loading,
-        login,
-        register,
-        initialize,
         oauthLogin,
         logout,
         refreshUser,

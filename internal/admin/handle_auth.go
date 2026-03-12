@@ -12,132 +12,7 @@ import (
 	"github.com/modelserver/modelserver/internal/config"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
-	"golang.org/x/crypto/bcrypt"
 )
-
-func handleLogin(st *store.Store, jwtMgr *auth.JWTManager, authCfg config.AuthConfig) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !authCfg.PasswordLoginEnabled {
-			writeError(w, http.StatusForbidden, "forbidden", "password login is disabled")
-			return
-		}
-
-		var body struct {
-			Email    string `json:"email"`
-			Password string `json:"password"`
-		}
-		if err := decodeBody(r, &body); err != nil {
-			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
-			return
-		}
-		if body.Email == "" || body.Password == "" {
-			writeError(w, http.StatusBadRequest, "bad_request", "email and password are required")
-			return
-		}
-
-		user, err := st.GetUserByEmail(body.Email)
-		if err != nil || user == nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid credentials")
-			return
-		}
-
-		hash, err := st.GetPasswordHash(user.ID)
-		if err != nil || hash == "" {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid credentials")
-			return
-		}
-
-		if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(body.Password)); err != nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid credentials")
-			return
-		}
-
-		if user.Status != types.UserStatusActive {
-			writeError(w, http.StatusForbidden, "forbidden", "account is disabled")
-			return
-		}
-
-		issueTokens(w, jwtMgr, user)
-	}
-}
-
-func handleRegister(st *store.Store, jwtMgr *auth.JWTManager, authCfg config.AuthConfig) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !authCfg.PasswordLoginEnabled {
-			writeError(w, http.StatusForbidden, "forbidden", "password login is disabled")
-			return
-		}
-		if !authCfg.AllowRegistration {
-			writeError(w, http.StatusForbidden, "forbidden", "registration is disabled")
-			return
-		}
-
-		var body struct {
-			Email    string `json:"email"`
-			Password string `json:"password"`
-			Name     string `json:"name"`
-		}
-		if err := decodeBody(r, &body); err != nil {
-			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
-			return
-		}
-		if body.Email == "" || body.Password == "" {
-			writeError(w, http.StatusBadRequest, "bad_request", "email and password are required")
-			return
-		}
-
-		existing, _ := st.GetUserByEmail(body.Email)
-		if existing != nil {
-			writeError(w, http.StatusConflict, "conflict", "email already registered")
-			return
-		}
-
-		hash, err := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "failed to hash password")
-			return
-		}
-
-		// First registered user becomes superadmin.
-		isFirst := false
-		if exists, err := st.UserExists(); err == nil && !exists {
-			isFirst = true
-		}
-
-		user := &types.User{
-			Email:        body.Email,
-			Name:         body.Name,
-			IsSuperadmin: isFirst,
-			MaxProjects:  5,
-			Status:       types.UserStatusActive,
-		}
-		if isFirst {
-			user.MaxProjects = 100
-		}
-		if err := st.CreateUser(user); err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "failed to create user")
-			return
-		}
-		if err := st.SetPasswordHash(user.ID, string(hash)); err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "failed to save password")
-			return
-		}
-
-		// Auto-create default project for new user.
-		project := &types.Project{
-			Name:      "Default Project",
-			CreatedBy: user.ID,
-			Status:    types.ProjectStatusActive,
-		}
-		if err := st.CreateProject(project); err != nil {
-			log.Printf("WARN: failed to create default project for user %s: %v", user.ID, err)
-		} else {
-			assignFreePlan(st, project.ID)
-		}
-
-		issueTokens(w, jwtMgr, user)
-	}
-}
 
 func handleRefresh(st *store.Store, jwtMgr *auth.JWTManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -166,100 +41,6 @@ func handleRefresh(st *store.Store, jwtMgr *auth.JWTManager) http.HandlerFunc {
 		}
 
 		issueTokens(w, jwtMgr, user)
-	}
-}
-
-func handleInitialize(st *store.Store, jwtMgr *auth.JWTManager) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		exists, err := st.UserExists()
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "internal error")
-			return
-		}
-		if exists {
-			writeError(w, http.StatusConflict, "conflict", "system already initialized")
-			return
-		}
-
-		var body struct {
-			Email    string `json:"email"`
-			Password string `json:"password"`
-			Name     string `json:"name"`
-		}
-		if err := decodeBody(r, &body); err != nil || body.Email == "" || body.Password == "" {
-			writeError(w, http.StatusBadRequest, "bad_request", "email and password are required")
-			return
-		}
-
-		hash, _ := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
-		user := &types.User{
-			Email:        body.Email,
-			Name:         body.Name,
-			IsSuperadmin: true,
-			MaxProjects:  100,
-			Status:       types.UserStatusActive,
-		}
-		if err := st.CreateUser(user); err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "failed to create user")
-			return
-		}
-		if err := st.SetPasswordHash(user.ID, string(hash)); err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "failed to save password")
-			return
-		}
-
-		// Auto-create default project for superadmin.
-		project := &types.Project{
-			Name:      "Default Project",
-			CreatedBy: user.ID,
-			Status:    types.ProjectStatusActive,
-		}
-		if err := st.CreateProject(project); err != nil {
-			log.Printf("WARN: failed to create default project for user %s: %v", user.ID, err)
-		} else {
-			assignFreePlan(st, project.ID)
-		}
-
-		issueTokens(w, jwtMgr, user)
-	}
-}
-
-func handleChangePassword(st *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		user := UserFromContext(r.Context())
-		if user == nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "not authenticated")
-			return
-		}
-
-		var body struct {
-			CurrentPassword string `json:"current_password"`
-			NewPassword     string `json:"new_password"`
-		}
-		if err := decodeBody(r, &body); err != nil || body.NewPassword == "" {
-			writeError(w, http.StatusBadRequest, "bad_request", "new_password is required")
-			return
-		}
-
-		currentHash, _ := st.GetPasswordHash(user.ID)
-		if currentHash != "" {
-			if err := bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(body.CurrentPassword)); err != nil {
-				writeError(w, http.StatusUnauthorized, "unauthorized", "incorrect current password")
-				return
-			}
-		}
-
-		hash, err := bcrypt.GenerateFromPassword([]byte(body.NewPassword), bcrypt.DefaultCost)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "failed to hash password")
-			return
-		}
-
-		if err := st.SetPasswordHash(user.ID, string(hash)); err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "failed to update password")
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
@@ -317,7 +98,9 @@ func handleOAuthCallback(st *store.Store, jwtMgr *auth.JWTManager, cfg *config.C
 			return
 		}
 
-		// Try to find existing user by OAuth provider ID, then by email.
+		// Look up user: first by OAuth provider ID, then by email.
+		// Email is unique, so different OAuth providers with the same email
+		// will always resolve to the same user account.
 		user, _ := st.GetUserByOAuth(info.Provider, info.ProviderID)
 		if user == nil {
 			user, _ = st.GetUserByEmail(info.Email)
@@ -327,8 +110,8 @@ func handleOAuthCallback(st *store.Store, jwtMgr *auth.JWTManager, cfg *config.C
 			// Existing user — ensure OAuth connection exists and sync profile fields.
 			_ = st.CreateOAuthConnection(user.ID, info.Provider, info.ProviderID)
 			updates := map[string]interface{}{}
-			if info.Name != "" && info.Name != user.Name {
-				updates["name"] = info.Name
+			if info.Name != "" && info.Name != user.Nickname {
+				updates["nickname"] = info.Name
 			}
 			if info.Picture != "" && info.Picture != user.Picture {
 				updates["picture"] = info.Picture
@@ -353,7 +136,7 @@ func handleOAuthCallback(st *store.Store, jwtMgr *auth.JWTManager, cfg *config.C
 			// Create new user from OAuth.
 			user = &types.User{
 				Email:        info.Email,
-				Name:         info.Name,
+				Nickname:     info.Name,
 				Picture:      info.Picture,
 				IsSuperadmin: isFirst,
 				MaxProjects:  5,
@@ -439,7 +222,7 @@ func handleUpdateUser(st *store.Store) http.HandlerFunc {
 		}
 
 		updates := make(map[string]interface{})
-		for _, field := range []string{"name", "status", "is_superadmin", "max_projects"} {
+		for _, field := range []string{"nickname", "status", "is_superadmin", "max_projects"} {
 			if v, ok := body[field]; ok {
 				updates[field] = v
 			}
@@ -525,11 +308,6 @@ func handleOAuthRedirect(cfg *config.Config, provider string) http.HandlerFunc {
 
 func handleAuthConfig(cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		resp := map[string]interface{}{
-			"password_login_enabled": cfg.Auth.PasswordLoginEnabled,
-			"allow_registration":     cfg.Auth.AllowRegistration,
-			"oauth_providers":        []string{},
-		}
 		var providers []string
 		if cfg.Auth.OAuth.GitHub.ClientID != "" {
 			providers = append(providers, "github")
@@ -540,8 +318,12 @@ func handleAuthConfig(cfg *config.Config) http.HandlerFunc {
 		if cfg.Auth.OAuth.OIDC.IssuerURL != "" {
 			providers = append(providers, "oidc")
 		}
-		resp["oauth_providers"] = providers
-		writeJSON(w, http.StatusOK, resp)
+		if providers == nil {
+			providers = []string{}
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"oauth_providers": providers,
+		})
 	}
 }
 

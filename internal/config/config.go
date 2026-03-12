@@ -36,12 +36,10 @@ type DBConfig struct {
 
 // AuthConfig holds authentication settings.
 type AuthConfig struct {
-	JWTSecret            string        `yaml:"jwt_secret"              mapstructure:"jwt_secret"`
-	AccessTokenTTL       time.Duration `yaml:"access_token_ttl"        mapstructure:"access_token_ttl"`
-	RefreshTokenTTL      time.Duration `yaml:"refresh_token_ttl"       mapstructure:"refresh_token_ttl"`
-	AllowRegistration    bool          `yaml:"allow_registration"      mapstructure:"allow_registration"`
-	PasswordLoginEnabled bool          `yaml:"password_login_enabled"  mapstructure:"password_login_enabled"`
-	OAuth                OAuthConfig   `yaml:"oauth"                   mapstructure:"oauth"`
+	JWTSecret       string        `yaml:"jwt_secret"         mapstructure:"jwt_secret"`
+	AccessTokenTTL  time.Duration `yaml:"access_token_ttl"   mapstructure:"access_token_ttl"`
+	RefreshTokenTTL time.Duration `yaml:"refresh_token_ttl"  mapstructure:"refresh_token_ttl"`
+	OAuth           OAuthConfig   `yaml:"oauth"              mapstructure:"oauth"`
 }
 
 // OAuthConfig holds OAuth provider configurations.
@@ -124,8 +122,6 @@ func setDefaults(v *viper.Viper) {
 	_ = v.BindEnv("auth.jwt_secret")
 	v.SetDefault("auth.access_token_ttl", 15*time.Minute)
 	v.SetDefault("auth.refresh_token_ttl", 168*time.Hour)
-	v.SetDefault("auth.allow_registration", true)
-	v.SetDefault("auth.password_login_enabled", true)
 
 	// OAuth / OIDC
 	// BindEnv with explicit env var names so both the canonical form

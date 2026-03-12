@@ -31,12 +31,6 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Auth.RefreshTokenTTL != 168*time.Hour {
 		t.Errorf("Auth.RefreshTokenTTL = %v, want 168h", cfg.Auth.RefreshTokenTTL)
 	}
-	if !cfg.Auth.AllowRegistration {
-		t.Error("Auth.AllowRegistration = false, want true")
-	}
-	if !cfg.Auth.PasswordLoginEnabled {
-		t.Error("Auth.PasswordLoginEnabled = false, want true")
-	}
 	if cfg.Trace.TraceHeader != "X-Trace-Id" {
 		t.Errorf("Trace.TraceHeader = %q, want %q", cfg.Trace.TraceHeader, "X-Trace-Id")
 	}
@@ -74,8 +68,6 @@ auth:
   jwt_secret: "supersecret"
   access_token_ttl: 5m
   refresh_token_ttl: 24h
-  allow_registration: false
-  password_login_enabled: false
   oauth:
     github:
       client_id: "gh-id"
@@ -133,12 +125,6 @@ cors:
 	}
 	if cfg.Auth.RefreshTokenTTL != 24*time.Hour {
 		t.Errorf("Auth.RefreshTokenTTL = %v, want 24h", cfg.Auth.RefreshTokenTTL)
-	}
-	if cfg.Auth.AllowRegistration {
-		t.Error("Auth.AllowRegistration = true, want false")
-	}
-	if cfg.Auth.PasswordLoginEnabled {
-		t.Error("Auth.PasswordLoginEnabled = true, want false")
 	}
 	if cfg.Auth.OAuth.GitHub.ClientID != "gh-id" {
 		t.Errorf("OAuth.GitHub.ClientID = %q, want %q", cfg.Auth.OAuth.GitHub.ClientID, "gh-id")
@@ -302,7 +288,6 @@ auth:
 
 // TestEnvOIDC verifies that OIDC settings can be provided via the short-form env vars.
 func TestEnvOIDC(t *testing.T) {
-	t.Setenv("MODELSERVER_AUTH_PASSWORD_LOGIN_ENABLED", "false")
 	t.Setenv("MODELSERVER_AUTH_OIDC_ISSUER_URL", "https://idp.example.com")
 	t.Setenv("MODELSERVER_AUTH_OIDC_CLIENT_ID", "my-client")
 	t.Setenv("MODELSERVER_AUTH_OIDC_CLIENT_SECRET", "my-secret")
@@ -312,9 +297,6 @@ func TestEnvOIDC(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Auth.PasswordLoginEnabled {
-		t.Error("Auth.PasswordLoginEnabled = true, want false")
-	}
 	if cfg.Auth.OAuth.OIDC.IssuerURL != "https://idp.example.com" {
 		t.Errorf("OIDC.IssuerURL = %q", cfg.Auth.OAuth.OIDC.IssuerURL)
 	}

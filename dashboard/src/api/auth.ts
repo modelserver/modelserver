@@ -2,8 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "./client";
 
 export interface AuthConfig {
-  password_login_enabled: boolean;
-  allow_registration: boolean;
   oauth_providers: string[];
 }
 
