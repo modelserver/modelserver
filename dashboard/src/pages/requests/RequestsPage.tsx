@@ -95,8 +95,13 @@ export function RequestsPage() {
       className: "text-right",
     },
     {
-      header: "Cache",
-      accessor: (r) => formatTokens(r.cache_creation_tokens + r.cache_read_tokens),
+      header: "Cache Create",
+      accessor: (r) => formatTokens(r.cache_creation_tokens),
+      className: "text-right",
+    },
+    {
+      header: "Cache Read",
+      accessor: (r) => formatTokens(r.cache_read_tokens),
       className: "text-right",
     },
     {
