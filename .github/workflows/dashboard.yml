@@ -48,3 +48,16 @@ jobs:
             -b "$COS_BUCKET" \
             -r "$COS_REGION"
           coscmd upload -rsf --delete dashboard/dist/ /
+
+      - name: Purge CDN cache
+        env:
+          TENCENT_SECRET_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          TENCENT_SECRET_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          COS_REGION: ${{ vars.COS_REGION }}
+          CDN_DOMAIN: ${{ vars.CDN_DOMAIN }}
+        run: |
+          pip install -q tccli
+          tccli configure set secretId "$TENCENT_SECRET_ID"
+          tccli configure set secretKey "$TENCENT_SECRET_KEY"
+          tccli configure set region "$COS_REGION"
+          tccli cdn PurgePathCache --Paths "[\"$CDN_DOMAIN/\"]" --FlushType flush
