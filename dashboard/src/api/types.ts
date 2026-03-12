@@ -38,7 +38,7 @@ export interface AuthResponse {
 export interface User {
   id: string;
   email: string;
-  name: string;
+  nickname: string;
   picture?: string;
   is_superadmin: boolean;
   max_projects: number;

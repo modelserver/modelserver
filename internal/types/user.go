@@ -19,7 +19,7 @@ const (
 type User struct {
 	ID           string    `json:"id"`
 	Email        string    `json:"email"`
-	Name         string    `json:"name"`
+	Nickname     string    `json:"nickname"`
 	Picture      string    `json:"picture,omitempty"`
 	IsSuperadmin bool      `json:"is_superadmin"`
 	MaxProjects  int       `json:"max_projects"`
@@ -27,15 +27,12 @@ type User struct {
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 
-	// PasswordHash is loaded on demand, never serialised to JSON.
-	PasswordHash string `json:"-"`
 	// OAuthConnections is populated when needed.
 	OAuthConnections []OAuthConnection `json:"oauth_connections,omitempty"`
 }
 
 // OAuthConnection links a user to an external OAuth / OIDC provider.
 type OAuthConnection struct {
-	ID         string    `json:"id"`
 	UserID     string    `json:"user_id"`
 	Provider   string    `json:"provider"`
 	ProviderID string    `json:"provider_id"`

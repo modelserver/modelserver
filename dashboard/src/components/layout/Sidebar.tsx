@@ -56,7 +56,7 @@ export function Sidebar() {
   const { projectId } = useParams<{ projectId: string }>();
 
   const initials =
-    user?.name
+    user?.nickname
       ?.split(" ")
       .map((w) => w[0])
       .join("")
@@ -146,11 +146,11 @@ export function Sidebar() {
 
       <div className="flex items-center gap-2 p-3">
         <Avatar className="h-8 w-8">
-          {user?.picture && <AvatarImage src={user.picture} alt={user.name || user.email} />}
+          {user?.picture && <AvatarImage src={user.picture} alt={user.nickname || user.email} />}
           <AvatarFallback className="text-xs">{initials}</AvatarFallback>
         </Avatar>
         <div className="flex-1 min-w-0">
-          <p className="truncate text-sm font-medium">{user?.name || user?.email}</p>
+          <p className="truncate text-sm font-medium">{user?.nickname || user?.email}</p>
         </div>
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={logout} title="Sign out">
           <LogOut className="h-4 w-4" />

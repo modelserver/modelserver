@@ -187,7 +187,7 @@ func (s *Store) GetProjectMember(projectID, userID string) (*types.ProjectMember
 func (s *Store) ListProjectMembers(projectID string) ([]types.ProjectMember, error) {
 	rows, err := s.pool.Query(context.Background(), `
 		SELECT pm.user_id, pm.project_id, pm.role, pm.created_at,
-			u.id, u.email, u.name, COALESCE(u.picture, '')
+			u.id, u.email, u.nickname, COALESCE(u.picture, '')
 		FROM project_members pm
 		JOIN users u ON pm.user_id = u.id
 		WHERE pm.project_id = $1
@@ -202,7 +202,7 @@ func (s *Store) ListProjectMembers(projectID string) ([]types.ProjectMember, err
 		var m types.ProjectMember
 		var u types.User
 		if err := rows.Scan(&m.UserID, &m.ProjectID, &m.Role, &m.CreatedAt,
-			&u.ID, &u.Email, &u.Name, &u.Picture); err != nil {
+			&u.ID, &u.Email, &u.Nickname, &u.Picture); err != nil {
 			return nil, fmt.Errorf("scan member: %w", err)
 		}
 		m.User = &u

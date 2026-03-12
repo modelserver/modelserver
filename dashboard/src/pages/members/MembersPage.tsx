@@ -56,7 +56,7 @@ export function MembersPage() {
   const columns: Column<ProjectMember>[] = [
     {
       header: "User",
-      accessor: (m) => m.user?.name || m.user?.email || m.user_id,
+      accessor: (m) => m.user?.nickname || m.user?.email || m.user_id,
     },
     {
       header: "Email",

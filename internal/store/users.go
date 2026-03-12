@@ -12,20 +12,20 @@ import (
 // scanUser scans a user row (without auth fields).
 func scanUser(row pgx.Row) (*types.User, error) {
 	u := &types.User{}
-	err := row.Scan(&u.ID, &u.Email, &u.Name, &u.Picture,
+	err := row.Scan(&u.ID, &u.Email, &u.Nickname, &u.Picture,
 		&u.IsSuperadmin, &u.MaxProjects, &u.Status, &u.CreatedAt, &u.UpdatedAt)
 	return u, err
 }
 
-const userColumns = `id, email, name, COALESCE(picture, ''), is_superadmin, max_projects, status, created_at, updated_at`
+const userColumns = `id, email, nickname, COALESCE(picture, ''), is_superadmin, max_projects, status, created_at, updated_at`
 
 // CreateUser inserts a new user.
 func (s *Store) CreateUser(u *types.User) error {
 	return s.pool.QueryRow(context.Background(), `
-		INSERT INTO users (email, name, picture, is_superadmin, max_projects, status)
+		INSERT INTO users (email, nickname, picture, is_superadmin, max_projects, status)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, created_at, updated_at`,
-		u.Email, u.Name, nullString(u.Picture),
+		u.Email, u.Nickname, nullString(u.Picture),
 		u.IsSuperadmin, u.MaxProjects, u.Status,
 	).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt)
 }
@@ -57,7 +57,7 @@ func (s *Store) GetUserByEmail(email string) (*types.User, error) {
 // GetUserByOAuth returns a user who has an OAuth connection with the given provider and provider ID.
 func (s *Store) GetUserByOAuth(provider, providerID string) (*types.User, error) {
 	u, err := scanUser(s.pool.QueryRow(context.Background(), `
-		SELECT u.id, u.email, u.name, COALESCE(u.picture, ''), u.is_superadmin, u.max_projects, u.status, u.created_at, u.updated_at
+		SELECT u.id, u.email, u.nickname, COALESCE(u.picture, ''), u.is_superadmin, u.max_projects, u.status, u.created_at, u.updated_at
 		FROM users u
 		JOIN user_oauth_connections oc ON oc.user_id = u.id
 		WHERE oc.provider = $1 AND oc.provider_id = $2`, provider, providerID))
@@ -129,29 +129,6 @@ func (s *Store) UserExists() (bool, error) {
 }
 
 // ---------------------------------------------------------------------------
-// Password credentials
-// ---------------------------------------------------------------------------
-
-// GetPasswordHash returns the bcrypt hash for a user, or "" if none is set.
-func (s *Store) GetPasswordHash(userID string) (string, error) {
-	var hash string
-	err := s.pool.QueryRow(context.Background(), `SELECT password_hash FROM user_passwords WHERE user_id = $1`, userID).Scan(&hash)
-	if err == pgx.ErrNoRows {
-		return "", nil
-	}
-	return hash, err
-}
-
-// SetPasswordHash upserts the password hash for a user.
-func (s *Store) SetPasswordHash(userID, hash string) error {
-	_, err := s.pool.Exec(context.Background(), `
-		INSERT INTO user_passwords (user_id, password_hash) VALUES ($1, $2)
-		ON CONFLICT (user_id) DO UPDATE SET password_hash = $2, updated_at = NOW()`,
-		userID, hash)
-	return err
-}
-
-// ---------------------------------------------------------------------------
 // OAuth connections
 // ---------------------------------------------------------------------------
 
@@ -168,7 +145,7 @@ func (s *Store) CreateOAuthConnection(userID, provider, providerID string) error
 // GetOAuthConnections returns all OAuth connections for a user.
 func (s *Store) GetOAuthConnections(userID string) ([]types.OAuthConnection, error) {
 	rows, err := s.pool.Query(context.Background(), `
-		SELECT id, user_id, provider, provider_id, created_at
+		SELECT user_id, provider, provider_id, created_at
 		FROM user_oauth_connections WHERE user_id = $1
 		ORDER BY created_at`, userID)
 	if err != nil {
@@ -179,7 +156,7 @@ func (s *Store) GetOAuthConnections(userID string) ([]types.OAuthConnection, err
 	var conns []types.OAuthConnection
 	for rows.Next() {
 		var c types.OAuthConnection
-		if err := rows.Scan(&c.ID, &c.UserID, &c.Provider, &c.ProviderID, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.UserID, &c.Provider, &c.ProviderID, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		conns = append(conns, c)
@@ -200,7 +177,7 @@ func nullString(s string) interface{} {
 
 func sanitizeSort(input, fallback string) string {
 	allowed := map[string]bool{
-		"created_at": true, "updated_at": true, "name": true, "email": true, "status": true,
+		"created_at": true, "updated_at": true, "nickname": true, "email": true, "status": true,
 	}
 	if allowed[input] {
 		return input

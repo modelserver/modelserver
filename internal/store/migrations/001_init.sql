@@ -6,7 +6,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL DEFAULT '',
+    nickname TEXT NOT NULL DEFAULT '',
     picture TEXT,
     is_superadmin BOOLEAN NOT NULL DEFAULT FALSE,
     max_projects INTEGER NOT NULL DEFAULT 5,
@@ -14,26 +14,16 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-
--- Password credentials (one per user at most).
-CREATE TABLE IF NOT EXISTS user_passwords (
-    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    password_hash TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
 
 -- OAuth / OIDC connections (a user may link multiple providers).
 CREATE TABLE IF NOT EXISTS user_oauth_connections (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     provider TEXT NOT NULL,
     provider_id TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, provider, provider_id),
     UNIQUE (provider, provider_id)
 );
-CREATE INDEX IF NOT EXISTS idx_user_oauth_user ON user_oauth_connections(user_id);
 
 -- ============================================================
 -- Projects
@@ -42,7 +32,7 @@ CREATE TABLE IF NOT EXISTS projects (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
     description TEXT,
-    created_by UUID NOT NULL REFERENCES users(id),
+    created_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     billing_tags TEXT[] NOT NULL DEFAULT '{}',
     status TEXT NOT NULL DEFAULT 'active',
     settings JSONB NOT NULL DEFAULT '{}',
@@ -117,7 +107,7 @@ CREATE INDEX IF NOT EXISTS idx_policies_project ON rate_limit_policies(project_i
 CREATE TABLE IF NOT EXISTS api_keys (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    created_by UUID NOT NULL REFERENCES users(id),
+    created_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     key_hash TEXT NOT NULL UNIQUE,
     key_prefix TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -131,7 +121,6 @@ CREATE TABLE IF NOT EXISTS api_keys (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_api_keys_project ON api_keys(project_id);
-CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys(key_hash);
 CREATE INDEX IF NOT EXISTS idx_api_keys_created_by ON api_keys(created_by);
 
 -- ============================================================
@@ -162,8 +151,8 @@ CREATE INDEX IF NOT EXISTS idx_traces_created_at ON traces(created_at);
 -- ============================================================
 CREATE TABLE IF NOT EXISTS requests (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project_id UUID NOT NULL REFERENCES projects(id),
-    api_key_id UUID NOT NULL REFERENCES api_keys(id),
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+    api_key_id UUID NOT NULL REFERENCES api_keys(id) ON DELETE RESTRICT,
     channel_id UUID REFERENCES channels(id) ON DELETE SET NULL,
     trace_id UUID REFERENCES traces(id) ON DELETE SET NULL,
     msg_id TEXT,
@@ -187,7 +176,6 @@ CREATE INDEX IF NOT EXISTS idx_requests_project ON requests(project_id);
 CREATE INDEX IF NOT EXISTS idx_requests_api_key ON requests(api_key_id);
 CREATE INDEX IF NOT EXISTS idx_requests_channel ON requests(channel_id);
 CREATE INDEX IF NOT EXISTS idx_requests_trace ON requests(trace_id);
-CREATE INDEX IF NOT EXISTS idx_requests_created_at ON requests(created_at);
 CREATE INDEX IF NOT EXISTS idx_requests_project_created ON requests(project_id, created_at);
 
 -- ============================================================
@@ -210,9 +198,7 @@ CREATE TABLE IF NOT EXISTS plans (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_plans_slug ON plans(slug);
 CREATE INDEX IF NOT EXISTS idx_plans_group_tag ON plans(group_tag);
-CREATE INDEX IF NOT EXISTS idx_plans_active ON plans(is_active) WHERE is_active = TRUE;
 
 -- ============================================================
 -- Subscriptions
@@ -222,7 +208,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     plan_id UUID REFERENCES plans(id),
     plan_name TEXT NOT NULL,
-    policy_id UUID REFERENCES rate_limit_policies(id) ON DELETE CASCADE,
+    policy_id UUID REFERENCES rate_limit_policies(id) ON DELETE SET NULL,
     status TEXT NOT NULL DEFAULT 'active',
     starts_at TIMESTAMPTZ NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
@@ -231,8 +217,6 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 );
 CREATE INDEX IF NOT EXISTS idx_subscriptions_project ON subscriptions(project_id);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status, expires_at);
-CREATE INDEX IF NOT EXISTS idx_subscriptions_project_active
-    ON subscriptions(project_id) WHERE status = 'active';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_one_active_per_project
     ON subscriptions(project_id) WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS idx_subscriptions_plan ON subscriptions(plan_id);

@@ -38,15 +38,15 @@ export function UsersPage() {
         <div className="flex items-center gap-2">
           <Avatar className="h-7 w-7">
             {u.picture && (
-              <AvatarImage src={u.picture} alt={u.name || u.email} />
+              <AvatarImage src={u.picture} alt={u.nickname || u.email} />
             )}
             <AvatarFallback className="text-[10px]">
-              {initials(u.name)}
+              {initials(u.nickname)}
             </AvatarFallback>
           </Avatar>
           <div className="min-w-0">
-            <p className="truncate text-sm font-medium">{u.name || u.email}</p>
-            {u.name && (
+            <p className="truncate text-sm font-medium">{u.nickname || u.email}</p>
+            {u.nickname && (
               <p className="truncate text-xs text-muted-foreground">{u.email}</p>
             )}
           </div>
