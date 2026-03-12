@@ -47,4 +47,4 @@ jobs:
             -s "$AWS_SECRET_ACCESS_KEY" \
             -b "$COS_BUCKET" \
             -r "$COS_REGION"
-          coscmd upload -rs --delete dashboard/dist/ /
+          coscmd upload -rsf --delete dashboard/dist/ /
