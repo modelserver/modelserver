@@ -1,0 +1,46 @@
+name: Deploy Dashboard to COS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "dashboard/**"
+      - ".github/workflows/dashboard.yml"
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: dashboard/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: dashboard
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: dashboard
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+        run: pnpm build
+
+      - name: Upload to COS via S3 protocol
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.COS_REGION }}
+          COS_BUCKET: ${{ vars.COS_BUCKET }}
+          COS_REGION: ${{ vars.COS_REGION }}
+        run: |
+          aws s3 sync dashboard/dist "s3://${COS_BUCKET}/" \
+            --endpoint-url "https://cos.${COS_REGION}.myqcloud.com" \
+            --delete
