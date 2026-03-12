@@ -59,7 +59,7 @@ func (s *Store) GetUserByOAuth(provider, providerID string) (*types.User, error)
 	u, err := scanUser(s.pool.QueryRow(context.Background(), `
 		SELECT u.id, u.email, u.nickname, COALESCE(u.picture, ''), u.is_superadmin, u.max_projects, u.status, u.created_at, u.updated_at
 		FROM users u
-		JOIN user_oauth_connections oc ON oc.user_id = u.id
+		JOIN user_oidc_connections oc ON oc.user_id = u.id
 		WHERE oc.provider = $1 AND oc.provider_id = $2`, provider, providerID))
 	if err == pgx.ErrNoRows {
 		return nil, nil
@@ -135,7 +135,7 @@ func (s *Store) UserExists() (bool, error) {
 // CreateOAuthConnection links an OAuth identity to a user.
 func (s *Store) CreateOAuthConnection(userID, provider, providerID string) error {
 	_, err := s.pool.Exec(context.Background(), `
-		INSERT INTO user_oauth_connections (user_id, provider, provider_id)
+		INSERT INTO user_oidc_connections (user_id, provider, provider_id)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (provider, provider_id) DO NOTHING`,
 		userID, provider, providerID)
@@ -146,7 +146,7 @@ func (s *Store) CreateOAuthConnection(userID, provider, providerID string) error
 func (s *Store) GetOAuthConnections(userID string) ([]types.OAuthConnection, error) {
 	rows, err := s.pool.Query(context.Background(), `
 		SELECT user_id, provider, provider_id, created_at
-		FROM user_oauth_connections WHERE user_id = $1
+		FROM user_oidc_connections WHERE user_id = $1
 		ORDER BY created_at`, userID)
 	if err != nil {
 		return nil, err

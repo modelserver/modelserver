@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- OAuth / OIDC connections (a user may link multiple providers).
-CREATE TABLE IF NOT EXISTS user_oauth_connections (
+CREATE TABLE IF NOT EXISTS user_oidc_connections (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     provider TEXT NOT NULL,
     provider_id TEXT NOT NULL,
