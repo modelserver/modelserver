@@ -31,12 +31,16 @@ func (s *Store) CreateProject(p *types.Project) error {
 	if len(settings) == 0 {
 		settings = json.RawMessage(`{}`)
 	}
+	billingTags := p.BillingTags
+	if billingTags == nil {
+		billingTags = []string{}
+	}
 
 	err = tx.QueryRow(ctx, `
 		INSERT INTO projects (name, description, created_by, status, settings, billing_tags)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, created_at, updated_at`,
-		p.Name, nullString(p.Description), p.CreatedBy, p.Status, settings, p.BillingTags,
+		p.Name, nullString(p.Description), p.CreatedBy, p.Status, settings, billingTags,
 	).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		tx.Rollback(ctx)
