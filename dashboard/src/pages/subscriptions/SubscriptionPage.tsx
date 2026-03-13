@@ -75,13 +75,6 @@ function formatPrice(cents: number) {
   return `\u00A5${(cents / 100).toFixed(2)}`;
 }
 
-function creditRuleSummary(plan: Plan) {
-  if (!plan.credit_rules || plan.credit_rules.length === 0) return "No credit limits";
-  return plan.credit_rules
-    .map((r) => `${r.window} usage window`)
-    .join(", ");
-}
-
 type PaymentChannel = "wechat" | "alipay";
 
 interface PaymentResult {
@@ -351,7 +344,6 @@ export function SubscriptionPage() {
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-muted-foreground">{creditRuleSummary(plan)}</p>
                     <Button
                       className="w-full"
                       variant={!btn.disabled ? "default" : "outline"}
