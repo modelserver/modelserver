@@ -108,12 +108,6 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	traceID := TraceIDFromContext(r.Context())
 	threadID := ThreadIDFromContext(r.Context())
 
-	// Lazily register the trace in the database.
-	if traceID != "" {
-		source := TraceSourceFromContext(r.Context())
-		go h.store.EnsureTrace(project.ID, traceID, threadID, source)
-	}
-
 	logger := h.logger.With(
 		"project_id", project.ID,
 		"api_key_id", apiKey.ID,
@@ -122,6 +116,15 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		"trace_id", traceID,
 		"streaming", isStreaming,
 	)
+
+	// Register the trace in the database before creating the request record,
+	// since requests.trace_id has a foreign key constraint on traces.id.
+	if traceID != "" {
+		source := TraceSourceFromContext(r.Context())
+		if err := h.store.EnsureTrace(project.ID, traceID, threadID, source); err != nil {
+			logger.Warn("failed to ensure trace", "error", err)
+		}
+	}
 
 	// Insert a pending request record before proxying.
 	pendingReq := &types.Request{
@@ -170,7 +173,11 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 					ClientIP:  clientIP,
 				}
 				if pendingReq.ID != "" {
-					go h.store.CompleteRequest(pendingReq.ID, &req)
+					go func() {
+						if err := h.store.CompleteRequest(pendingReq.ID, &req); err != nil {
+							logger.Error("failed to complete request", "request_id", pendingReq.ID, "error", err)
+						}
+					}()
 				} else {
 					h.collector.Record(req)
 				}
@@ -241,7 +248,11 @@ func (h *Handler) interceptNonStreaming(resp *http.Response, requestID string, p
 		ClientIP:            clientIP,
 	}
 	if requestID != "" {
-		go h.store.CompleteRequest(requestID, &req)
+		go func() {
+			if err := h.store.CompleteRequest(requestID, &req); err != nil {
+				logger.Error("failed to complete request", "request_id", requestID, "error", err)
+			}
+		}()
 	} else {
 		h.collector.Record(req)
 	}
@@ -302,7 +313,11 @@ func (h *Handler) interceptStreaming(resp *http.Response, requestID string, proj
 			ClientIP:            clientIP,
 		}
 		if requestID != "" {
-			go h.store.CompleteRequest(requestID, &req)
+			go func() {
+				if err := h.store.CompleteRequest(requestID, &req); err != nil {
+					logger.Error("failed to complete request", "request_id", requestID, "error", err)
+				}
+			}()
 		} else {
 			h.collector.Record(req)
 		}
