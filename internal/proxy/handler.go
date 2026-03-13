@@ -451,6 +451,14 @@ func directorSetUpstream(req *http.Request, baseURL, apiKey string) {
 	req.Header.Del("Authorization")
 	req.Header.Del("x-api-key")
 
+	// Remove Accept-Encoding so that Go's http.Transport controls compression.
+	// When a client sends Accept-Encoding (e.g. gzip), the Transport forwards it
+	// to the upstream but does NOT auto-decompress the response — leaving the
+	// streamInterceptor unable to parse the compressed SSE bytes. By deleting
+	// the header, the Transport adds its own Accept-Encoding, auto-decompresses,
+	// and the interceptor always sees plain-text SSE data.
+	req.Header.Del("Accept-Encoding")
+
 	// Set the channel's own API key for the upstream request.
 	req.Header.Set("x-api-key", apiKey)
 	if req.Header.Get("anthropic-version") == "" {

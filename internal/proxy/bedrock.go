@@ -72,6 +72,7 @@ func directorSetBedrockUpstream(req *http.Request, baseURL, apiKey string, model
 	req.Header.Del("Authorization")
 	req.Header.Del("anthropic-version")
 	req.Header.Del("anthropic-beta")
+	req.Header.Del("Accept-Encoding") // let Transport handle compression
 
 	// Set Bearer token auth for Bedrock.
 	req.Header.Set("Authorization", "Bearer "+apiKey)
