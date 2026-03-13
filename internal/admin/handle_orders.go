@@ -248,13 +248,17 @@ func handleSubscriptionUsage(st *store.Store) http.HandlerFunc {
 			if err != nil {
 				used = 0
 			}
-			resetDur := ratelimit.WindowResetDuration(rule.Window, rule.WindowType)
-			statuses = append(statuses, ratelimit.CreditWindowStatus{
+			s := ratelimit.CreditWindowStatus{
 				Window:      rule.Window,
 				MaxCredits:  rule.MaxCredits,
 				UsedCredits: used,
-				ResetsAt:    time.Now().UTC().Add(resetDur).Format(time.RFC3339),
-			})
+			}
+			// Only calendar windows have a meaningful reset time.
+			if rule.WindowType == "calendar" {
+				resetDur := ratelimit.WindowResetDuration(rule.Window, rule.WindowType)
+				s.ResetsAt = time.Now().UTC().Add(resetDur).Format(time.RFC3339)
+			}
+			statuses = append(statuses, s)
 		}
 
 		writeData(w, http.StatusOK, statuses)
