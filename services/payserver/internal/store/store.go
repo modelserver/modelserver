@@ -108,13 +108,23 @@ func (s *Store) migrate(ctx context.Context) error {
 	return nil
 }
 
-// ensureDatabase connects to the "postgres" maintenance database and creates
-// the target database if it does not already exist. This removes the need for
-// external init scripts (e.g. docker-entrypoint-initdb.d).
+// ensureDatabase tries to connect directly to the target database first. If that
+// succeeds the database exists and no creation is needed. Only when the direct
+// connection fails with "database does not exist" does it fall back to connecting
+// to the "postgres" maintenance database to CREATE the target. This allows the
+// service to work with external PostgreSQL instances where the user may not have
+// CREATEDB privileges, as long as the database has been pre-created.
 func ensureDatabase(ctx context.Context, databaseURL string, logger *slog.Logger) error {
-	u, err := url.Parse(databaseURL)
-	if err != nil {
-		return fmt.Errorf("parse database URL: %w", err)
+	// Try connecting directly — if it works, the database exists.
+	conn, err := pgx.Connect(ctx, databaseURL)
+	if err == nil {
+		conn.Close(ctx)
+		return nil
+	}
+
+	u, err2 := url.Parse(databaseURL)
+	if err2 != nil {
+		return fmt.Errorf("parse database URL: %w", err2)
 	}
 
 	targetDB := u.Path
@@ -127,14 +137,14 @@ func ensureDatabase(ctx context.Context, databaseURL string, logger *slog.Logger
 
 	// Connect to the "postgres" maintenance database.
 	u.Path = "/postgres"
-	conn, err := pgx.Connect(ctx, u.String())
+	adminConn, err := pgx.Connect(ctx, u.String())
 	if err != nil {
 		return fmt.Errorf("open admin connection: %w", err)
 	}
-	defer conn.Close(ctx)
+	defer adminConn.Close(ctx)
 
 	var exists bool
-	err = conn.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)`, targetDB).Scan(&exists)
+	err = adminConn.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)`, targetDB).Scan(&exists)
 	if err != nil {
 		return fmt.Errorf("check database existence: %w", err)
 	}
@@ -144,7 +154,7 @@ func ensureDatabase(ctx context.Context, databaseURL string, logger *slog.Logger
 
 	// CREATE DATABASE cannot run inside a transaction, and identifiers cannot
 	// be parameterized, but targetDB comes from our own connection string.
-	if _, err := conn.Exec(ctx, fmt.Sprintf(`CREATE DATABASE "%s"`, targetDB)); err != nil {
+	if _, err := adminConn.Exec(ctx, fmt.Sprintf(`CREATE DATABASE "%s"`, targetDB)); err != nil {
 		return fmt.Errorf("create database %s: %w", targetDB, err)
 	}
 	logger.Info("created database", "name", targetDB)
