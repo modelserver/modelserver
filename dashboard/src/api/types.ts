@@ -99,7 +99,7 @@ export interface APIKeyCreateResponse {
 // --- Channel ---
 export interface Channel {
   id: string;
-  provider: "anthropic" | "openai" | "gemini";
+  provider: "anthropic" | "openai" | "gemini" | "bedrock";
   name: string;
   base_url: string;
   supported_models: string[];
