@@ -52,7 +52,7 @@ export function RoutesPage() {
     model_pattern: "",
     channel_ids: [] as string[],
     match_priority: 0,
-    enabled: true,
+    status: "active",
   });
 
   const routes = routesData?.data ?? [];
@@ -66,7 +66,7 @@ export function RoutesPage() {
 
   function openCreate() {
     setEditingId(null);
-    setForm({ model_pattern: "", channel_ids: [], match_priority: 0, enabled: true });
+    setForm({ model_pattern: "", channel_ids: [], match_priority: 0, status: "active" });
     setDialogOpen(true);
   }
 
@@ -76,7 +76,7 @@ export function RoutesPage() {
       model_pattern: r.model_pattern,
       channel_ids: r.channel_ids,
       match_priority: r.match_priority,
-      enabled: r.enabled,
+      status: r.status,
     });
     setDialogOpen(true);
   }
@@ -109,8 +109,9 @@ export function RoutesPage() {
 
   async function toggleEnabled(r: ChannelRoute) {
     try {
-      await updateRoute.mutateAsync({ routeId: r.id, enabled: !r.enabled });
-      toast.success(r.enabled ? "Route disabled" : "Route enabled");
+      const newStatus = r.status === "active" ? "disabled" : "active";
+      await updateRoute.mutateAsync({ routeId: r.id, status: newStatus });
+      toast.success(newStatus === "active" ? "Route enabled" : "Route disabled");
     } catch {
       toast.error("Failed to update route");
     }
@@ -172,8 +173,8 @@ export function RoutesPage() {
     {
       header: "Status",
       accessor: (r) => (
-        <Badge variant={r.enabled ? "default" : "secondary"}>
-          {r.enabled ? "Enabled" : "Disabled"}
+        <Badge variant={r.status === "active" ? "default" : "secondary"}>
+          {r.status === "active" ? "Active" : "Disabled"}
         </Badge>
       ),
     },
@@ -192,7 +193,7 @@ export function RoutesPage() {
               Edit
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => toggleEnabled(r)}>
-              {r.enabled ? "Disable" : "Enable"}
+              {r.status === "active" ? "Disable" : "Enable"}
             </DropdownMenuItem>
             <DropdownMenuItem
               className="text-destructive-foreground"
@@ -271,17 +272,17 @@ export function RoutesPage() {
               </p>
             </div>
             <div className="space-y-2">
-              <Label>Enabled</Label>
+              <Label>Status</Label>
               <Select
-                value={form.enabled ? "yes" : "no"}
-                onValueChange={(v) => setForm((p) => ({ ...p, enabled: v === "yes" }))}
+                value={form.status}
+                onValueChange={(v) => setForm((p) => ({ ...p, status: v ?? "active" }))}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="yes">Enabled</SelectItem>
-                  <SelectItem value="no">Disabled</SelectItem>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="disabled">Disabled</SelectItem>
                 </SelectContent>
               </Select>
             </div>

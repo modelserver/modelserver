@@ -13,7 +13,7 @@ func TestMatchChannels_ProjectSpecificRoute(t *testing.T) {
 		{ID: "ch3", Status: "active", SupportedModels: []string{"claude-opus-4"}, SelectionPriority: 0},
 	}
 	routes := []types.ChannelRoute{
-		{ProjectID: "proj1", ModelPattern: "claude-sonnet-4", ChannelIDs: []string{"ch2"}, MatchPriority: 10, Enabled: true},
+		{ProjectID: "proj1", ModelPattern: "claude-sonnet-4", ChannelIDs: []string{"ch2"}, MatchPriority: 10, Status: "active"},
 	}
 
 	router := NewChannelRouter(channels, routes, nil, nil)
@@ -33,7 +33,7 @@ func TestMatchChannels_GlobalRoute(t *testing.T) {
 		{ID: "ch2", Status: "active", SupportedModels: []string{"claude-sonnet-4"}, SelectionPriority: 0},
 	}
 	routes := []types.ChannelRoute{
-		{ProjectID: "", ModelPattern: "*", ChannelIDs: []string{"ch1"}, MatchPriority: 0, Enabled: true},
+		{ProjectID: "", ModelPattern: "*", ChannelIDs: []string{"ch1"}, MatchPriority: 0, Status: "active"},
 	}
 
 	router := NewChannelRouter(channels, routes, nil, nil)
@@ -69,7 +69,7 @@ func TestMatchChannels_WildcardPattern(t *testing.T) {
 		{ID: "ch1", Status: "active", SupportedModels: []string{"claude-sonnet-4-20250514"}, SelectionPriority: 0},
 	}
 	routes := []types.ChannelRoute{
-		{ProjectID: "proj1", ModelPattern: "claude-sonnet-*", ChannelIDs: []string{"ch1"}, MatchPriority: 5, Enabled: true},
+		{ProjectID: "proj1", ModelPattern: "claude-sonnet-*", ChannelIDs: []string{"ch1"}, MatchPriority: 5, Status: "active"},
 	}
 
 	router := NewChannelRouter(channels, routes, nil, nil)

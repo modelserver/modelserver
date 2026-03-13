@@ -101,7 +101,7 @@ func (cr *ChannelRouter) ActiveModels() []string {
 
 func (cr *ChannelRouter) matchRoutes(projectID, model string) []types.Channel {
 	for _, route := range cr.routes {
-		if !route.Enabled {
+		if route.Status != "active" {
 			continue
 		}
 		if route.ProjectID != projectID {

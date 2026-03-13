@@ -289,7 +289,7 @@ func handleCreateRoute(st *store.Store) http.HandlerFunc {
 			ModelPattern  string   `json:"model_pattern"`
 			ChannelIDs    []string `json:"channel_ids"`
 			MatchPriority int      `json:"match_priority"`
-			Enabled       *bool    `json:"enabled"`
+			Status        string   `json:"status"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
@@ -300,9 +300,9 @@ func handleCreateRoute(st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		enabled := true
-		if body.Enabled != nil {
-			enabled = *body.Enabled
+		status := "active"
+		if body.Status != "" {
+			status = body.Status
 		}
 
 		route := &types.ChannelRoute{
@@ -310,7 +310,7 @@ func handleCreateRoute(st *store.Store) http.HandlerFunc {
 			ModelPattern:  body.ModelPattern,
 			ChannelIDs:    body.ChannelIDs,
 			MatchPriority: body.MatchPriority,
-			Enabled:       enabled,
+			Status:        status,
 		}
 		if err := st.CreateChannelRoute(route); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to create route")
@@ -330,7 +330,7 @@ func handleUpdateRoute(st *store.Store) http.HandlerFunc {
 		}
 
 		updates := make(map[string]interface{})
-		for _, field := range []string{"model_pattern", "channel_ids", "match_priority", "enabled"} {
+		for _, field := range []string{"model_pattern", "channel_ids", "match_priority", "status"} {
 			if v, ok := body[field]; ok {
 				updates[field] = v
 			}

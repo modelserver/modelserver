@@ -89,7 +89,7 @@ export function useCreateChannelRoute() {
       model_pattern: string;
       channel_ids: string[];
       match_priority?: number;
-      enabled?: boolean;
+      status?: string;
     }) => api.post<DataResponse<ChannelRoute>>("/api/v1/routes", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "routes"] }),
   });
@@ -106,7 +106,7 @@ export function useUpdateChannelRoute() {
       model_pattern?: string;
       channel_ids?: string[];
       match_priority?: number;
-      enabled?: boolean;
+      status?: string;
     }) => api.put(`/api/v1/routes/${routeId}`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "routes"] }),
   });

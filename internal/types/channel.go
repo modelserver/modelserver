@@ -39,7 +39,7 @@ type ChannelRoute struct {
 	ModelPattern  string    `json:"model_pattern"`
 	ChannelIDs    []string  `json:"channel_ids"`
 	MatchPriority int       `json:"match_priority"`
-	Enabled       bool      `json:"enabled"`
+	Status        string    `json:"status"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }

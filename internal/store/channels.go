@@ -114,17 +114,17 @@ func (s *Store) DeleteChannel(id string) error {
 // CreateChannelRoute inserts a new channel route.
 func (s *Store) CreateChannelRoute(r *types.ChannelRoute) error {
 	return s.pool.QueryRow(context.Background(), `
-		INSERT INTO channel_routes (project_id, model_pattern, channel_ids, match_priority, enabled)
+		INSERT INTO channel_routes (project_id, model_pattern, channel_ids, match_priority, status)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id, created_at, updated_at`,
-		nullString(r.ProjectID), r.ModelPattern, r.ChannelIDs, r.MatchPriority, r.Enabled,
+		nullString(r.ProjectID), r.ModelPattern, r.ChannelIDs, r.MatchPriority, r.Status,
 	).Scan(&r.ID, &r.CreatedAt, &r.UpdatedAt)
 }
 
 // ListChannelRoutes returns all channel routes, ordered by match_priority DESC.
 func (s *Store) ListChannelRoutes() ([]types.ChannelRoute, error) {
 	rows, err := s.pool.Query(context.Background(), `
-		SELECT id, COALESCE(project_id::text, ''), model_pattern, channel_ids, match_priority, enabled, created_at, updated_at
+		SELECT id, COALESCE(project_id::text, ''), model_pattern, channel_ids, match_priority, status, created_at, updated_at
 		FROM channel_routes ORDER BY match_priority DESC`)
 	if err != nil {
 		return nil, err
@@ -135,7 +135,7 @@ func (s *Store) ListChannelRoutes() ([]types.ChannelRoute, error) {
 	for rows.Next() {
 		var r types.ChannelRoute
 		if err := rows.Scan(&r.ID, &r.ProjectID, &r.ModelPattern,
-			&r.ChannelIDs, &r.MatchPriority, &r.Enabled, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			&r.ChannelIDs, &r.MatchPriority, &r.Status, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		routes = append(routes, r)
@@ -149,9 +149,9 @@ func (s *Store) ListChannelRoutes() ([]types.ChannelRoute, error) {
 // ListChannelRoutesForProject returns routes for a specific project + global routes.
 func (s *Store) ListChannelRoutesForProject(projectID string) ([]types.ChannelRoute, error) {
 	rows, err := s.pool.Query(context.Background(), `
-		SELECT id, COALESCE(project_id::text, ''), model_pattern, channel_ids, match_priority, enabled, created_at, updated_at
+		SELECT id, COALESCE(project_id::text, ''), model_pattern, channel_ids, match_priority, status, created_at, updated_at
 		FROM channel_routes
-		WHERE (project_id = $1 OR project_id IS NULL) AND enabled = TRUE
+		WHERE (project_id = $1 OR project_id IS NULL) AND status = 'active'
 		ORDER BY
 			CASE WHEN project_id IS NOT NULL THEN 0 ELSE 1 END,
 			match_priority DESC`, projectID)
@@ -164,7 +164,7 @@ func (s *Store) ListChannelRoutesForProject(projectID string) ([]types.ChannelRo
 	for rows.Next() {
 		var r types.ChannelRoute
 		if err := rows.Scan(&r.ID, &r.ProjectID, &r.ModelPattern,
-			&r.ChannelIDs, &r.MatchPriority, &r.Enabled, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			&r.ChannelIDs, &r.MatchPriority, &r.Status, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		routes = append(routes, r)

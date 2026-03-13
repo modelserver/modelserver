@@ -138,7 +138,7 @@ export interface ChannelRoute {
   model_pattern: string;
   channel_ids: string[];
   match_priority: number;
-  enabled: boolean;
+  status: string;
   created_at: string;
   updated_at: string;
 }
@@ -159,7 +159,6 @@ export interface Request {
   output_tokens: number;
   cache_creation_tokens: number;
   cache_read_tokens: number;
-  credits_consumed: number;
   latency_ms: number;
   ttft_ms: number;
   error_message?: string;
@@ -238,7 +237,6 @@ export interface Order {
   id: string;
   project_id: string;
   plan_id: string;
-  order_type: "upgrade" | "new" | "renew";
   periods: number;
   unit_price: number;
   amount: number;
@@ -256,7 +254,6 @@ export interface Order {
 export interface UsageOverview {
   request_count: number;
   total_tokens: number;
-  total_credits: number;
   since: string;
   until: string;
 }
@@ -268,7 +265,6 @@ export interface UsageSummary {
   total_output_tokens: number;
   total_cache_creation_tokens: number;
   total_cache_read_tokens: number;
-  total_credits: number;
   avg_latency_ms: number;
 }
 
@@ -276,7 +272,6 @@ export interface DailyUsage {
   date: string;
   request_count: number;
   total_tokens: number;
-  total_credits: number;
 }
 
 export interface UsageByKey {
@@ -285,7 +280,6 @@ export interface UsageByKey {
   key_suffix: string;
   request_count: number;
   total_tokens: number;
-  total_credits: number;
 }
 
 // --- Traces ---
