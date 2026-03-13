@@ -8,7 +8,7 @@ import { DataTable, type Column } from "@/components/shared/DataTable";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Request } from "@/api/types";
-import { Activity, Zap, Coins, Clock } from "lucide-react";
+import { Activity, Zap, Clock } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 function formatNumber(n: number): string {
@@ -57,7 +57,7 @@ export function OverviewPage() {
         description={project?.data.description}
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard
           title="Total Requests"
           value={formatNumber(overview?.request_count ?? 0)}
@@ -69,12 +69,6 @@ export function OverviewPage() {
           value={formatNumber(overview?.total_tokens ?? 0)}
           description="Last 30 days"
           icon={<Zap className="h-4 w-4" />}
-        />
-        <StatCard
-          title="Credits Used"
-          value={formatNumber(overview?.total_credits ?? 0)}
-          description="Last 30 days"
-          icon={<Coins className="h-4 w-4" />}
         />
         <StatCard
           title="Avg Daily"

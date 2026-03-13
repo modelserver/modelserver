@@ -59,8 +59,7 @@ export function useCancelOrder(projectId: string) {
 
 export interface CreditWindowStatus {
   window: string;
-  max_credits: number;
-  used_credits: number;
+  percentage: number;
   resets_at?: string;
 }
 

@@ -78,7 +78,7 @@ function formatPrice(cents: number) {
 function creditRuleSummary(plan: Plan) {
   if (!plan.credit_rules || plan.credit_rules.length === 0) return "No credit limits";
   return plan.credit_rules
-    .map((r) => `${r.max_credits.toLocaleString()} credits/${r.window}`)
+    .map((r) => `${r.window} usage window`)
     .join(", ");
 }
 
@@ -273,9 +273,7 @@ export function SubscriptionPage() {
               {usageData?.data && usageData.data.length > 0 && (
                 <div className="space-y-3 border-t pt-3">
                   {usageData.data.map((status: CreditWindowStatus) => {
-                    const pct = status.max_credits > 0
-                      ? (status.used_credits / status.max_credits) * 100
-                      : 0;
+                    const pct = status.percentage;
                     const clampedPct = Math.min(pct, 100);
                     const barColor = pct > 95
                       ? "bg-red-500"
@@ -286,7 +284,7 @@ export function SubscriptionPage() {
                     return (
                       <div key={status.window} className="space-y-1.5">
                         <div className="flex items-center justify-between text-sm">
-                          <span className="font-medium">Credits ({status.window})</span>
+                          <span className="font-medium">Usage ({status.window})</span>
                           {status.resets_at && (
                             <span className="text-xs text-muted-foreground">
                               Resets {formatDateTime(status.resets_at)}
@@ -300,7 +298,7 @@ export function SubscriptionPage() {
                           />
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          {Math.round(status.used_credits).toLocaleString()} / {status.max_credits.toLocaleString()} ({pct.toFixed(1)}%)
+                          {pct.toFixed(1)}% used
                         </p>
                       </div>
                     );

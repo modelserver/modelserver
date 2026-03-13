@@ -14,16 +14,14 @@ type UsageSummary struct {
 	TotalOutputTokens  int64   `json:"total_output_tokens"`
 	TotalCacheCreation int64   `json:"total_cache_creation_tokens"`
 	TotalCacheRead     int64   `json:"total_cache_read_tokens"`
-	TotalCredits       float64 `json:"total_credits"`
 	AvgLatencyMs       float64 `json:"avg_latency_ms"`
 }
 
 // DailyUsage holds usage data for a single day.
 type DailyUsage struct {
-	Date         string  `json:"date"`
-	RequestCount int64   `json:"request_count"`
-	TotalTokens  int64   `json:"total_tokens"`
-	TotalCredits float64 `json:"total_credits"`
+	Date         string `json:"date"`
+	RequestCount int64  `json:"request_count"`
+	TotalTokens  int64  `json:"total_tokens"`
 }
 
 // ChannelUsageSummary holds aggregated usage data per channel.
@@ -79,7 +77,7 @@ func (s *Store) GetUsageByModel(projectID string, since, until time.Time) ([]Usa
 		SELECT model, COUNT(*) as request_count,
 			COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
 			COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0),
-			COALESCE(SUM(credits_consumed), 0), COALESCE(AVG(latency_ms), 0)
+			COALESCE(AVG(latency_ms), 0)
 		FROM requests
 		WHERE project_id = $1 AND created_at >= $2 AND created_at <= $3
 		GROUP BY model ORDER BY request_count DESC`,
@@ -95,7 +93,7 @@ func (s *Store) GetUsageByModel(projectID string, since, until time.Time) ([]Usa
 		if err := rows.Scan(&u.Model, &u.RequestCount,
 			&u.TotalInputTokens, &u.TotalOutputTokens,
 			&u.TotalCacheCreation, &u.TotalCacheRead,
-			&u.TotalCredits, &u.AvgLatencyMs); err != nil {
+			&u.AvgLatencyMs); err != nil {
 			return nil, err
 		}
 		summaries = append(summaries, u)
@@ -110,13 +108,12 @@ func (s *Store) GetUsageByModel(projectID string, since, until time.Time) ([]Usa
 func (s *Store) GetUsageByAPIKey(projectID string, since, until time.Time) ([]map[string]interface{}, error) {
 	rows, err := s.pool.Query(context.Background(), `
 		SELECT r.api_key_id, k.name, k.key_suffix, COUNT(*) as request_count,
-			COALESCE(SUM(r.input_tokens + r.output_tokens), 0) as total_tokens,
-			COALESCE(SUM(r.credits_consumed), 0) as total_credits
+			COALESCE(SUM(r.input_tokens + r.output_tokens), 0) as total_tokens
 		FROM requests r
 		JOIN api_keys k ON r.api_key_id = k.id
 		WHERE r.project_id = $1 AND r.created_at >= $2 AND r.created_at <= $3
 		GROUP BY r.api_key_id, k.name, k.key_suffix
-		ORDER BY total_credits DESC`,
+		ORDER BY request_count DESC`,
 		projectID, since, until)
 	if err != nil {
 		return nil, err
@@ -127,8 +124,7 @@ func (s *Store) GetUsageByAPIKey(projectID string, since, until time.Time) ([]ma
 	for rows.Next() {
 		var apiKeyID, name, suffix string
 		var count, tokens int64
-		var credits float64
-		if err := rows.Scan(&apiKeyID, &name, &suffix, &count, &tokens, &credits); err != nil {
+		if err := rows.Scan(&apiKeyID, &name, &suffix, &count, &tokens); err != nil {
 			return nil, err
 		}
 		results = append(results, map[string]interface{}{
@@ -137,7 +133,6 @@ func (s *Store) GetUsageByAPIKey(projectID string, since, until time.Time) ([]ma
 			"key_suffix":    suffix,
 			"request_count": count,
 			"total_tokens":  tokens,
-			"total_credits": credits,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -150,8 +145,7 @@ func (s *Store) GetUsageByAPIKey(projectID string, since, until time.Time) ([]ma
 func (s *Store) GetDailyUsage(projectID string, since, until time.Time) ([]DailyUsage, error) {
 	rows, err := s.pool.Query(context.Background(), `
 		SELECT DATE(created_at) as date, COUNT(*) as request_count,
-			COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
-			COALESCE(SUM(credits_consumed), 0) as total_credits
+			COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens
 		FROM requests
 		WHERE project_id = $1 AND created_at >= $2 AND created_at <= $3
 		GROUP BY DATE(created_at) ORDER BY date ASC`,
@@ -164,7 +158,7 @@ func (s *Store) GetDailyUsage(projectID string, since, until time.Time) ([]Daily
 	var daily []DailyUsage
 	for rows.Next() {
 		var d DailyUsage
-		if err := rows.Scan(&d.Date, &d.RequestCount, &d.TotalTokens, &d.TotalCredits); err != nil {
+		if err := rows.Scan(&d.Date, &d.RequestCount, &d.TotalTokens); err != nil {
 			return nil, err
 		}
 		daily = append(daily, d)
@@ -274,12 +268,11 @@ func (s *Store) SumTokensInWindowByProject(projectID string, windowStart time.Ti
 func (s *Store) GetUsageOverview(projectID string, since, until time.Time) (map[string]interface{}, error) {
 	var requestCount int64
 	var totalTokens int64
-	var totalCredits float64
 	err := s.pool.QueryRow(context.Background(), `
-		SELECT COUNT(*), COALESCE(SUM(input_tokens + output_tokens), 0), COALESCE(SUM(credits_consumed), 0)
+		SELECT COUNT(*), COALESCE(SUM(input_tokens + output_tokens), 0)
 		FROM requests WHERE project_id = $1 AND created_at >= $2 AND created_at <= $3`,
 		projectID, since, until,
-	).Scan(&requestCount, &totalTokens, &totalCredits)
+	).Scan(&requestCount, &totalTokens)
 	if err != nil {
 		return nil, fmt.Errorf("usage overview: %w", err)
 	}
@@ -287,7 +280,6 @@ func (s *Store) GetUsageOverview(projectID string, since, until time.Time) (map[
 	return map[string]interface{}{
 		"request_count": requestCount,
 		"total_tokens":  totalTokens,
-		"total_credits": totalCredits,
 		"since":         since.Format(time.RFC3339),
 		"until":         until.Format(time.RFC3339),
 	}, nil

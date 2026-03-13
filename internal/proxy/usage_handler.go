@@ -14,9 +14,6 @@ type UsageProgress struct {
 	Window      string  `json:"window"`
 	WindowType  string  `json:"window_type"`
 	Scope       string  `json:"scope"`
-	MaxCredits  int64   `json:"max_credits"`
-	UsedCredits float64 `json:"used_credits"`
-	Remaining   float64 `json:"remaining"`
 	Percentage  float64 `json:"percentage"`
 	WindowStart string  `json:"window_start"`
 	WindowEnd   string  `json:"window_end"`
@@ -41,11 +38,10 @@ type SubscriptionInfo struct {
 
 // TotalUsageInfo summarizes total usage within the subscription period.
 type TotalUsageInfo struct {
-	RequestCount int64   `json:"request_count"`
-	TotalTokens  int64   `json:"total_tokens"`
-	TotalCredits float64 `json:"total_credits"`
-	Since        string  `json:"since"`
-	Until        string  `json:"until"`
+	RequestCount int64  `json:"request_count"`
+	TotalTokens  int64  `json:"total_tokens"`
+	Since        string `json:"since"`
+	Until        string `json:"until"`
 }
 
 // HandleUsage returns the current usage progress for the authenticated user's subscription.
@@ -80,7 +76,6 @@ func (h *Handler) HandleUsage(w http.ResponseWriter, r *http.Request) {
 			resp.TotalUsage = &TotalUsageInfo{
 				RequestCount: overview["request_count"].(int64),
 				TotalTokens:  overview["total_tokens"].(int64),
-				TotalCredits: overview["total_credits"].(float64),
 				Since:        subscription.StartsAt.Format(time.RFC3339),
 				Until:        subscription.ExpiresAt.Format(time.RFC3339),
 			}
@@ -120,10 +115,6 @@ func computeCreditProgress(st *store.Store, projectID, apiKeyID string, rule typ
 		return nil, err
 	}
 
-	remaining := float64(rule.MaxCredits) - used
-	if remaining < 0 {
-		remaining = 0
-	}
 	percentage := 0.0
 	if rule.MaxCredits > 0 {
 		percentage = (used / float64(rule.MaxCredits)) * 100
@@ -136,9 +127,6 @@ func computeCreditProgress(st *store.Store, projectID, apiKeyID string, rule typ
 		Window:      rule.Window,
 		WindowType:  rule.WindowType,
 		Scope:       rule.EffectiveScope(),
-		MaxCredits:  rule.MaxCredits,
-		UsedCredits: used,
-		Remaining:   remaining,
 		Percentage:  percentage,
 		WindowStart: windowStart.Format(time.RFC3339),
 		WindowEnd:   windowEnd.Format(time.RFC3339),

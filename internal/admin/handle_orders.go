@@ -171,11 +171,10 @@ func handleCreateOrder(st *store.Store, payClient billing.PaymentClient, billing
 			periods = remainingPeriods
 		}
 
-		// Create order — all orders are upgrades.
+		// Create order.
 		order := &types.Order{
 			ProjectID:              projectID,
 			PlanID:                 plan.ID,
-			OrderType:              types.OrderTypeUpgrade,
 			Periods:                periods,
 			UnitPrice:              unitPrice,
 			Amount:                 amount,
@@ -248,10 +247,16 @@ func handleSubscriptionUsage(st *store.Store) http.HandlerFunc {
 			if err != nil {
 				used = 0
 			}
+			percentage := 0.0
+			if rule.MaxCredits > 0 {
+				percentage = (used / float64(rule.MaxCredits)) * 100
+				if percentage > 100 {
+					percentage = 100
+				}
+			}
 			s := ratelimit.CreditWindowStatus{
-				Window:      rule.Window,
-				MaxCredits:  rule.MaxCredits,
-				UsedCredits: used,
+				Window:     rule.Window,
+				Percentage: percentage,
 			}
 			// Only calendar windows have a meaningful reset time.
 			if rule.WindowType == "calendar" {

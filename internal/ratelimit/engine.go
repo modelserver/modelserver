@@ -19,10 +19,9 @@ type RateLimiter interface {
 
 // CreditWindowStatus shows credit usage for a time window.
 type CreditWindowStatus struct {
-	Window      string  `json:"window"`
-	MaxCredits  int64   `json:"max_credits"`
-	UsedCredits float64 `json:"used_credits"`
-	ResetsAt    string  `json:"resets_at,omitempty"`
+	Window     string  `json:"window"`
+	Percentage float64 `json:"percentage"`
+	ResetsAt   string  `json:"resets_at,omitempty"`
 }
 
 // ClassicMetricStatus shows classic rate limit status.

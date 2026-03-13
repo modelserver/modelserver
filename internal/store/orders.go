@@ -11,11 +11,11 @@ import (
 // CreateOrder inserts a new order.
 func (s *Store) CreateOrder(o *types.Order) error {
 	return s.pool.QueryRow(context.Background(), `
-		INSERT INTO orders (project_id, plan_id, order_type, periods, unit_price, amount, currency,
+		INSERT INTO orders (project_id, plan_id, periods, unit_price, amount, currency,
 			status, payment_ref, payment_url, existing_subscription_id, metadata)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING id, created_at, updated_at`,
-		o.ProjectID, o.PlanID, o.OrderType, o.Periods, o.UnitPrice, o.Amount, o.Currency,
+		o.ProjectID, o.PlanID, o.Periods, o.UnitPrice, o.Amount, o.Currency,
 		o.Status, o.PaymentRef, o.PaymentURL, nullString(o.ExistingSubscriptionID), o.Metadata,
 	).Scan(&o.ID, &o.CreatedAt, &o.UpdatedAt)
 }
@@ -25,11 +25,11 @@ func (s *Store) GetOrderByID(id string) (*types.Order, error) {
 	o := &types.Order{}
 	var existSubID *string
 	err := s.pool.QueryRow(context.Background(), `
-		SELECT id, project_id, plan_id, order_type, periods, unit_price, amount, currency,
+		SELECT id, project_id, plan_id, periods, unit_price, amount, currency,
 			status, payment_ref, payment_url, existing_subscription_id, metadata,
 			created_at, updated_at
 		FROM orders WHERE id = $1`, id,
-	).Scan(&o.ID, &o.ProjectID, &o.PlanID, &o.OrderType, &o.Periods, &o.UnitPrice, &o.Amount,
+	).Scan(&o.ID, &o.ProjectID, &o.PlanID, &o.Periods, &o.UnitPrice, &o.Amount,
 		&o.Currency, &o.Status, &o.PaymentRef, &o.PaymentURL, &existSubID, &o.Metadata,
 		&o.CreatedAt, &o.UpdatedAt)
 	if err == pgx.ErrNoRows {
@@ -53,7 +53,7 @@ func (s *Store) ListOrdersByProject(projectID string, p types.PaginationParams) 
 	}
 
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, project_id, plan_id, order_type, periods, unit_price, amount, currency,
+		SELECT id, project_id, plan_id, periods, unit_price, amount, currency,
 			status, payment_ref, payment_url, existing_subscription_id, metadata,
 			created_at, updated_at
 		FROM orders WHERE project_id = $1
@@ -68,7 +68,7 @@ func (s *Store) ListOrdersByProject(projectID string, p types.PaginationParams) 
 	for rows.Next() {
 		var o types.Order
 		var existSubID *string
-		if err := rows.Scan(&o.ID, &o.ProjectID, &o.PlanID, &o.OrderType, &o.Periods,
+		if err := rows.Scan(&o.ID, &o.ProjectID, &o.PlanID, &o.Periods,
 			&o.UnitPrice, &o.Amount, &o.Currency, &o.Status, &o.PaymentRef, &o.PaymentURL,
 			&existSubID, &o.Metadata, &o.CreatedAt, &o.UpdatedAt); err != nil {
 			return nil, 0, fmt.Errorf("scan order: %w", err)

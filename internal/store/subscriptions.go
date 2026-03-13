@@ -215,10 +215,10 @@ func (s *Store) DeliverOrder(orderID string, plan *types.Plan, project *types.Pr
 	var order types.Order
 	var existSubID *string
 	err = tx.QueryRow(ctx, `
-		SELECT id, project_id, plan_id, order_type, periods, unit_price, amount, currency,
+		SELECT id, project_id, plan_id, periods, unit_price, amount, currency,
 			status, payment_ref, payment_url, existing_subscription_id, metadata, created_at, updated_at
 		FROM orders WHERE id = $1 FOR UPDATE`, orderID,
-	).Scan(&order.ID, &order.ProjectID, &order.PlanID, &order.OrderType, &order.Periods,
+	).Scan(&order.ID, &order.ProjectID, &order.PlanID, &order.Periods,
 		&order.UnitPrice, &order.Amount, &order.Currency, &order.Status, &order.PaymentRef,
 		&order.PaymentURL, &existSubID, &order.Metadata, &order.CreatedAt, &order.UpdatedAt)
 	if err != nil {
@@ -251,56 +251,48 @@ func (s *Store) DeliverOrder(orderID string, plan *types.Plan, project *types.Pr
 	}
 
 	now := time.Now()
-	var sub *types.Subscription
 
-	switch order.OrderType {
-	case types.OrderTypeUpgrade:
-		if order.ExistingSubscriptionID == "" {
-			tx.Rollback(ctx)
-			return nil, fmt.Errorf("upgrade order has no existing subscription ID")
-		}
-
-		// Get old subscription's expires_at and plan_name.
-		var oldExpiresAt time.Time
-		var oldPlanName string
-		err = tx.QueryRow(ctx, `SELECT expires_at, plan_name FROM subscriptions WHERE id = $1`, order.ExistingSubscriptionID).Scan(&oldExpiresAt, &oldPlanName)
-		if err != nil {
-			tx.Rollback(ctx)
-			return nil, fmt.Errorf("get old subscription: %w", err)
-		}
-
-		// Revoke old subscription.
-		_, err = tx.Exec(ctx, `UPDATE subscriptions SET status = $1, updated_at = NOW() WHERE id = $2`,
-			types.SubscriptionStatusRevoked, order.ExistingSubscriptionID)
-		if err != nil {
-			tx.Rollback(ctx)
-			return nil, fmt.Errorf("revoke old subscription: %w", err)
-		}
-
-		// Determine expiry: if upgrading from free plan, calculate fresh expiry from now.
-		// Otherwise use old expires_at (prorated upgrade preserves remaining time).
-		var newExpiresAt time.Time
-		if oldPlanName == "free" {
-			newExpiresAt = now.AddDate(0, plan.PeriodMonths*order.Periods, 0)
-		} else {
-			newExpiresAt = oldExpiresAt
-		}
-
-		sub = &types.Subscription{ProjectID: order.ProjectID, PlanID: plan.ID, PlanName: plan.Slug, Status: types.SubscriptionStatusActive, StartsAt: now, ExpiresAt: newExpiresAt}
-		err = tx.QueryRow(ctx, `
-			INSERT INTO subscriptions (project_id, plan_id, plan_name, status, starts_at, expires_at)
-			VALUES ($1, $2, $3, $4, $5, $6)
-			RETURNING id, created_at, updated_at`,
-			sub.ProjectID, sub.PlanID, sub.PlanName, sub.Status, sub.StartsAt, sub.ExpiresAt,
-		).Scan(&sub.ID, &sub.CreatedAt, &sub.UpdatedAt)
-		if err != nil {
-			tx.Rollback(ctx)
-			return nil, fmt.Errorf("create subscription for upgrade: %w", err)
-		}
-
-	default:
+	if order.ExistingSubscriptionID == "" {
 		tx.Rollback(ctx)
-		return nil, fmt.Errorf("unknown order type: %s", order.OrderType)
+		return nil, fmt.Errorf("order has no existing subscription ID")
+	}
+
+	// Get old subscription's expires_at and plan_name.
+	var oldExpiresAt time.Time
+	var oldPlanName string
+	err = tx.QueryRow(ctx, `SELECT expires_at, plan_name FROM subscriptions WHERE id = $1`, order.ExistingSubscriptionID).Scan(&oldExpiresAt, &oldPlanName)
+	if err != nil {
+		tx.Rollback(ctx)
+		return nil, fmt.Errorf("get old subscription: %w", err)
+	}
+
+	// Revoke old subscription.
+	_, err = tx.Exec(ctx, `UPDATE subscriptions SET status = $1, updated_at = NOW() WHERE id = $2`,
+		types.SubscriptionStatusRevoked, order.ExistingSubscriptionID)
+	if err != nil {
+		tx.Rollback(ctx)
+		return nil, fmt.Errorf("revoke old subscription: %w", err)
+	}
+
+	// Determine expiry: if upgrading from free plan, calculate fresh expiry from now.
+	// Otherwise use old expires_at (prorated upgrade preserves remaining time).
+	var newExpiresAt time.Time
+	if oldPlanName == "free" {
+		newExpiresAt = now.AddDate(0, plan.PeriodMonths*order.Periods, 0)
+	} else {
+		newExpiresAt = oldExpiresAt
+	}
+
+	sub := &types.Subscription{ProjectID: order.ProjectID, PlanID: plan.ID, PlanName: plan.Slug, Status: types.SubscriptionStatusActive, StartsAt: now, ExpiresAt: newExpiresAt}
+	err = tx.QueryRow(ctx, `
+		INSERT INTO subscriptions (project_id, plan_id, plan_name, status, starts_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id, created_at, updated_at`,
+		sub.ProjectID, sub.PlanID, sub.PlanName, sub.Status, sub.StartsAt, sub.ExpiresAt,
+	).Scan(&sub.ID, &sub.CreatedAt, &sub.UpdatedAt)
+	if err != nil {
+		tx.Rollback(ctx)
+		return nil, fmt.Errorf("create subscription: %w", err)
 	}
 
 	// Mark order as delivered.

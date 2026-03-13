@@ -123,11 +123,6 @@ export function RequestsPage() {
       className: "text-right",
     },
     {
-      header: "Credits",
-      accessor: (r) => r.credits_consumed.toFixed(2),
-      className: "text-right",
-    },
-    {
       header: "Key",
       accessor: (r) => keyName(r.api_key_id),
     },
@@ -265,7 +260,6 @@ export function RequestsPage() {
               <DetailRow label="Output Tokens" value={formatTokens(selected.output_tokens)} />
               <DetailRow label="Cache Creation" value={formatTokens(selected.cache_creation_tokens)} />
               <DetailRow label="Cache Read" value={formatTokens(selected.cache_read_tokens)} />
-              <DetailRow label="Credits" value={selected.credits_consumed.toFixed(4)} />
               <DetailRow label="Duration" value={`${selected.latency_ms}ms`} />
               <DetailRow label="TTFT" value={selected.ttft_ms > 0 ? `${selected.ttft_ms}ms` : "-"} />
               {selected.trace_id && (

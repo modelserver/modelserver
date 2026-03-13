@@ -35,7 +35,7 @@ type Request struct {
 	OutputTokens        int64     `json:"output_tokens"`
 	CacheCreationTokens int64     `json:"cache_creation_tokens"`
 	CacheReadTokens     int64     `json:"cache_read_tokens"`
-	CreditsConsumed     float64   `json:"credits_consumed"`
+	CreditsConsumed     float64   `json:"-"`
 	LatencyMs           int64     `json:"latency_ms"`
 	TTFTMs              int64     `json:"ttft_ms"`
 	ErrorMessage        string    `json:"error_message,omitempty"`

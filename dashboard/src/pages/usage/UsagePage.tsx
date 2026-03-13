@@ -64,7 +64,6 @@ export function UsagePage() {
     { header: "Requests", accessor: (r) => formatNumber(r.request_count), className: "text-right" },
     { header: "Input Tokens", accessor: (r) => formatNumber(r.total_input_tokens), className: "text-right" },
     { header: "Output Tokens", accessor: (r) => formatNumber(r.total_output_tokens), className: "text-right" },
-    { header: "Credits", accessor: (r) => r.total_credits.toFixed(2), className: "text-right" },
     { header: "Avg Latency", accessor: (r) => `${Math.round(r.avg_latency_ms)}ms`, className: "text-right" },
   ];
 
@@ -73,7 +72,6 @@ export function UsagePage() {
     { header: "Key", accessor: (r) => `ms-...${r.key_suffix}` },
     { header: "Requests", accessor: (r) => formatNumber(r.request_count), className: "text-right" },
     { header: "Tokens", accessor: (r) => formatNumber(r.total_tokens), className: "text-right" },
-    { header: "Credits", accessor: (r) => r.total_credits.toFixed(2), className: "text-right" },
   ];
 
   return (
@@ -87,10 +85,9 @@ export function UsagePage() {
         onUntilChange={setUntil}
       />
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2">
         <StatCard title="Total Requests" value={formatNumber(stats?.request_count ?? 0)} />
         <StatCard title="Total Tokens" value={formatNumber(stats?.total_tokens ?? 0)} />
-        <StatCard title="Total Credits" value={formatNumber(stats?.total_credits ?? 0)} />
       </div>
 
       <Card>
@@ -118,14 +115,6 @@ export function UsagePage() {
                   strokeWidth={2}
                   dot={false}
                   name="Requests"
-                />
-                <Line
-                  type="monotone"
-                  dataKey="total_credits"
-                  stroke="oklch(0.696 0.17 162.48)"
-                  strokeWidth={2}
-                  dot={false}
-                  name="Credits"
                 />
               </LineChart>
             </ResponsiveContainer>

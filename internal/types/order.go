@@ -2,13 +2,6 @@ package types
 
 import "time"
 
-// Order type constants.
-const (
-	OrderTypeNew     = "new"
-	OrderTypeRenew   = "renew"
-	OrderTypeUpgrade = "upgrade"
-)
-
 // Order status constants.
 const (
 	OrderStatusPending   = "pending"
@@ -24,7 +17,6 @@ type Order struct {
 	ID                     string    `json:"id"`
 	ProjectID              string    `json:"project_id"`
 	PlanID                 string    `json:"plan_id"`
-	OrderType              string    `json:"order_type"`
 	Periods                int       `json:"periods"`
 	UnitPrice              int64     `json:"unit_price"`
 	Amount                 int64     `json:"amount"`
