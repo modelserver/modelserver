@@ -23,6 +23,21 @@ func (s *Store) CreateRequest(r *types.Request) error {
 	).Scan(&r.ID, &r.CreatedAt)
 }
 
+// CompleteRequest updates a pending request row with final data.
+func (s *Store) CompleteRequest(id string, r *types.Request) error {
+	_, err := s.pool.Exec(context.Background(), `
+		UPDATE requests
+		SET status = $1, msg_id = $2, input_tokens = $3, output_tokens = $4,
+			cache_creation_tokens = $5, cache_read_tokens = $6, credits_consumed = $7,
+			latency_ms = $8, ttft_ms = $9, error_message = $10
+		WHERE id = $11`,
+		r.Status, nullString(r.MsgID), r.InputTokens, r.OutputTokens,
+		r.CacheCreationTokens, r.CacheReadTokens, r.CreditsConsumed,
+		r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), id,
+	)
+	return err
+}
+
 // BatchCreateRequests inserts multiple request logs efficiently.
 func (s *Store) BatchCreateRequests(requests []types.Request) error {
 	ctx := context.Background()

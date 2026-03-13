@@ -4,6 +4,7 @@ import "time"
 
 // Request status constants.
 const (
+	RequestStatusProcessing  = "processing"
 	RequestStatusSuccess     = "success"
 	RequestStatusError       = "error"
 	RequestStatusRateLimited = "rate_limited"

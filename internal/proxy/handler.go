@@ -109,6 +109,22 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		"streaming", isStreaming,
 	)
 
+	// Insert a pending request record before proxying.
+	pendingReq := &types.Request{
+		ProjectID: project.ID,
+		APIKeyID:  apiKey.ID,
+		ChannelID: channel.ID,
+		TraceID:   traceID,
+		Provider:  channel.Provider,
+		Model:     model,
+		Streaming: isStreaming,
+		Status:    types.RequestStatusProcessing,
+	}
+	if err := h.store.CreateRequest(pendingReq); err != nil {
+		logger.Warn("failed to insert pending request", "error", err)
+		pendingReq.ID = "" // signal fallback to collector
+	}
+
 	startTime := time.Now()
 
 	proxy := &httputil.ReverseProxy{
@@ -122,7 +138,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 				if resp.StatusCode == http.StatusTooManyRequests {
 					status = types.RequestStatusRateLimited
 				}
-				h.collector.Record(types.Request{
+				req := types.Request{
 					ProjectID: project.ID,
 					APIKeyID:  apiKey.ID,
 					ChannelID: channel.ID,
@@ -132,14 +148,19 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 					Streaming: isStreaming,
 					Status:    status,
 					LatencyMs: duration,
-				})
+				}
+				if pendingReq.ID != "" {
+					go h.store.CompleteRequest(pendingReq.ID, &req)
+				} else {
+					h.collector.Record(req)
+				}
 				return nil
 			}
 
 			if isStreaming {
-				return h.interceptStreaming(resp, project, apiKey, channel, model, traceID, policy, startTime, logger)
+				return h.interceptStreaming(resp, pendingReq.ID, project, apiKey, channel, model, traceID, policy, startTime, logger)
 			}
-			return h.interceptNonStreaming(resp, project, apiKey, channel, model, traceID, policy, startTime, logger)
+			return h.interceptNonStreaming(resp, pendingReq.ID, project, apiKey, channel, model, traceID, policy, startTime, logger)
 		},
 		FlushInterval: -1,
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -151,7 +172,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(w, r)
 }
 
-func (h *Handler) interceptNonStreaming(resp *http.Response, project *types.Project, apiKey *types.APIKey, channel *types.Channel, model, traceID string, policy *types.RateLimitPolicy, startTime time.Time, logger *slog.Logger) error {
+func (h *Handler) interceptNonStreaming(resp *http.Response, requestID string, project *types.Project, apiKey *types.APIKey, channel *types.Channel, model, traceID string, policy *types.RateLimitPolicy, startTime time.Time, logger *slog.Logger) error {
 	body, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if err != nil {
@@ -177,7 +198,7 @@ func (h *Handler) interceptNonStreaming(resp *http.Response, project *types.Proj
 		credits = policy.ComputeCredits(model, usage.InputTokens, usage.OutputTokens, usage.CacheCreationInputTokens, usage.CacheReadInputTokens)
 	}
 
-	h.collector.Record(types.Request{
+	req := types.Request{
 		ProjectID:           project.ID,
 		APIKeyID:            apiKey.ID,
 		ChannelID:           channel.ID,
@@ -193,7 +214,12 @@ func (h *Handler) interceptNonStreaming(resp *http.Response, project *types.Proj
 		CacheReadTokens:     usage.CacheReadInputTokens,
 		CreditsConsumed:     credits,
 		LatencyMs:           duration,
-	})
+	}
+	if requestID != "" {
+		go h.store.CompleteRequest(requestID, &req)
+	} else {
+		h.collector.Record(req)
+	}
 
 	logger.Info("request completed",
 		"msg_id", msgID,
@@ -219,7 +245,7 @@ func (h *Handler) interceptNonStreaming(resp *http.Response, project *types.Proj
 	return nil
 }
 
-func (h *Handler) interceptStreaming(resp *http.Response, project *types.Project, apiKey *types.APIKey, channel *types.Channel, model, traceID string, policy *types.RateLimitPolicy, startTime time.Time, logger *slog.Logger) error {
+func (h *Handler) interceptStreaming(resp *http.Response, requestID string, project *types.Project, apiKey *types.APIKey, channel *types.Channel, model, traceID string, policy *types.RateLimitPolicy, startTime time.Time, logger *slog.Logger) error {
 	resp.Body = newStreamInterceptor(resp.Body, startTime, func(parsedModel, msgID string, usage anthropic.Usage, ttft int64) {
 		if parsedModel != "" {
 			model = parsedModel
@@ -231,7 +257,7 @@ func (h *Handler) interceptStreaming(resp *http.Response, project *types.Project
 			credits = policy.ComputeCredits(model, usage.InputTokens, usage.OutputTokens, usage.CacheCreationInputTokens, usage.CacheReadInputTokens)
 		}
 
-		h.collector.Record(types.Request{
+		req := types.Request{
 			ProjectID:           project.ID,
 			APIKeyID:            apiKey.ID,
 			ChannelID:           channel.ID,
@@ -248,7 +274,12 @@ func (h *Handler) interceptStreaming(resp *http.Response, project *types.Project
 			CreditsConsumed:     credits,
 			LatencyMs:           duration,
 			TTFTMs:              ttft,
-		})
+		}
+		if requestID != "" {
+			go h.store.CompleteRequest(requestID, &req)
+		} else {
+			h.collector.Record(req)
+		}
 
 		logger.Info("request completed",
 			"msg_id", msgID,
