@@ -248,7 +248,6 @@ export function RequestsPage() {
               <DetailRow label="Status" value={selected.status} />
               <DetailRow label="Streaming" value={selected.streaming ? "Yes" : "No"} />
               <DetailRow label="API Key" value={keyName(selected.api_key_id)} />
-              <DetailRow label="Channel" value={selected.channel_id} />
               <DetailRow label="Input Tokens" value={formatTokens(selected.input_tokens)} />
               <DetailRow label="Output Tokens" value={formatTokens(selected.output_tokens)} />
               <DetailRow label="Cache Creation" value={formatTokens(selected.cache_creation_tokens)} />
