@@ -22,7 +22,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Card, CardContent } from "@/components/ui/card";
 import type { APIKey } from "@/api/types";
-import { Plus, MoreHorizontal, Copy, Check } from "lucide-react";
+import { Plus, MoreHorizontal, Copy, Check, BookOpen } from "lucide-react";
+import { UsageGuideDialog } from "./UsageGuideDialog";
 
 export function KeysPage() {
   const projectId = useCurrentProject();
@@ -34,6 +35,7 @@ export function KeysPage() {
   const [newKeyName, setNewKeyName] = useState("");
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
 
   const keys = data?.data ?? [];
 
@@ -200,10 +202,20 @@ export function KeysPage() {
             </div>
           </div>
           <DialogFooter>
+            <Button variant="outline" onClick={() => setShowGuide(true)}>
+              <BookOpen className="mr-2 h-4 w-4" />
+              Usage Guide
+            </Button>
             <Button onClick={() => setRevealedKey(null)}>Done</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <UsageGuideDialog
+        open={showGuide}
+        onOpenChange={setShowGuide}
+        apiKey={revealedKey ?? ""}
+      />
     </div>
   );
 }
