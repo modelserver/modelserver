@@ -163,8 +163,13 @@ function TraceDetail({ projectId, trace }: { projectId: string; trace: Trace }) 
       className: "text-right",
     },
     {
-      header: "Latency",
+      header: "Duration",
       accessor: (r) => `${r.latency_ms}ms`,
+      className: "text-right",
+    },
+    {
+      header: "TTFT",
+      accessor: (r) => r.ttft_ms > 0 ? `${r.ttft_ms}ms` : "-",
       className: "text-right",
     },
     {

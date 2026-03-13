@@ -74,6 +74,14 @@ export function RequestsPage() {
   }
 
   const columns: Column<Request>[] = [
+    {
+      header: "Msg ID",
+      accessor: (r) => r.msg_id ? (
+        <span className="font-mono text-xs">{r.msg_id.slice(0, 12)}...</span>
+      ) : (
+        <span className="text-muted-foreground">-</span>
+      ),
+    },
     { header: "Model", accessor: "model" },
     {
       header: "Status",
@@ -105,8 +113,13 @@ export function RequestsPage() {
       className: "text-right",
     },
     {
-      header: "Latency",
-      accessor: (r) => r.streaming && r.ttft_ms > 0 ? `${r.latency_ms}ms (ttft ${r.ttft_ms}ms)` : `${r.latency_ms}ms`,
+      header: "Duration",
+      accessor: (r) => `${r.latency_ms}ms`,
+      className: "text-right",
+    },
+    {
+      header: "TTFT",
+      accessor: (r) => r.ttft_ms > 0 ? `${r.ttft_ms}ms` : "-",
       className: "text-right",
     },
     {
@@ -253,10 +266,8 @@ export function RequestsPage() {
               <DetailRow label="Cache Creation" value={formatTokens(selected.cache_creation_tokens)} />
               <DetailRow label="Cache Read" value={formatTokens(selected.cache_read_tokens)} />
               <DetailRow label="Credits" value={selected.credits_consumed.toFixed(4)} />
-              <DetailRow label="Latency" value={`${selected.latency_ms}ms`} />
-              {selected.streaming && selected.ttft_ms > 0 && (
-                <DetailRow label="TTFT" value={`${selected.ttft_ms}ms`} />
-              )}
+              <DetailRow label="Duration" value={`${selected.latency_ms}ms`} />
+              <DetailRow label="TTFT" value={selected.ttft_ms > 0 ? `${selected.ttft_ms}ms` : "-"} />
               {selected.trace_id && (
                 <DetailRow label="Trace ID" value={selected.trace_id} />
               )}
