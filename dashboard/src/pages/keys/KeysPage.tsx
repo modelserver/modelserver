@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useCurrentProject } from "@/hooks/useCurrentProject";
-import { useKeys, useCreateKey, useUpdateKey } from "@/api/keys";
+import { useKeys, useCreateKey, useUpdateKey, useDeleteKey } from "@/api/keys";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { StatusBadge } from "@/components/shared/StatusBadge";
@@ -30,6 +30,7 @@ export function KeysPage() {
   const { data, isLoading } = useKeys(projectId);
   const createKey = useCreateKey(projectId);
   const updateKey = useUpdateKey(projectId);
+  const deleteKey = useDeleteKey(projectId);
 
   const [showCreate, setShowCreate] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
@@ -58,7 +59,7 @@ export function KeysPage() {
 
   const columns: Column<APIKey>[] = [
     { header: "Name", accessor: "name" },
-    { header: "Prefix", accessor: "key_prefix" },
+    { header: "Key", accessor: (k) => `ms-...${k.key_suffix}` },
     {
       header: "Status",
       accessor: (k) => <StatusBadge status={k.status} />,
@@ -110,6 +111,14 @@ export function KeysPage() {
                 }
               >
                 Revoke
+              </DropdownMenuItem>
+            )}
+            {k.status === "revoked" && (
+              <DropdownMenuItem
+                className="text-destructive-foreground"
+                onClick={() => deleteKey.mutate(k.id)}
+              >
+                Delete
               </DropdownMenuItem>
             )}
           </DropdownMenuContent>

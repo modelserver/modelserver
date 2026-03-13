@@ -70,7 +70,7 @@ export function UsagePage() {
 
   const keyColumns: Column<UsageByKey>[] = [
     { header: "Key Name", accessor: "api_key_name" },
-    { header: "Prefix", accessor: "key_prefix" },
+    { header: "Key", accessor: (r) => `ms-...${r.key_suffix}` },
     { header: "Requests", accessor: (r) => formatNumber(r.request_count), className: "text-right" },
     { header: "Tokens", accessor: (r) => formatNumber(r.total_tokens), className: "text-right" },
     { header: "Credits", accessor: (r) => r.total_credits.toFixed(2), className: "text-right" },

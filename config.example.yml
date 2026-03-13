@@ -27,8 +27,6 @@ auth:
   access_token_ttl: 15m
   # How long a refresh token remains valid.
   refresh_token_ttl: 168h  # 7 days
-  # Set to false to disable self-service registration.
-  allow_registration: true
 
   oauth:
     github:

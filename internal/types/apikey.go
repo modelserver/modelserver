@@ -18,7 +18,7 @@ type APIKey struct {
 	ProjectID         string     `json:"project_id"`
 	CreatedBy         string     `json:"created_by"`
 	KeyHash           string     `json:"-"`
-	KeyPrefix         string     `json:"key_prefix"`
+	KeySuffix         string     `json:"key_suffix"`
 	Name              string     `json:"name"`
 	Description       string     `json:"description,omitempty"`
 	Status            string     `json:"status"`

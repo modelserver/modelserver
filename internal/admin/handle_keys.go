@@ -3,7 +3,6 @@ package admin
 import (
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"net/http"
 
@@ -69,18 +68,18 @@ func handleCreateKey(st *store.Store, encKey []byte) http.HandlerFunc {
 		// Compute 4-byte HMAC checksum over the random bytes.
 		checksum := crypto.ComputeAPIKeyChecksum(encKey, randomBytes)
 
-		// Concatenate random + checksum and encode as base64url (no padding).
+		// Concatenate random + checksum and encode as base62.
 		combined := append(randomBytes, checksum...)
-		keyBody := base64.RawURLEncoding.EncodeToString(combined)
+		keyBody := crypto.Base62Encode(combined, crypto.APIKeyBodyLen)
 
-		plaintext := types.APIKeyPrefix + keyBody // ms- + 48 base64url chars
+		plaintext := types.APIKeyPrefix + keyBody // ms- + 49 base62 chars
 		hash := sha256.Sum256([]byte(plaintext))
 
 		key := &types.APIKey{
 			ProjectID:     projectID,
 			CreatedBy:     user.ID,
 			KeyHash:       hex.EncodeToString(hash[:]),
-			KeyPrefix:     plaintext[:len(types.APIKeyPrefix)+8],
+			KeySuffix:     plaintext[len(plaintext)-4:],
 			Name:          body.Name,
 			Description:   body.Description,
 			Status:        types.APIKeyStatusActive,
@@ -170,4 +169,31 @@ func canAccessKey(r *http.Request, key *types.APIKey) bool {
 	}
 	user := UserFromContext(r.Context())
 	return user != nil && key.CreatedBy == user.ID
+}
+
+func handleDeleteKey(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireRole(w, r, types.RoleMaintainer, types.RoleOwner) {
+			return
+		}
+
+		keyID := chi.URLParam(r, "keyID")
+		key, err := st.GetAPIKeyByID(keyID)
+		if err != nil || key == nil {
+			writeError(w, http.StatusNotFound, "not_found", "key not found")
+			return
+		}
+
+		if key.Status != types.APIKeyStatusRevoked {
+			writeError(w, http.StatusBadRequest, "bad_request", "only revoked keys can be deleted")
+			return
+		}
+
+		if err := st.DeleteAPIKey(keyID); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to delete key")
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
 }

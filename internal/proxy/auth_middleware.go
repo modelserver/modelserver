@@ -58,10 +58,7 @@ func SubscriptionFromContext(ctx context.Context) *types.Subscription {
 // If an encryption key is provided, it first validates the embedded HMAC checksum
 // to reject malformed keys without hitting the database.
 //
-// Supported key formats:
-//   - New (base64url): "ms-" + 48 base64url chars (32 random + 4 checksum bytes)
-//   - Legacy (hex):    "ms-" + 72 hex chars (64 random + 8 checksum hex)
-//   - Old legacy:      "ms-" + 64 hex chars (no checksum, falls through to DB)
+// Supported key format: "ms-" + 49 base62 chars (32 random + 4 checksum bytes).
 func AuthMiddleware(st *store.Store, encKey []byte) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -71,28 +68,14 @@ func AuthMiddleware(st *store.Store, encKey []byte) func(http.Handler) http.Hand
 				return
 			}
 
-			// Pre-DB validation: verify embedded HMAC checksum to reject brute-force attempts.
+			// Pre-DB validation: verify format and embedded HMAC checksum.
 			if len(encKey) > 0 && strings.HasPrefix(rawKey, types.APIKeyPrefix) {
 				keyBody := rawKey[len(types.APIKeyPrefix):]
-				bodyLen := len(keyBody)
-
-				switch {
-				case bodyLen == 48:
-					// New format (base64url): 36 raw bytes → 48 base64url chars.
-					if !crypto.ValidateAPIKeyChecksum(encKey, keyBody) {
-						writeProxyError(w, http.StatusUnauthorized, "invalid api key")
-						return
-					}
-				case bodyLen == 72:
-					// Legacy hex format with checksum: 64 random hex + 8 checksum hex.
-					if !crypto.ValidateAPIKeyChecksumHex(encKey, keyBody) {
-						writeProxyError(w, http.StatusUnauthorized, "invalid api key")
-						return
-					}
-				case bodyLen == 64:
-					// Old legacy hex format without checksum — skip pre-check, fall through to DB.
-				default:
-					// Invalid length — reject immediately.
+				if len(keyBody) != crypto.APIKeyBodyLen || !isBase62(keyBody) {
+					writeProxyError(w, http.StatusUnauthorized, "invalid api key")
+					return
+				}
+				if !crypto.ValidateAPIKeyChecksum(encKey, keyBody) {
 					writeProxyError(w, http.StatusUnauthorized, "invalid api key")
 					return
 				}
@@ -177,4 +160,13 @@ func extractAPIKey(r *http.Request) string {
 		return strings.TrimPrefix(auth, "Bearer ")
 	}
 	return ""
+}
+
+func isBase62(s string) bool {
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+			return false
+		}
+	}
+	return true
 }

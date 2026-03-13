@@ -91,6 +91,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 					r.Route("/keys/{keyID}", func(r chi.Router) {
 						r.Get("/", handleGetKey(st))
 						r.Put("/", handleUpdateKey(st))
+						r.Delete("/", handleDeleteKey(st))
 					})
 
 					// Policies.

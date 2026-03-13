@@ -7,8 +7,6 @@ import { AppShell } from "@/components/layout/AppShell";
 
 // Auth pages
 import { LoginPage } from "@/pages/auth/LoginPage";
-import { RegisterPage } from "@/pages/auth/RegisterPage";
-import { SetupPage } from "@/pages/auth/SetupPage";
 import { OAuthCallback } from "@/pages/auth/OAuthCallback";
 
 // Project pages
@@ -68,8 +66,6 @@ export function App() {
             <Routes>
               {/* Public routes */}
               <Route path="/login" element={<LoginPage />} />
-              <Route path="/register" element={<RegisterPage />} />
-              <Route path="/setup" element={<SetupPage />} />
               <Route path="/auth/callback/:provider" element={<OAuthCallback />} />
 
               {/* Authenticated routes */}

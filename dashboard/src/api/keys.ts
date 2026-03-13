@@ -38,3 +38,12 @@ export function useUpdateKey(projectId: string) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["keys", projectId] }),
   });
 }
+
+export function useDeleteKey(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (keyId: string) =>
+      api.delete(`/api/v1/projects/${projectId}/keys/${keyId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["keys", projectId] }),
+  });
+}

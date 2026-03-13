@@ -157,14 +157,10 @@ This applies to: Members, Keys, Policies, Subscriptions, Orders, Usage, Traces, 
 Handler-internal anonymous structs and `map[string]interface{}` patterns need named types for swag to reference. These are defined at the top of each handler file.
 
 **`internal/admin/handle_auth.go`:**
-- `LoginRequest` — `email` string, `password` string
-- `RegisterRequest` — `email` string, `password` string, `name` string
-- `InitializeRequest` — `email` string, `password` string, `name` string
-- `ChangePasswordRequest` — `current_password` string, `new_password` string
 - `OAuthCallbackRequest` — `code` string
 - `RefreshRequest` — `refresh_token` string
 - `TokenResponse` — `access_token` string, `refresh_token` string, `user` types.User
-- `UpdateUserRequest` — `name` string, `status` string, `is_superadmin` bool, `max_projects` int (currently decoded into `map[string]interface{}`)
+- `UpdateUserRequest` — `nickname` string, `status` string, `is_superadmin` bool, `max_projects` int (currently decoded into `map[string]interface{}`)
 
 **`internal/admin/handle_projects.go`:**
 - `CreateProjectRequest` — `name` string, `description` string
@@ -280,8 +276,7 @@ Add `make swagger` to CI (`.github/workflows/`) to catch annotation parse errors
 
 | Service | Tag | Count | Endpoints |
 |---------|-----|-------|-----------|
-| Admin | Auth | 11 | auth config, login, register, refresh, change password, oauth callback x3, oauth redirect x3 |
-| Admin | System | 1 | initialize |
+| Admin | Auth | 8 | auth config, refresh, oauth callback x3, oauth redirect x3 |
 | Admin | Users | 4 | me, list, get, update |
 | Admin | Plans | 5 | list, create, get, update, delete |
 | Admin | Projects | 5 | list, create, get, update, delete |
@@ -298,9 +293,9 @@ Add `make swagger` to CI (`.github/workflows/`) to catch annotation parse errors
 | Proxy | Proxy | 4 | messages, count_tokens, models, usage |
 | Payment | Payment | 4 | create payment, wechat notify, alipay notify, healthz |
 | System | Health | 4 | healthz x2, readyz x2 (main module proxy + admin servers) |
-| **Total** | | **~80** | |
+| **Total** | | **~76** | |
 
-Note: `GET /me` is listed under Users. `PATCH /auth/password` is listed under Auth. `GET /available-plans` is listed under Orders. OAuth redirect endpoints return 302 redirects (not JSON).
+Note: `GET /me` is listed under Users. `GET /available-plans` is listed under Orders. OAuth redirect endpoints return 302 redirects (not JSON).
 
 ## Non-Goals
 

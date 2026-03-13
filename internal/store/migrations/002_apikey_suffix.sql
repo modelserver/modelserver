@@ -1,0 +1,3 @@
+ALTER TABLE api_keys DROP COLUMN key_prefix;
+ALTER TABLE api_keys ADD COLUMN key_suffix TEXT NOT NULL DEFAULT '';
+ALTER TABLE api_keys ADD COLUMN deleted_at TIMESTAMPTZ;

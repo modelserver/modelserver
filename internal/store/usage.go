@@ -109,13 +109,13 @@ func (s *Store) GetUsageByModel(projectID string, since, until time.Time) ([]Usa
 // GetUsageByAPIKey returns usage aggregated by API key.
 func (s *Store) GetUsageByAPIKey(projectID string, since, until time.Time) ([]map[string]interface{}, error) {
 	rows, err := s.pool.Query(context.Background(), `
-		SELECT r.api_key_id, k.name, k.key_prefix, COUNT(*) as request_count,
+		SELECT r.api_key_id, k.name, k.key_suffix, COUNT(*) as request_count,
 			COALESCE(SUM(r.input_tokens + r.output_tokens), 0) as total_tokens,
 			COALESCE(SUM(r.credits_consumed), 0) as total_credits
 		FROM requests r
 		JOIN api_keys k ON r.api_key_id = k.id
 		WHERE r.project_id = $1 AND r.created_at >= $2 AND r.created_at <= $3
-		GROUP BY r.api_key_id, k.name, k.key_prefix
+		GROUP BY r.api_key_id, k.name, k.key_suffix
 		ORDER BY total_credits DESC`,
 		projectID, since, until)
 	if err != nil {
@@ -125,16 +125,16 @@ func (s *Store) GetUsageByAPIKey(projectID string, since, until time.Time) ([]ma
 
 	var results []map[string]interface{}
 	for rows.Next() {
-		var apiKeyID, name, prefix string
+		var apiKeyID, name, suffix string
 		var count, tokens int64
 		var credits float64
-		if err := rows.Scan(&apiKeyID, &name, &prefix, &count, &tokens, &credits); err != nil {
+		if err := rows.Scan(&apiKeyID, &name, &suffix, &count, &tokens, &credits); err != nil {
 			return nil, err
 		}
 		results = append(results, map[string]interface{}{
 			"api_key_id":    apiKeyID,
 			"api_key_name":  name,
-			"key_prefix":    prefix,
+			"key_suffix":    suffix,
 			"request_count": count,
 			"total_tokens":  tokens,
 			"total_credits": credits,

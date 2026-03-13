@@ -74,7 +74,7 @@ export interface APIKey {
   id: string;
   project_id: string;
   created_by: string;
-  key_prefix: string;
+  key_suffix: string;
   name: string;
   description?: string;
   status: "active" | "disabled" | "revoked";
@@ -90,7 +90,7 @@ export interface APIKeyCreateResponse {
   id: string;
   key: string;
   name: string;
-  key_prefix: string;
+  key_suffix: string;
   project_id: string;
   status: string;
   created_at: string;
@@ -282,7 +282,7 @@ export interface DailyUsage {
 export interface UsageByKey {
   api_key_id: string;
   api_key_name: string;
-  key_prefix: string;
+  key_suffix: string;
   request_count: number;
   total_tokens: number;
   total_credits: number;
