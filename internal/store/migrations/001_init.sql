@@ -109,13 +109,14 @@ CREATE TABLE IF NOT EXISTS api_keys (
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     created_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     key_hash TEXT NOT NULL UNIQUE,
-    key_prefix TEXT NOT NULL,
+    key_suffix TEXT NOT NULL DEFAULT '',
     name TEXT NOT NULL,
     description TEXT,
     status TEXT NOT NULL DEFAULT 'active',
     allowed_models TEXT[],
     expires_at TIMESTAMPTZ,
     last_used_at TIMESTAMPTZ,
+    deleted_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
