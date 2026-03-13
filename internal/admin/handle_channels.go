@@ -213,6 +213,13 @@ func handleTestChannel(st *store.Store, encKey []byte) http.HandlerFunc {
 				"max_tokens": 10,
 				"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
 			})
+		case types.ProviderBedrock:
+			endpoint = baseURL + "/model/" + testModel + "/invoke"
+			reqBody, _ = json.Marshal(map[string]interface{}{
+				"anthropic_version": "bedrock-2023-05-31",
+				"max_tokens":        10,
+				"messages":          []map[string]string{{"role": "user", "content": "Hi"}},
+			})
 		default: // anthropic, gemini, etc.
 			endpoint = baseURL + "/v1/messages"
 			reqBody, _ = json.Marshal(map[string]interface{}{
@@ -235,6 +242,8 @@ func handleTestChannel(st *store.Store, encKey []byte) http.HandlerFunc {
 
 		switch ch.Provider {
 		case types.ProviderOpenAI:
+			req.Header.Set("Authorization", "Bearer "+string(apiKey))
+		case types.ProviderBedrock:
 			req.Header.Set("Authorization", "Bearer "+string(apiKey))
 		default: // anthropic
 			req.Header.Set("x-api-key", string(apiKey))

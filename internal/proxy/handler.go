@@ -90,6 +90,18 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Transform request body for Bedrock provider.
+	if channel.Provider == types.ProviderBedrock {
+		betaValues := r.Header.Values("anthropic-beta")
+		bodyBytes, err = transformBedrockBody(bodyBytes, betaValues)
+		if err != nil {
+			writeProxyError(w, http.StatusInternalServerError, "failed to transform request for bedrock")
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		r.ContentLength = int64(len(bodyBytes))
+	}
+
 	policy := PolicyFromContext(r.Context())
 	traceID := TraceIDFromContext(r.Context())
 	threadID := ThreadIDFromContext(r.Context())
@@ -129,7 +141,11 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 
 	proxy := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
-			directorSetUpstream(req, channel.BaseURL, channelAPIKey)
+			if channel.Provider == types.ProviderBedrock {
+				directorSetBedrockUpstream(req, channel.BaseURL, channelAPIKey, model, isStreaming)
+			} else {
+				directorSetUpstream(req, channel.BaseURL, channelAPIKey)
+			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -158,6 +174,10 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if isStreaming {
+				if channel.Provider == types.ProviderBedrock {
+					resp.Body = newBedrockStreamAdapter(resp.Body)
+					resp.Header.Set("Content-Type", "text/event-stream")
+				}
 				return h.interceptStreaming(resp, pendingReq.ID, project, apiKey, channel, model, traceID, policy, startTime, logger)
 			}
 			return h.interceptNonStreaming(resp, pendingReq.ID, project, apiKey, channel, model, traceID, policy, startTime, logger)

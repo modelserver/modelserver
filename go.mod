@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.26.0
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.6
 	github.com/coreos/go-oidc/v3 v3.17.0
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/go-chi/cors v1.2.2
@@ -12,11 +13,13 @@ require (
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/spf13/viper v1.21.0
 	github.com/tidwall/gjson v1.18.0
+	github.com/tidwall/sjson v1.2.5
 	golang.org/x/oauth2 v0.36.0
 )
 
 require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
+	github.com/aws/smithy-go v1.24.2 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
@@ -30,7 +33,6 @@ require (
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
-	github.com/tidwall/sjson v1.2.5 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
