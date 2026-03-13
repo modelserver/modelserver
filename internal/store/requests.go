@@ -13,13 +13,13 @@ func (s *Store) CreateRequest(r *types.Request) error {
 	return s.pool.QueryRow(context.Background(), `
 		INSERT INTO requests (project_id, api_key_id, channel_id, trace_id, msg_id, provider, model, streaming,
 			status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-			credits_consumed, latency_ms, ttft_ms, error_message)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+			credits_consumed, latency_ms, ttft_ms, error_message, client_ip)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 		RETURNING id, created_at`,
 		r.ProjectID, r.APIKeyID, r.ChannelID, nullString(r.TraceID), nullString(r.MsgID),
 		r.Provider, r.Model, r.Streaming, r.Status,
 		r.InputTokens, r.OutputTokens, r.CacheCreationTokens, r.CacheReadTokens,
-		r.CreditsConsumed, r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage),
+		r.CreditsConsumed, r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP,
 	).Scan(&r.ID, &r.CreatedAt)
 }
 
@@ -29,11 +29,11 @@ func (s *Store) CompleteRequest(id string, r *types.Request) error {
 		UPDATE requests
 		SET status = $1, msg_id = $2, input_tokens = $3, output_tokens = $4,
 			cache_creation_tokens = $5, cache_read_tokens = $6, credits_consumed = $7,
-			latency_ms = $8, ttft_ms = $9, error_message = $10
-		WHERE id = $11`,
+			latency_ms = $8, ttft_ms = $9, error_message = $10, client_ip = $11
+		WHERE id = $12`,
 		r.Status, nullString(r.MsgID), r.InputTokens, r.OutputTokens,
 		r.CacheCreationTokens, r.CacheReadTokens, r.CreditsConsumed,
-		r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), id,
+		r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP, id,
 	)
 	return err
 }
@@ -50,13 +50,13 @@ func (s *Store) BatchCreateRequests(requests []types.Request) error {
 		err := tx.QueryRow(ctx, `
 			INSERT INTO requests (project_id, api_key_id, channel_id, trace_id, msg_id, provider, model, streaming,
 				status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-				credits_consumed, latency_ms, ttft_ms, error_message)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+				credits_consumed, latency_ms, ttft_ms, error_message, client_ip)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 			RETURNING id, created_at`,
 			r.ProjectID, r.APIKeyID, r.ChannelID, nullString(r.TraceID), nullString(r.MsgID),
 			r.Provider, r.Model, r.Streaming, r.Status,
 			r.InputTokens, r.OutputTokens, r.CacheCreationTokens, r.CacheReadTokens,
-			r.CreditsConsumed, r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage),
+			r.CreditsConsumed, r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP,
 		).Scan(&r.ID, &r.CreatedAt)
 		if err != nil {
 			tx.Rollback(ctx)
@@ -80,7 +80,7 @@ func (s *Store) ListRequests(projectID string, p types.PaginationParams, filters
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT id, project_id, api_key_id, channel_id, COALESCE(trace_id::text, ''), COALESCE(msg_id, ''),
 			provider, model, streaming, status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-			credits_consumed, latency_ms, ttft_ms, COALESCE(error_message, ''), created_at
+			credits_consumed, latency_ms, ttft_ms, COALESCE(error_message, ''), client_ip, created_at
 		FROM requests %s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
 		where, sanitizeSort(p.Sort, "created_at"), sanitizeOrder(p.Order), argN, argN+1),
 		args...,
@@ -96,7 +96,7 @@ func (s *Store) ListRequests(projectID string, p types.PaginationParams, filters
 		if err := rows.Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.ChannelID, &r.TraceID, &r.MsgID,
 			&r.Provider, &r.Model, &r.Streaming, &r.Status,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
-			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.CreatedAt); err != nil {
+			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt); err != nil {
 			return nil, 0, err
 		}
 		requests = append(requests, r)
@@ -156,7 +156,7 @@ func (s *Store) ListRequestsByTraceID(traceID string) ([]types.Request, error) {
 	rows, err := s.pool.Query(context.Background(), `
 		SELECT id, project_id, api_key_id, channel_id, COALESCE(trace_id::text, ''), COALESCE(msg_id, ''),
 			provider, model, streaming, status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-			credits_consumed, latency_ms, ttft_ms, COALESCE(error_message, ''), created_at
+			credits_consumed, latency_ms, ttft_ms, COALESCE(error_message, ''), client_ip, created_at
 		FROM requests WHERE trace_id = $1 ORDER BY created_at ASC`, traceID)
 	if err != nil {
 		return nil, err
@@ -169,7 +169,7 @@ func (s *Store) ListRequestsByTraceID(traceID string) ([]types.Request, error) {
 		if err := rows.Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.ChannelID, &r.TraceID, &r.MsgID,
 			&r.Provider, &r.Model, &r.Streaming, &r.Status,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
-			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.CreatedAt); err != nil {
+			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		requests = append(requests, r)

@@ -17,7 +17,7 @@ func MountRoutes(r chi.Router, st *store.Store, handler *Handler, traceCfg confi
 		r.Use(AuthMiddleware(st, encKey))
 		r.Use(TraceMiddleware(traceCfg))
 		if limiter != nil {
-			r.Use(RateLimitMiddleware(limiter, logger))
+			r.Use(RateLimitMiddleware(limiter, st, logger))
 		}
 
 		r.Post("/messages", handler.HandleMessages)

@@ -1,19 +1,24 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/modelserver/modelserver/internal/ratelimit"
+	"github.com/modelserver/modelserver/internal/store"
+	"github.com/modelserver/modelserver/internal/types"
 )
 
 // RateLimitMiddleware checks rate limits before allowing requests through.
 // Uses the composite rate limiter with in-memory counters + DB credit checks.
-func RateLimitMiddleware(limiter ratelimit.RateLimiter, logger *slog.Logger) func(http.Handler) http.Handler {
+// Rejected requests are logged to the request store with status "rate_limited".
+func RateLimitMiddleware(limiter ratelimit.RateLimiter, st *store.Store, logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			policy := PolicyFromContext(r.Context())
@@ -41,6 +46,25 @@ func RateLimitMiddleware(limiter ratelimit.RateLimiter, logger *slog.Logger) fun
 					"project_id", project.ID,
 					"api_key_id", apiKey.ID,
 				)
+
+				// Log the rejected request.
+				model := peekModel(r)
+				traceID := TraceIDFromContext(r.Context())
+				clientIP := r.RemoteAddr
+				errMsg := fmt.Sprintf("rate limit exceeded, retry after %ds", int(retryAfter.Seconds()))
+
+				req := &types.Request{
+					ProjectID:    project.ID,
+					APIKeyID:     apiKey.ID,
+					TraceID:      traceID,
+					Provider:     "",
+					Model:        model,
+					Status:       types.RequestStatusRateLimited,
+					ClientIP:     clientIP,
+					ErrorMessage: errMsg,
+				}
+				go st.CreateRequest(req)
+
 				writeRateLimitError(w, retryAfter)
 				return
 			}
@@ -48,6 +72,24 @@ func RateLimitMiddleware(limiter ratelimit.RateLimiter, logger *slog.Logger) fun
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// peekModel reads the model field from the JSON request body without consuming it.
+func peekModel(r *http.Request) string {
+	if r.Body == nil {
+		return ""
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return ""
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+
+	var shape struct {
+		Model string `json:"model"`
+	}
+	json.Unmarshal(body, &shape)
+	return shape.Model
 }
 
 func writeRateLimitError(w http.ResponseWriter, retryAfter time.Duration) {

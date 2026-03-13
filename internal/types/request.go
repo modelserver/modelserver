@@ -38,6 +38,7 @@ type Request struct {
 	CreditsConsumed     float64   `json:"-"`
 	LatencyMs           int64     `json:"latency_ms"`
 	TTFTMs              int64     `json:"ttft_ms"`
+	ClientIP            string    `json:"client_ip,omitempty"`
 	ErrorMessage        string    `json:"error_message,omitempty"`
 	CreatedAt           time.Time `json:"created_at"`
 }

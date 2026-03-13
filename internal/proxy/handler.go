@@ -51,6 +51,8 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	clientIP := r.RemoteAddr
+
 	bodyBytes, err := io.ReadAll(http.MaxBytesReader(w, r.Body, h.maxBodySize))
 	if err != nil {
 		writeProxyError(w, http.StatusRequestEntityTooLarge, "request body too large")
@@ -131,6 +133,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		Model:     model,
 		Streaming: isStreaming,
 		Status:    types.RequestStatusProcessing,
+		ClientIP:  clientIP,
 	}
 	if err := h.store.CreateRequest(pendingReq); err != nil {
 		logger.Warn("failed to insert pending request", "error", err)
@@ -164,6 +167,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 					Streaming: isStreaming,
 					Status:    status,
 					LatencyMs: duration,
+					ClientIP:  clientIP,
 				}
 				if pendingReq.ID != "" {
 					go h.store.CompleteRequest(pendingReq.ID, &req)
@@ -178,9 +182,9 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 					resp.Body = newBedrockStreamAdapter(resp.Body)
 					resp.Header.Set("Content-Type", "text/event-stream")
 				}
-				return h.interceptStreaming(resp, pendingReq.ID, project, apiKey, channel, model, traceID, policy, startTime, logger)
+				return h.interceptStreaming(resp, pendingReq.ID, project, apiKey, channel, model, traceID, policy, clientIP, startTime, logger)
 			}
-			return h.interceptNonStreaming(resp, pendingReq.ID, project, apiKey, channel, model, traceID, policy, startTime, logger)
+			return h.interceptNonStreaming(resp, pendingReq.ID, project, apiKey, channel, model, traceID, policy, clientIP, startTime, logger)
 		},
 		FlushInterval: -1,
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -192,7 +196,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(w, r)
 }
 
-func (h *Handler) interceptNonStreaming(resp *http.Response, requestID string, project *types.Project, apiKey *types.APIKey, channel *types.Channel, model, traceID string, policy *types.RateLimitPolicy, startTime time.Time, logger *slog.Logger) error {
+func (h *Handler) interceptNonStreaming(resp *http.Response, requestID string, project *types.Project, apiKey *types.APIKey, channel *types.Channel, model, traceID string, policy *types.RateLimitPolicy, clientIP string, startTime time.Time, logger *slog.Logger) error {
 	body, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if err != nil {
@@ -234,6 +238,7 @@ func (h *Handler) interceptNonStreaming(resp *http.Response, requestID string, p
 		CacheReadTokens:     usage.CacheReadInputTokens,
 		CreditsConsumed:     credits,
 		LatencyMs:           duration,
+		ClientIP:            clientIP,
 	}
 	if requestID != "" {
 		go h.store.CompleteRequest(requestID, &req)
@@ -265,7 +270,7 @@ func (h *Handler) interceptNonStreaming(resp *http.Response, requestID string, p
 	return nil
 }
 
-func (h *Handler) interceptStreaming(resp *http.Response, requestID string, project *types.Project, apiKey *types.APIKey, channel *types.Channel, model, traceID string, policy *types.RateLimitPolicy, startTime time.Time, logger *slog.Logger) error {
+func (h *Handler) interceptStreaming(resp *http.Response, requestID string, project *types.Project, apiKey *types.APIKey, channel *types.Channel, model, traceID string, policy *types.RateLimitPolicy, clientIP string, startTime time.Time, logger *slog.Logger) error {
 	resp.Body = newStreamInterceptor(resp.Body, startTime, func(parsedModel, msgID string, usage anthropic.Usage, ttft int64) {
 		if parsedModel != "" {
 			model = parsedModel
@@ -294,6 +299,7 @@ func (h *Handler) interceptStreaming(resp *http.Response, requestID string, proj
 			CreditsConsumed:     credits,
 			LatencyMs:           duration,
 			TTFTMs:              ttft,
+			ClientIP:            clientIP,
 		}
 		if requestID != "" {
 			go h.store.CompleteRequest(requestID, &req)

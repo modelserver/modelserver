@@ -7,8 +7,8 @@ func TestMigrationsEmbed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDir failed: %v", err)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("expected 1 migration files, got %d", len(entries))
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 migration files, got %d", len(entries))
 	}
 	// Verify sorted order
 	for i := 1; i < len(entries); i++ {
