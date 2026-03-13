@@ -167,8 +167,6 @@ CREATE TABLE IF NOT EXISTS requests (
     latency_ms BIGINT NOT NULL DEFAULT 0,
     ttft_ms BIGINT NOT NULL DEFAULT 0,
     error_message TEXT,
-    request_body_ref TEXT,
-    response_body_ref TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_requests_project ON requests(project_id);
