@@ -5,10 +5,16 @@ import (
 	"math/rand"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/modelserver/modelserver/internal/crypto"
 	"github.com/modelserver/modelserver/internal/types"
 )
+
+type sessionBinding struct {
+	channelID string
+	usedAt    time.Time
+}
 
 // ChannelRouter matches requests to channels using route rules.
 // Decrypted channel API keys are cached in memory to avoid per-request decryption.
@@ -18,11 +24,13 @@ type ChannelRouter struct {
 	channelMap    map[string]*types.Channel
 	routes        []types.ChannelRoute
 	decryptedKeys map[string]string // channelID → plaintext API key
+	sessionMap    sync.Map          // string → sessionBinding
+	sessionTTL    time.Duration
 }
 
 // NewChannelRouter creates a channel router with the given channels and routes.
 // Decrypts all channel API keys at construction time.
-func NewChannelRouter(channels []types.Channel, routes []types.ChannelRoute, encKey []byte, logger *slog.Logger) *ChannelRouter {
+func NewChannelRouter(channels []types.Channel, routes []types.ChannelRoute, encKey []byte, logger *slog.Logger, sessionTTL time.Duration) *ChannelRouter {
 	cm := make(map[string]*types.Channel, len(channels))
 	for i := range channels {
 		cm[channels[i].ID] = &channels[i]
@@ -33,6 +41,7 @@ func NewChannelRouter(channels []types.Channel, routes []types.ChannelRoute, enc
 		channelMap:    cm,
 		routes:        routes,
 		decryptedKeys: keys,
+		sessionTTL:    sessionTTL,
 	}
 }
 
@@ -165,6 +174,61 @@ func SelectChannel(channels []types.Channel) *types.Channel {
 	}
 
 	return &channels[0]
+}
+
+// SelectChannelForSession returns a channel for the given session, reusing
+// a previous binding when possible. Falls back to normal selection if
+// sessionID is empty or no candidates match.
+func (cr *ChannelRouter) SelectChannelForSession(candidates []types.Channel, sessionID string) *types.Channel {
+	if sessionID == "" || len(candidates) == 0 {
+		return SelectChannel(candidates)
+	}
+
+	// Check existing binding.
+	if val, ok := cr.sessionMap.Load(sessionID); ok {
+		binding := val.(sessionBinding)
+		if time.Since(binding.usedAt) < cr.sessionTTL {
+			for i := range candidates {
+				if candidates[i].ID == binding.channelID {
+					cr.sessionMap.Store(sessionID, sessionBinding{
+						channelID: binding.channelID,
+						usedAt:    time.Now(),
+					})
+					return &candidates[i]
+				}
+			}
+		}
+		// Expired or channel no longer available.
+		cr.sessionMap.Delete(sessionID)
+	}
+
+	// Select new channel and store binding.
+	ch := SelectChannel(candidates)
+	if ch != nil {
+		cr.sessionMap.Store(sessionID, sessionBinding{
+			channelID: ch.ID,
+			usedAt:    time.Now(),
+		})
+	}
+	return ch
+}
+
+// StartSessionCleanup runs a background goroutine that periodically removes
+// expired session bindings.
+func (cr *ChannelRouter) StartSessionCleanup(interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			now := time.Now()
+			cr.sessionMap.Range(func(key, value any) bool {
+				if now.Sub(value.(sessionBinding).usedAt) > cr.sessionTTL {
+					cr.sessionMap.Delete(key)
+				}
+				return true
+			})
+		}
+	}()
 }
 
 func weightedRandom(channels []types.Channel) *types.Channel {

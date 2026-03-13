@@ -79,7 +79,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	channel := SelectChannel(candidates)
+	channel := h.channelRouter.SelectChannelForSession(candidates, TraceIDFromContext(r.Context()))
 	if channel == nil {
 		writeProxyError(w, http.StatusServiceUnavailable, "no channels available")
 		return
