@@ -24,13 +24,17 @@ export function ProjectSwitcher() {
 
   if (projects.length === 0) return null;
 
+  const currentProject = projects.find((p) => p.id === projectId);
+
   return (
     <Select
       value={projectId ?? ""}
       onValueChange={(id) => { if (id) navigate(`/projects/${id}`); }}
     >
       <SelectTrigger className="w-full">
-        <SelectValue placeholder="Select project" />
+        <SelectValue placeholder="Select project">
+          {currentProject?.name ?? "Select project"}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
         {projects.map((p) => (

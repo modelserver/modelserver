@@ -129,6 +129,13 @@ export function RoutesPage() {
 
   const columns: Column<ChannelRoute>[] = [
     {
+      header: "ID",
+      accessor: (r) => (
+        <code className="text-xs text-muted-foreground">{r.id.slice(0, 8)}</code>
+      ),
+      className: "w-24",
+    },
+    {
       header: "Model Pattern",
       accessor: (r) => <code className="text-sm">{r.model_pattern}</code>,
     },

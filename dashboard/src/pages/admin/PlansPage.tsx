@@ -251,6 +251,13 @@ export function PlansPage() {
   const isSaving = createPlan.isPending || updatePlan.isPending;
 
   const columns: Column<Plan>[] = [
+    {
+      header: "ID",
+      accessor: (p) => (
+        <code className="text-xs text-muted-foreground">{p.id.slice(0, 8)}</code>
+      ),
+      className: "w-24",
+    },
     { header: "Name", accessor: (p) => p.display_name || p.name },
     { header: "Slug", accessor: "slug" },
     {

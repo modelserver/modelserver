@@ -115,6 +115,13 @@ export function ChannelsPage() {
   }
 
   const columns: Column<Channel>[] = [
+    {
+      header: "ID",
+      accessor: (c) => (
+        <code className="text-xs text-muted-foreground">{c.id.slice(0, 8)}</code>
+      ),
+      className: "w-24",
+    },
     { header: "Name", accessor: "name" },
     { header: "Provider", accessor: "provider" },
     {

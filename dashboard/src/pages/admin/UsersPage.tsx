@@ -33,6 +33,13 @@ export function UsersPage() {
 
   const columns: Column<User>[] = [
     {
+      header: "ID",
+      accessor: (u) => (
+        <code className="text-xs text-muted-foreground">{u.id.slice(0, 8)}</code>
+      ),
+      className: "w-24",
+    },
+    {
       header: "User",
       accessor: (u) => (
         <div className="flex items-center gap-2">
