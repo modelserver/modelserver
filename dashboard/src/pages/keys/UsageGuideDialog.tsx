@@ -71,6 +71,7 @@ export function UsageGuideDialog({
         <Tabs defaultValue="claude-code" className="py-2">
           <TabsList>
             <TabsTrigger value="claude-code">Claude Code</TabsTrigger>
+            <TabsTrigger value="codex">Codex</TabsTrigger>
             <TabsTrigger value="opencode">OpenCode</TabsTrigger>
           </TabsList>
 
@@ -94,6 +95,31 @@ export function UsageGuideDialog({
 
             <Step n={4} title="Run">
               <CodeBlock code="claude" />
+            </Step>
+          </TabsContent>
+
+          <TabsContent value="codex" className="space-y-4 pt-4">
+            <Step n={1} title="Install Codex">
+              <CodeBlock code="npm install -g @openai/codex" />
+            </Step>
+
+            <Step n={2} title="Configure">
+              <p className="text-xs text-muted-foreground">
+                Edit{" "}
+                <code className="rounded bg-muted px-1 py-0.5">~/.codex/config.toml</code> and
+                add:
+              </p>
+              <CodeBlock
+                code={`model_provider = "modelserver"\nmodel = "gpt-5.4"\n\n[model_providers.modelserver]\nname = "modelserver"\nbase_url = "https://code.ai.cs.ac.cn/v1"\nenv_key = "OPENAI_API_KEY"\nwire_api = "responses"`}
+              />
+            </Step>
+
+            <Step n={3} title="Set environment variable">
+              <CodeBlock code={`export OPENAI_API_KEY=${apiKey}`} />
+            </Step>
+
+            <Step n={4} title="Run">
+              <CodeBlock code="codex" />
             </Step>
           </TabsContent>
 
