@@ -28,7 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { Channel, ChannelUsageSummary } from "@/api/types";
-import { Plus, MoreHorizontal, Zap, Loader2 } from "lucide-react";
+import { Plus, MoreHorizontal, Zap, Loader2, Pencil } from "lucide-react";
 import { toast } from "sonner";
 
 export function ChannelsPage() {
@@ -40,6 +40,7 @@ export function ChannelsPage() {
   const testChannel = useTestChannel();
 
   const [showCreate, setShowCreate] = useState(false);
+  const [editingChannel, setEditingChannel] = useState<Channel | null>(null);
   const [form, setForm] = useState({
     provider: "anthropic",
     name: "",
@@ -92,6 +93,44 @@ export function ChannelsPage() {
       max_concurrent: "10",
       test_model: "",
     });
+  }
+
+  function openEdit(c: Channel) {
+    setForm({
+      provider: c.provider,
+      name: c.name,
+      base_url: c.base_url,
+      api_key: "",
+      supported_models: c.supported_models?.join(", ") ?? "",
+      weight: String(c.weight),
+      selection_priority: String(c.selection_priority),
+      max_concurrent: String(c.max_concurrent),
+      test_model: c.test_model ?? "",
+    });
+    setEditingChannel(c);
+  }
+
+  async function handleEdit() {
+    if (!editingChannel) return;
+    const body: Record<string, unknown> = {
+      channelId: editingChannel.id,
+      name: form.name,
+      base_url: form.base_url,
+      provider: form.provider,
+      supported_models: form.supported_models
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+      weight: Number(form.weight) || 1,
+      selection_priority: Number(form.selection_priority) || 0,
+      max_concurrent: Number(form.max_concurrent) || 10,
+      test_model: form.test_model || undefined,
+    };
+    if (form.api_key) {
+      body.api_key = form.api_key;
+    }
+    await updateChannel.mutateAsync(body as Parameters<typeof updateChannel.mutateAsync>[0]);
+    setEditingChannel(null);
   }
 
   async function handleTest(channelId: string, channelName: string) {
@@ -176,6 +215,10 @@ export function ChannelsPage() {
             <MoreHorizontal className="h-4 w-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => openEdit(c)}>
+              <Pencil className="mr-2 h-4 w-4" />
+              Edit
+            </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => handleTest(c.id, c.name)}
               disabled={testChannel.isPending}
@@ -338,6 +381,112 @@ export function ChannelsPage() {
               disabled={!form.name || !form.base_url || !form.api_key || createChannel.isPending}
             >
               {createChannel.isPending ? "Creating..." : "Create Channel"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Channel Dialog */}
+      <Dialog open={!!editingChannel} onOpenChange={(open) => { if (!open) setEditingChannel(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Channel</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Provider</Label>
+              <Select value={form.provider} onValueChange={(v) => { if (v) updateForm("provider", v); }}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="anthropic">Anthropic</SelectItem>
+                  <SelectItem value="openai">OpenAI</SelectItem>
+                  <SelectItem value="gemini">Gemini</SelectItem>
+                  <SelectItem value="bedrock">AWS Bedrock</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Name</Label>
+              <Input
+                value={form.name}
+                onChange={(e) => updateForm("name", e.target.value)}
+                placeholder="anthropic-primary"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Base URL</Label>
+              <Input
+                value={form.base_url}
+                onChange={(e) => updateForm("base_url", e.target.value)}
+                placeholder="https://api.anthropic.com"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>API Key (leave blank to keep current)</Label>
+              <Input
+                type="password"
+                value={form.api_key}
+                onChange={(e) => updateForm("api_key", e.target.value)}
+                placeholder="sk-..."
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Supported Models (comma-separated)</Label>
+              <Input
+                value={form.supported_models}
+                onChange={(e) => updateForm("supported_models", e.target.value)}
+                placeholder="claude-opus-4, claude-sonnet-4"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Test Model (optional)</Label>
+              <Input
+                value={form.test_model}
+                onChange={(e) => updateForm("test_model", e.target.value)}
+                placeholder="claude-haiku-4-5"
+              />
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label>Weight</Label>
+                <Input
+                  type="number"
+                  value={form.weight}
+                  onChange={(e) => updateForm("weight", e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Priority</Label>
+                <Input
+                  type="number"
+                  value={form.selection_priority}
+                  onChange={(e) => updateForm("selection_priority", e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Max Concurrent</Label>
+                <Input
+                  type="number"
+                  value={form.max_concurrent}
+                  onChange={(e) => updateForm("max_concurrent", e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setEditingChannel(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleEdit}
+              disabled={!form.name || !form.base_url || updateChannel.isPending}
+            >
+              {updateChannel.isPending ? "Saving..." : "Save Changes"}
             </Button>
           </DialogFooter>
         </DialogContent>
