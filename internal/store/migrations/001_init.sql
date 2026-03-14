@@ -167,6 +167,7 @@ CREATE TABLE IF NOT EXISTS requests (
     credits_consumed NUMERIC NOT NULL DEFAULT 0,
     latency_ms BIGINT NOT NULL DEFAULT 0,
     ttft_ms BIGINT NOT NULL DEFAULT 0,
+    client_ip TEXT NOT NULL DEFAULT '',
     error_message TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -233,6 +234,7 @@ CREATE TABLE IF NOT EXISTS orders (
     status TEXT NOT NULL DEFAULT 'pending',
     payment_ref TEXT NOT NULL DEFAULT '',
     payment_url TEXT NOT NULL DEFAULT '',
+    channel TEXT NOT NULL DEFAULT '',
     existing_subscription_id UUID REFERENCES subscriptions(id),
     metadata JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -245,21 +247,96 @@ CREATE INDEX IF NOT EXISTS idx_orders_payment_ref ON orders(payment_ref) WHERE p
 -- ============================================================
 -- Seed plans
 -- ============================================================
+-- Model credit rates formula: rate = API_price_per_MTok / 7.5
+--
+-- Claude models (cache_read free on subscription):
+--   claude-opus-4-6:           input=$5   → 0.667,  output=$25 → 3.333, cache_creation=0.667, cache_read=0
+--   claude-sonnet-4-6:         input=$3   → 0.4,    output=$15 → 2.0,   cache_creation=0.4,   cache_read=0
+--   claude-haiku-4-5:          input=$1   → 0.133,  output=$5  → 0.667, cache_creation=0.133, cache_read=0
+--
+-- OpenAI models (cache_read charged at API rate, cache_creation always 0):
+--   gpt-5.4:                   input=$2.50 → 0.333, output=$15   → 2.0,   cache_read=$0.25  → 0.033
+--   gpt-5.3-codex:             input=$1.75 → 0.233, output=$14   → 1.867, cache_read=$0.175 → 0.023
+--   gpt-5.2-codex:             input=$1.75 → 0.233, output=$14   → 1.867, cache_read=$0.175 → 0.023
+--   gpt-5.2:                   input=$1.75 → 0.233, output=$14   → 1.867, cache_read=$0.175 → 0.023
+--   gpt-5.1-codex-max:         input=$1.25 → 0.167, output=$10   → 1.333, cache_read=$0.125 → 0.017
+--   gpt-5.1-codex-mini:        input=$0.25 → 0.033, output=$2    → 0.267, cache_read=$0.025 → 0.003
+
 INSERT INTO plans (name, slug, display_name, description, tier_level, price_per_period, period_months, credit_rules, model_credit_rates)
 VALUES
     ('Free', 'free', 'Free', 'Default free tier with basic rate limits', 0, 0, 1,
      '[{"window":"5h","window_type":"sliding","max_credits":55000,"scope":"project"},{"window":"7d","window_type":"sliding","max_credits":500000,"scope":"project"}]',
-     '{"claude-opus-4-6":{"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},"claude-sonnet-4-6":{"input_rate":0.4,"output_rate":2.0,"cache_creation_rate":0.4,"cache_read_rate":0},"claude-haiku-4-5":{"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},"claude-haiku-4-5-20251001":{"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},"_default":{"input_rate":0.4,"output_rate":2.0,"cache_creation_rate":0.4,"cache_read_rate":0}}'),
+     '{
+        "claude-opus-4-6":          {"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},
+        "claude-sonnet-4-6":        {"input_rate":0.4,  "output_rate":2.0,  "cache_creation_rate":0.4,  "cache_read_rate":0},
+        "claude-haiku-4-5":         {"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},
+        "claude-haiku-4-5-20251001":{"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},
+        "gpt-5.4":                  {"input_rate":0.333,"output_rate":2.0,  "cache_creation_rate":0,"cache_read_rate":0.033},
+        "gpt-5.3-codex":            {"input_rate":0.233,"output_rate":1.867,"cache_creation_rate":0,"cache_read_rate":0.023},
+        "gpt-5.2-codex":            {"input_rate":0.233,"output_rate":1.867,"cache_creation_rate":0,"cache_read_rate":0.023},
+        "gpt-5.2":                  {"input_rate":0.233,"output_rate":1.867,"cache_creation_rate":0,"cache_read_rate":0.023},
+        "gpt-5.1-codex-max":        {"input_rate":0.167,"output_rate":1.333,"cache_creation_rate":0,"cache_read_rate":0.017},
+        "gpt-5.1-codex-mini":       {"input_rate":0.033,"output_rate":0.267,"cache_creation_rate":0,"cache_read_rate":0.003},
+        "_default":                 {"input_rate":0.4,  "output_rate":2.0,  "cache_creation_rate":0.4,  "cache_read_rate":0}
+      }'),
     ('Pro', 'pro', 'Pro', 'Same usage limits as Claude Pro', 100, 9999, 1,
      '[{"window":"5h","window_type":"sliding","max_credits":550000,"scope":"project"},{"window":"7d","window_type":"sliding","max_credits":5000000,"scope":"project"}]',
-     '{"claude-opus-4-6":{"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},"claude-sonnet-4-6":{"input_rate":0.4,"output_rate":2.0,"cache_creation_rate":0.4,"cache_read_rate":0},"claude-haiku-4-5":{"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},"claude-haiku-4-5-20251001":{"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},"_default":{"input_rate":0.4,"output_rate":2.0,"cache_creation_rate":0.4,"cache_read_rate":0}}'),
+     '{
+        "claude-opus-4-6":          {"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},
+        "claude-sonnet-4-6":        {"input_rate":0.4,  "output_rate":2.0,  "cache_creation_rate":0.4,  "cache_read_rate":0},
+        "claude-haiku-4-5":         {"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},
+        "claude-haiku-4-5-20251001":{"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},
+        "gpt-5.4":                  {"input_rate":0.333,"output_rate":2.0,  "cache_creation_rate":0,"cache_read_rate":0.033},
+        "gpt-5.3-codex":            {"input_rate":0.233,"output_rate":1.867,"cache_creation_rate":0,"cache_read_rate":0.023},
+        "gpt-5.2-codex":            {"input_rate":0.233,"output_rate":1.867,"cache_creation_rate":0,"cache_read_rate":0.023},
+        "gpt-5.2":                  {"input_rate":0.233,"output_rate":1.867,"cache_creation_rate":0,"cache_read_rate":0.023},
+        "gpt-5.1-codex-max":        {"input_rate":0.167,"output_rate":1.333,"cache_creation_rate":0,"cache_read_rate":0.017},
+        "gpt-5.1-codex-mini":       {"input_rate":0.033,"output_rate":0.267,"cache_creation_rate":0,"cache_read_rate":0.003},
+        "_default":                 {"input_rate":0.4,  "output_rate":2.0,  "cache_creation_rate":0.4,  "cache_read_rate":0}
+      }'),
     ('Max 2x', 'max_2x', 'Max 2x', '2x usage limits of Claude Pro', 200, 19999, 1,
      '[{"window":"5h","window_type":"sliding","max_credits":1100000,"scope":"project"},{"window":"7d","window_type":"sliding","max_credits":10000000,"scope":"project"}]',
-     '{"claude-opus-4-6":{"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},"claude-sonnet-4-6":{"input_rate":0.4,"output_rate":2.0,"cache_creation_rate":0.4,"cache_read_rate":0},"claude-haiku-4-5":{"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},"claude-haiku-4-5-20251001":{"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},"_default":{"input_rate":0.4,"output_rate":2.0,"cache_creation_rate":0.4,"cache_read_rate":0}}'),
+     '{
+        "claude-opus-4-6":          {"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},
+        "claude-sonnet-4-6":        {"input_rate":0.4,  "output_rate":2.0,  "cache_creation_rate":0.4,  "cache_read_rate":0},
+        "claude-haiku-4-5":         {"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},
+        "claude-haiku-4-5-20251001":{"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},
+        "gpt-5.4":                  {"input_rate":0.333,"output_rate":2.0,  "cache_creation_rate":0,"cache_read_rate":0.033},
+        "gpt-5.3-codex":            {"input_rate":0.233,"output_rate":1.867,"cache_creation_rate":0,"cache_read_rate":0.023},
+        "gpt-5.2-codex":            {"input_rate":0.233,"output_rate":1.867,"cache_creation_rate":0,"cache_read_rate":0.023},
+        "gpt-5.2":                  {"input_rate":0.233,"output_rate":1.867,"cache_creation_rate":0,"cache_read_rate":0.023},
+        "gpt-5.1-codex-max":        {"input_rate":0.167,"output_rate":1.333,"cache_creation_rate":0,"cache_read_rate":0.017},
+        "gpt-5.1-codex-mini":       {"input_rate":0.033,"output_rate":0.267,"cache_creation_rate":0,"cache_read_rate":0.003},
+        "_default":                 {"input_rate":0.4,  "output_rate":2.0,  "cache_creation_rate":0.4,  "cache_read_rate":0}
+      }'),
     ('Max 5x', 'max_5x', 'Max 5x', 'Same usage limits as Claude Max (5x)', 500, 49999, 1,
      '[{"window":"5h","window_type":"sliding","max_credits":3300000,"scope":"project"},{"window":"7d","window_type":"sliding","max_credits":41666700,"scope":"project"}]',
-     '{"claude-opus-4-6":{"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},"claude-sonnet-4-6":{"input_rate":0.4,"output_rate":2.0,"cache_creation_rate":0.4,"cache_read_rate":0},"claude-haiku-4-5":{"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},"claude-haiku-4-5-20251001":{"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},"_default":{"input_rate":0.4,"output_rate":2.0,"cache_creation_rate":0.4,"cache_read_rate":0}}'),
+     '{
+        "claude-opus-4-6":          {"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},
+        "claude-sonnet-4-6":        {"input_rate":0.4,  "output_rate":2.0,  "cache_creation_rate":0.4,  "cache_read_rate":0},
+        "claude-haiku-4-5":         {"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},
+        "claude-haiku-4-5-20251001":{"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},
+        "gpt-5.4":                  {"input_rate":0.333,"output_rate":2.0,  "cache_creation_rate":0,"cache_read_rate":0.033},
+        "gpt-5.3-codex":            {"input_rate":0.233,"output_rate":1.867,"cache_creation_rate":0,"cache_read_rate":0.023},
+        "gpt-5.2-codex":            {"input_rate":0.233,"output_rate":1.867,"cache_creation_rate":0,"cache_read_rate":0.023},
+        "gpt-5.2":                  {"input_rate":0.233,"output_rate":1.867,"cache_creation_rate":0,"cache_read_rate":0.023},
+        "gpt-5.1-codex-max":        {"input_rate":0.167,"output_rate":1.333,"cache_creation_rate":0,"cache_read_rate":0.017},
+        "gpt-5.1-codex-mini":       {"input_rate":0.033,"output_rate":0.267,"cache_creation_rate":0,"cache_read_rate":0.003},
+        "_default":                 {"input_rate":0.4,  "output_rate":2.0,  "cache_creation_rate":0.4,  "cache_read_rate":0}
+      }'),
     ('Max 20x', 'max_20x', 'Max 20x', 'Same usage limits as Claude Max (20x)', 2000, 99999, 1,
      '[{"window":"5h","window_type":"sliding","max_credits":11000000,"scope":"project"},{"window":"7d","window_type":"sliding","max_credits":83333300,"scope":"project"}]',
-     '{"claude-opus-4-6":{"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},"claude-sonnet-4-6":{"input_rate":0.4,"output_rate":2.0,"cache_creation_rate":0.4,"cache_read_rate":0},"claude-haiku-4-5":{"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},"claude-haiku-4-5-20251001":{"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},"_default":{"input_rate":0.4,"output_rate":2.0,"cache_creation_rate":0.4,"cache_read_rate":0}}')
+     '{
+        "claude-opus-4-6":          {"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},
+        "claude-sonnet-4-6":        {"input_rate":0.4,  "output_rate":2.0,  "cache_creation_rate":0.4,  "cache_read_rate":0},
+        "claude-haiku-4-5":         {"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},
+        "claude-haiku-4-5-20251001":{"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},
+        "gpt-5.4":                  {"input_rate":0.333,"output_rate":2.0,  "cache_creation_rate":0,"cache_read_rate":0.033},
+        "gpt-5.3-codex":            {"input_rate":0.233,"output_rate":1.867,"cache_creation_rate":0,"cache_read_rate":0.023},
+        "gpt-5.2-codex":            {"input_rate":0.233,"output_rate":1.867,"cache_creation_rate":0,"cache_read_rate":0.023},
+        "gpt-5.2":                  {"input_rate":0.233,"output_rate":1.867,"cache_creation_rate":0,"cache_read_rate":0.023},
+        "gpt-5.1-codex-max":        {"input_rate":0.167,"output_rate":1.333,"cache_creation_rate":0,"cache_read_rate":0.017},
+        "gpt-5.1-codex-mini":       {"input_rate":0.033,"output_rate":0.267,"cache_creation_rate":0,"cache_read_rate":0.003},
+        "_default":                 {"input_rate":0.4,  "output_rate":2.0,  "cache_creation_rate":0.4,  "cache_read_rate":0}
+      }')
 ON CONFLICT (slug) DO NOTHING;
