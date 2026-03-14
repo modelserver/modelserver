@@ -131,11 +131,11 @@ export function UsageGuideDialog({
             <Step n={2} title="Configure">
               <p className="text-xs text-muted-foreground">
                 Edit{" "}
-                <code className="rounded bg-muted px-1 py-0.5">~/.opencode/config.json</code> and
+                <code className="rounded bg-muted px-1 py-0.5">~/.config/opencode/opencode.json</code> and
                 add:
               </p>
               <CodeBlock
-                code={`{\n  "provider": {\n    "anthropic": {\n      "apiKey": "${apiKey}",\n      "baseURL": "https://code.ai.cs.ac.cn"\n    }\n  }\n}`}
+                code={`{\n  "$schema": "https://opencode.ai/config.json",\n  "provider": {\n    "anthropic": {\n      "options": {\n        "apiKey": "${apiKey}",\n        "baseURL": "https://code.ai.cs.ac.cn/v1"\n      }\n    },\n    "openai": {\n      "options": {\n        "apiKey": "${apiKey}",\n        "baseURL": "https://code.ai.cs.ac.cn/v1"\n      }\n    }\n  }\n}`}
               />
             </Step>
 
