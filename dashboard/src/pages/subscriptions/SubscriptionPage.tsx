@@ -184,7 +184,20 @@ export function SubscriptionPage() {
     setIsRenewal(false);
   }
 
+  function openPaymentDialog(order: Order) {
+    const channel: PaymentChannel = order.payment_url?.startsWith("weixin://") ? "wechat" : "alipay";
+    setPaymentResult({ order, channel });
+    setDialogStep("paying");
+    setUpgradeDialog(plans.find((p: Plan) => p.id === order.plan_id) ?? null);
+  }
+
   const orderColumns: Column<Order>[] = [
+    {
+      header: "Order ID",
+      accessor: (o) => (
+        <span className="font-mono text-xs">{o.id.slice(0, 8)}</span>
+      ),
+    },
     {
       header: "Date",
       accessor: (o) => formatDate(o.created_at),
@@ -212,8 +225,8 @@ export function SubscriptionPage() {
         const canCancel = o.status === "pending" || o.status === "paying";
         return (
           <div className="flex items-center gap-1 justify-end">
-            {o.payment_url && (
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => window.open(o.payment_url, "_blank")} title="Open payment link">
+            {o.status === "paying" && o.payment_url && (
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openPaymentDialog(o)} title="Open payment link">
                 <ExternalLink className="h-4 w-4" />
               </Button>
             )}
