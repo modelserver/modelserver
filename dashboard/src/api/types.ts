@@ -164,6 +164,7 @@ export interface Request {
   latency_ms: number;
   ttft_ms: number;
   error_message?: string;
+  client_ip?: string;
   created_at: string;
 }
 

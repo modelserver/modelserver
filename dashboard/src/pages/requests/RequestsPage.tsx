@@ -127,6 +127,14 @@ export function RequestsPage() {
       accessor: (r) => keyName(r.api_key_id),
     },
     {
+      header: "Client IP",
+      accessor: (r) => r.client_ip ? (
+        <span className="font-mono text-xs">{r.client_ip}</span>
+      ) : (
+        <span className="text-muted-foreground">-</span>
+      ),
+    },
+    {
       header: "Time",
       accessor: (r) => new Date(r.created_at).toLocaleString(),
     },
