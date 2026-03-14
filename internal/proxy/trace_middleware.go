@@ -97,9 +97,16 @@ func extractTraceID(r *http.Request, cfg config.TraceConfig) (string, string) {
 		return id, types.TraceSourceOpenCode
 	}
 
-	// 5. Codex extraction from Session_id header
+	// 5. Codex/OpenCode extraction from Session_id header.
+	// OpenCode's codex plugin also sends Session_id, but includes "opencode/"
+	// in the User-Agent. When requests pass through the OpenCode console proxy,
+	// X-Opencode-Session is stripped while Session_id survives, so we
+	// disambiguate here.
 	if cfg.CodexTraceEnabled {
 		if id := strings.TrimSpace(r.Header.Get(codexTraceHeader)); id != "" {
+			if strings.Contains(strings.ToLower(r.Header.Get("User-Agent")), "opencode/") {
+				return id, types.TraceSourceOpenCode
+			}
 			return id, types.TraceSourceCodex
 		}
 	}
