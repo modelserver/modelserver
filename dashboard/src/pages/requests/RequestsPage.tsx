@@ -8,7 +8,6 @@ import { StatusBadge } from "@/components/shared/StatusBadge";
 import { DateRangePicker } from "@/components/shared/DateRangePicker";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -16,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Pagination } from "@/components/shared/Pagination";
 import {
   Sheet,
   SheetContent,
@@ -23,7 +23,6 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import type { Request } from "@/api/types";
-import { ChevronLeft, ChevronRight } from "lucide-react";
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -219,32 +218,13 @@ export function RequestsPage() {
       </Card>
 
       {meta && meta.total > 0 && (
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>
-            Showing {(page - 1) * meta.per_page + 1}–
-            {Math.min(page * meta.per_page, meta.total)} of {meta.total}
-          </span>
-          <div className="flex gap-1">
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-8 w-8"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => p - 1)}
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-8 w-8"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
+        <Pagination
+          page={page}
+          totalPages={totalPages}
+          total={meta.total}
+          perPage={meta.per_page}
+          onPageChange={setPage}
+        />
       )}
 
       {/* Detail drawer */}
@@ -254,7 +234,7 @@ export function RequestsPage() {
             <SheetTitle>Request Details</SheetTitle>
           </SheetHeader>
           {selected && (
-            <div className="mt-4 space-y-4 text-sm">
+            <div className="space-y-4 px-4 pb-4 text-sm">
               <DetailRow label="ID" value={selected.id} />
               {selected.msg_id && (
                 <DetailRow label="Msg ID" value={selected.msg_id} />

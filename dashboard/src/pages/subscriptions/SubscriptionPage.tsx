@@ -20,7 +20,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, Zap, ExternalLink, XCircle, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { Pagination } from "@/components/shared/Pagination";
+import { Loader2, Zap, ExternalLink, XCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { QRCodeSVG } from "qrcode.react";
 
@@ -444,31 +445,14 @@ export function SubscriptionPage() {
                   emptyMessage="No orders yet"
                 />
                 {orderMeta && orderMeta.total > ORDER_PAGE_SIZE && (
-                  <div className="flex items-center justify-between border-t px-4 py-3">
-                    <span className="text-sm text-muted-foreground">
-                      {(orderPage - 1) * ORDER_PAGE_SIZE + 1}–
-                      {Math.min(orderPage * ORDER_PAGE_SIZE, orderMeta.total)} of {orderMeta.total}
-                    </span>
-                    <div className="flex gap-1">
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-8 w-8"
-                        disabled={orderPage <= 1}
-                        onClick={() => setOrderPage((p) => p - 1)}
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-8 w-8"
-                        disabled={orderPage >= totalPages}
-                        onClick={() => setOrderPage((p) => p + 1)}
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
-                    </div>
+                  <div className="border-t px-4 py-3">
+                    <Pagination
+                      page={orderPage}
+                      totalPages={totalPages}
+                      total={orderMeta.total}
+                      perPage={ORDER_PAGE_SIZE}
+                      onPageChange={setOrderPage}
+                    />
                   </div>
                 )}
               </>
