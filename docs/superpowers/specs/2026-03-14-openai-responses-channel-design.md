@@ -229,21 +229,66 @@ Only the type definitions from the `responses` sub-package are used (`github.com
 
 ## Credit Rate Configuration
 
-For OpenAI models, plan administrators configure `model_credit_rates` as:
+Credit rates are derived from the same formula used for Claude models: `credit_rate = API_price_per_MTok / 7.5`.
+
+For reference, Claude rates: Sonnet 4.6 input=$3→0.4, output=$15→2.0; Opus 4.6 input=$5→0.667, output=$25→3.333.
+
+### OpenAI Model Credit Rates
 
 ```json
 {
-  "gpt-5.2": {
-    "input_rate": 0.35,
-    "output_rate": 2.8,
+  "gpt-5.4": {
+    "input_rate": 0.333,
+    "output_rate": 2.0,
     "cache_creation_rate": 0,
-    "cache_read_rate": 0.035
+    "cache_read_rate": 0
+  },
+  "gpt-5.3-codex": {
+    "input_rate": 0.233,
+    "output_rate": 1.867,
+    "cache_creation_rate": 0,
+    "cache_read_rate": 0
+  },
+  "gpt-5.2": {
+    "input_rate": 0.233,
+    "output_rate": 1.867,
+    "cache_creation_rate": 0,
+    "cache_read_rate": 0
+  },
+  "gpt-5.2-codex": {
+    "input_rate": 0.233,
+    "output_rate": 1.867,
+    "cache_creation_rate": 0,
+    "cache_read_rate": 0
+  },
+  "gpt-5.1-codex-max": {
+    "input_rate": 0.167,
+    "output_rate": 1.333,
+    "cache_creation_rate": 0,
+    "cache_read_rate": 0
+  },
+  "gpt-5.1-codex-mini": {
+    "input_rate": 0.033,
+    "output_rate": 0.267,
+    "cache_creation_rate": 0,
+    "cache_read_rate": 0
   }
 }
 ```
 
-- `cache_creation_rate`: always 0 for OpenAI (no cache creation charge)
-- `cache_read_rate`: typically 1/10 of input_rate (OpenAI's 90% cache discount)
+### Pricing source (per 1M tokens)
+
+| Model | Input | Cached Input | Output | Source |
+|---|---|---|---|---|
+| gpt-5.4 | $2.50 | $0.25 | $15.00 | OpenAI API |
+| gpt-5.3-codex | $1.75 | $0.175 | $14.00 | OpenAI API |
+| gpt-5.2 / gpt-5.2-codex | $1.75 | $0.175 | $14.00 | OpenAI API |
+| gpt-5.1-codex-max | $1.25 | $0.125 | $10.00 | OpenAI API |
+| gpt-5.1-codex-mini | $0.25 | $0.025 | $2.00 | OpenAI API |
+
+Notes:
+- `cache_creation_rate`: always 0 for OpenAI (no cache creation charge; caching is automatic)
+- `cache_read_rate`: 0 on subscription plans (consistent with Claude models where cache reads are free)
 
 ## Testing Strategy
 
