@@ -47,6 +47,7 @@ export function ChannelsPage() {
     base_url: "",
     api_key: "",
     supported_models: "",
+    model_map: "",
     weight: "1",
     selection_priority: "0",
     max_concurrent: "10",
@@ -66,6 +67,22 @@ export function ChannelsPage() {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
+  function parseModelMap(text: string): Record<string, string> | undefined {
+    const entries = text.split(",").map((s) => s.trim()).filter(Boolean);
+    if (entries.length === 0) return undefined;
+    const map: Record<string, string> = {};
+    for (const entry of entries) {
+      const [from, to] = entry.split(":").map((s) => s.trim());
+      if (from && to) map[from] = to;
+    }
+    return Object.keys(map).length > 0 ? map : undefined;
+  }
+
+  function modelMapToText(map?: Record<string, string> | null): string {
+    if (!map) return "";
+    return Object.entries(map).map(([k, v]) => `${k}:${v}`).join(", ");
+  }
+
   async function handleCreate() {
     await createChannel.mutateAsync({
       provider: form.provider,
@@ -76,6 +93,7 @@ export function ChannelsPage() {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean),
+      model_map: parseModelMap(form.model_map),
       weight: Number(form.weight) || 1,
       selection_priority: Number(form.selection_priority) || 0,
       max_concurrent: Number(form.max_concurrent) || 10,
@@ -88,6 +106,7 @@ export function ChannelsPage() {
       base_url: "",
       api_key: "",
       supported_models: "",
+      model_map: "",
       weight: "1",
       selection_priority: "0",
       max_concurrent: "10",
@@ -102,6 +121,7 @@ export function ChannelsPage() {
       base_url: c.base_url,
       api_key: "",
       supported_models: c.supported_models?.join(", ") ?? "",
+      model_map: modelMapToText(c.model_map),
       weight: String(c.weight),
       selection_priority: String(c.selection_priority),
       max_concurrent: String(c.max_concurrent),
@@ -121,6 +141,7 @@ export function ChannelsPage() {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean),
+      model_map: parseModelMap(form.model_map) ?? {},
       weight: Number(form.weight) || 1,
       selection_priority: Number(form.selection_priority) || 0,
       max_concurrent: Number(form.max_concurrent) || 10,
@@ -170,6 +191,14 @@ export function ChannelsPage() {
     {
       header: "Models",
       accessor: (c) => c.supported_models?.join(", ") || "—",
+    },
+    {
+      header: "Mappings",
+      accessor: (c) => {
+        const count = c.model_map ? Object.keys(c.model_map).length : 0;
+        return count > 0 ? String(count) : "—";
+      },
+      className: "text-right",
     },
     {
       header: "Requests",
@@ -341,6 +370,14 @@ export function ChannelsPage() {
               />
             </div>
             <div className="space-y-2">
+              <Label>Model Mappings (from:to, comma-separated)</Label>
+              <Input
+                value={form.model_map}
+                onChange={(e) => updateForm("model_map", e.target.value)}
+                placeholder="claude-opus-4-6:global.anthropic.claude-opus-4-6-v1"
+              />
+            </div>
+            <div className="space-y-2">
               <Label>Test Model (optional, for connectivity test)</Label>
               <Input
                 value={form.test_model}
@@ -438,6 +475,14 @@ export function ChannelsPage() {
                 value={form.supported_models}
                 onChange={(e) => updateForm("supported_models", e.target.value)}
                 placeholder="claude-opus-4, claude-sonnet-4"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Model Mappings (from:to, comma-separated)</Label>
+              <Input
+                value={form.model_map}
+                onChange={(e) => updateForm("model_map", e.target.value)}
+                placeholder="claude-opus-4-6:global.anthropic.claude-opus-4-6-v1"
               />
             </div>
             <div className="space-y-2">

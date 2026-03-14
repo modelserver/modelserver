@@ -32,6 +32,7 @@ export function useCreateChannel() {
       base_url: string;
       api_key: string;
       supported_models: string[];
+      model_map?: Record<string, string>;
       weight?: number;
       selection_priority?: number;
       max_concurrent?: number;
@@ -53,6 +54,7 @@ export function useUpdateChannel() {
       base_url?: string;
       api_key?: string;
       supported_models?: string[];
+      model_map?: Record<string, string>;
       weight?: number;
       selection_priority?: number;
       status?: string;

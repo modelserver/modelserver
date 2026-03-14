@@ -107,6 +107,7 @@ export interface Channel {
   name: string;
   base_url: string;
   supported_models: string[];
+  model_map?: Record<string, string>;
   weight: number;
   selection_priority: number;
   status: "active" | "disabled";

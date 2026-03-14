@@ -18,6 +18,7 @@ import (
 	"github.com/modelserver/modelserver/internal/ratelimit"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
+	"github.com/tidwall/sjson"
 )
 
 // Handler handles proxied LLM API requests.
@@ -94,6 +95,17 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve model name via channel's model_map (e.g. for Bedrock naming).
+	actualModel := channel.ResolveModel(model)
+
+	// If the upstream model name differs and this is not Bedrock (which strips the
+	// model field entirely), rewrite the model in the request body.
+	if actualModel != model && channel.Provider != types.ProviderBedrock {
+		bodyBytes, _ = sjson.SetBytes(bodyBytes, "model", actualModel)
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		r.ContentLength = int64(len(bodyBytes))
+	}
+
 	// Transform request body for Bedrock provider.
 	if channel.Provider == types.ProviderBedrock {
 		betaValues := r.Header.Values("anthropic-beta")
@@ -149,7 +161,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	proxy := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			if channel.Provider == types.ProviderBedrock {
-				directorSetBedrockUpstream(req, channel.BaseURL, channelAPIKey, model, isStreaming)
+				directorSetBedrockUpstream(req, channel.BaseURL, channelAPIKey, actualModel, isStreaming)
 			} else {
 				directorSetUpstream(req, channel.BaseURL, channelAPIKey)
 			}
@@ -406,6 +418,14 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("no decrypted key for channel", "channel_id", channel.ID)
 		writeProxyError(w, http.StatusInternalServerError, "channel configuration error")
 		return
+	}
+
+	// Resolve model name via channel's model_map.
+	actualModel := channel.ResolveModel(model)
+	if actualModel != model {
+		bodyBytes, _ = sjson.SetBytes(bodyBytes, "model", actualModel)
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		r.ContentLength = int64(len(bodyBytes))
 	}
 
 	proxy := &httputil.ReverseProxy{

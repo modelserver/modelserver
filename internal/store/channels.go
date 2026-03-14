@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -9,26 +10,43 @@ import (
 	"github.com/modelserver/modelserver/internal/types"
 )
 
+// unmarshalModelMap decodes a JSONB column value into a model map.
+func unmarshalModelMap(data []byte) map[string]string {
+	if len(data) == 0 {
+		return nil
+	}
+	var m map[string]string
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil
+	}
+	return m
+}
+
 // CreateChannel inserts a new channel.
 func (s *Store) CreateChannel(c *types.Channel) error {
+	modelMapJSON, _ := json.Marshal(c.ModelMap)
+	if c.ModelMap == nil {
+		modelMapJSON = []byte("{}")
+	}
 	return s.pool.QueryRow(context.Background(), `
-		INSERT INTO channels (provider, name, base_url, api_key_encrypted, supported_models, weight, selection_priority, status, max_concurrent, test_model)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO channels (provider, name, base_url, api_key_encrypted, supported_models, model_map, weight, selection_priority, status, max_concurrent, test_model)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING id, created_at, updated_at`,
 		c.Provider, c.Name, c.BaseURL, c.APIKeyEncrypted,
-		c.SupportedModels, c.Weight, c.SelectionPriority, c.Status, c.MaxConcurrent, c.TestModel,
+		c.SupportedModels, modelMapJSON, c.Weight, c.SelectionPriority, c.Status, c.MaxConcurrent, c.TestModel,
 	).Scan(&c.ID, &c.CreatedAt, &c.UpdatedAt)
 }
 
 // GetChannelByID returns a channel by ID.
 func (s *Store) GetChannelByID(id string) (*types.Channel, error) {
 	c := &types.Channel{}
+	var modelMapRaw []byte
 	err := s.pool.QueryRow(context.Background(), `
-		SELECT id, provider, name, base_url, api_key_encrypted, supported_models,
+		SELECT id, provider, name, base_url, api_key_encrypted, supported_models, model_map,
 			weight, selection_priority, status, max_concurrent, test_model, created_at, updated_at
 		FROM channels WHERE id = $1`, id,
 	).Scan(&c.ID, &c.Provider, &c.Name, &c.BaseURL, &c.APIKeyEncrypted,
-		&c.SupportedModels, &c.Weight, &c.SelectionPriority, &c.Status,
+		&c.SupportedModels, &modelMapRaw, &c.Weight, &c.SelectionPriority, &c.Status,
 		&c.MaxConcurrent, &c.TestModel, &c.CreatedAt, &c.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
@@ -36,13 +54,14 @@ func (s *Store) GetChannelByID(id string) (*types.Channel, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get channel: %w", err)
 	}
+	c.ModelMap = unmarshalModelMap(modelMapRaw)
 	return c, nil
 }
 
 // ListChannels returns all channels (including encrypted API keys for decryption at load time).
 func (s *Store) ListChannels() ([]types.Channel, error) {
 	rows, err := s.pool.Query(context.Background(), `
-		SELECT id, provider, name, base_url, api_key_encrypted, supported_models,
+		SELECT id, provider, name, base_url, api_key_encrypted, supported_models, model_map,
 			weight, selection_priority, status, max_concurrent, test_model, created_at, updated_at
 		FROM channels ORDER BY selection_priority DESC, name ASC`)
 	if err != nil {
@@ -53,11 +72,13 @@ func (s *Store) ListChannels() ([]types.Channel, error) {
 	var channels []types.Channel
 	for rows.Next() {
 		var c types.Channel
+		var modelMapRaw []byte
 		if err := rows.Scan(&c.ID, &c.Provider, &c.Name, &c.BaseURL, &c.APIKeyEncrypted,
-			&c.SupportedModels, &c.Weight, &c.SelectionPriority, &c.Status,
+			&c.SupportedModels, &modelMapRaw, &c.Weight, &c.SelectionPriority, &c.Status,
 			&c.MaxConcurrent, &c.TestModel, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
+		c.ModelMap = unmarshalModelMap(modelMapRaw)
 		channels = append(channels, c)
 	}
 	if err := rows.Err(); err != nil {
@@ -69,7 +90,7 @@ func (s *Store) ListChannels() ([]types.Channel, error) {
 // ListActiveChannelsForModel returns active channels that support a given model.
 func (s *Store) ListActiveChannelsForModel(model string) ([]types.Channel, error) {
 	rows, err := s.pool.Query(context.Background(), `
-		SELECT id, provider, name, base_url, api_key_encrypted, supported_models,
+		SELECT id, provider, name, base_url, api_key_encrypted, supported_models, model_map,
 			weight, selection_priority, status, max_concurrent, test_model, created_at, updated_at
 		FROM channels
 		WHERE status = 'active' AND $1 = ANY(supported_models)
@@ -82,11 +103,13 @@ func (s *Store) ListActiveChannelsForModel(model string) ([]types.Channel, error
 	var channels []types.Channel
 	for rows.Next() {
 		var c types.Channel
+		var modelMapRaw []byte
 		if err := rows.Scan(&c.ID, &c.Provider, &c.Name, &c.BaseURL, &c.APIKeyEncrypted,
-			&c.SupportedModels, &c.Weight, &c.SelectionPriority, &c.Status,
+			&c.SupportedModels, &modelMapRaw, &c.Weight, &c.SelectionPriority, &c.Status,
 			&c.MaxConcurrent, &c.TestModel, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
+		c.ModelMap = unmarshalModelMap(modelMapRaw)
 		channels = append(channels, c)
 	}
 	if err := rows.Err(); err != nil {

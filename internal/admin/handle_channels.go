@@ -28,15 +28,16 @@ func handleListChannels(st *store.Store, _ []byte) http.HandlerFunc {
 func handleCreateChannel(st *store.Store, encKey []byte) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Provider        string   `json:"provider"`
-			Name            string   `json:"name"`
-			BaseURL         string   `json:"base_url"`
-			APIKey          string   `json:"api_key"`
-			SupportedModels []string `json:"supported_models"`
-			Weight          int      `json:"weight"`
-			Priority        int      `json:"selection_priority"`
-			MaxConcurrent   int      `json:"max_concurrent"`
-			TestModel       string   `json:"test_model"`
+			Provider        string            `json:"provider"`
+			Name            string            `json:"name"`
+			BaseURL         string            `json:"base_url"`
+			APIKey          string            `json:"api_key"`
+			SupportedModels []string          `json:"supported_models"`
+			ModelMap        map[string]string `json:"model_map"`
+			Weight          int               `json:"weight"`
+			Priority        int               `json:"selection_priority"`
+			MaxConcurrent   int               `json:"max_concurrent"`
+			TestModel       string            `json:"test_model"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
@@ -64,6 +65,7 @@ func handleCreateChannel(st *store.Store, encKey []byte) http.HandlerFunc {
 			BaseURL:           body.BaseURL,
 			APIKeyEncrypted:   encrypted,
 			SupportedModels:   body.SupportedModels,
+			ModelMap:          body.ModelMap,
 			Weight:            weight,
 			SelectionPriority: body.Priority,
 			Status:            types.ChannelStatusActive,
@@ -100,7 +102,7 @@ func handleUpdateChannel(st *store.Store, encKey []byte) http.HandlerFunc {
 		}
 
 		updates := make(map[string]interface{})
-		for _, field := range []string{"name", "base_url", "provider", "supported_models", "weight", "selection_priority", "status", "max_concurrent", "test_model"} {
+		for _, field := range []string{"name", "base_url", "provider", "supported_models", "model_map", "weight", "selection_priority", "status", "max_concurrent", "test_model"} {
 			if v, ok := body[field]; ok {
 				updates[field] = v
 			}
@@ -196,6 +198,9 @@ func handleTestChannel(st *store.Store, encKey []byte) http.HandlerFunc {
 		if testModel == "" {
 			testModel = "claude-haiku-4-5"
 		}
+		// Resolve the test model through model_map so the upstream receives
+		// the correct provider-specific model name.
+		upstreamTestModel := ch.ResolveModel(testModel)
 
 		baseURL := ch.BaseURL
 		if baseURL == "" {
@@ -209,12 +214,12 @@ func handleTestChannel(st *store.Store, encKey []byte) http.HandlerFunc {
 		case types.ProviderOpenAI:
 			endpoint = baseURL + "/v1/chat/completions"
 			reqBody, _ = json.Marshal(map[string]interface{}{
-				"model":      testModel,
+				"model":      upstreamTestModel,
 				"max_tokens": 10,
 				"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
 			})
 		case types.ProviderBedrock:
-			endpoint = baseURL + "/model/" + testModel + "/invoke"
+			endpoint = baseURL + "/model/" + upstreamTestModel + "/invoke"
 			reqBody, _ = json.Marshal(map[string]interface{}{
 				"anthropic_version": "bedrock-2023-05-31",
 				"max_tokens":        10,
@@ -223,7 +228,7 @@ func handleTestChannel(st *store.Store, encKey []byte) http.HandlerFunc {
 		default: // anthropic, gemini, etc.
 			endpoint = baseURL + "/v1/messages"
 			reqBody, _ = json.Marshal(map[string]interface{}{
-				"model":      testModel,
+				"model":      upstreamTestModel,
 				"max_tokens": 10,
 				"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
 			})

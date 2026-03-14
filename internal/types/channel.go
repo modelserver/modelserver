@@ -18,19 +18,32 @@ const (
 
 // Channel represents an upstream AI provider endpoint that the proxy routes requests to.
 type Channel struct {
-	ID                string    `json:"id"`
-	Provider          string    `json:"provider"`
-	Name              string    `json:"name"`
-	BaseURL           string    `json:"base_url"`
-	APIKeyEncrypted   []byte    `json:"-"`
-	SupportedModels   []string  `json:"supported_models"`
-	Weight            int       `json:"weight"`
-	SelectionPriority int       `json:"selection_priority"`
-	Status            string    `json:"status"`
-	MaxConcurrent     int       `json:"max_concurrent"`
-	TestModel         string    `json:"test_model,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ID                string            `json:"id"`
+	Provider          string            `json:"provider"`
+	Name              string            `json:"name"`
+	BaseURL           string            `json:"base_url"`
+	APIKeyEncrypted   []byte            `json:"-"`
+	SupportedModels   []string          `json:"supported_models"`
+	ModelMap          map[string]string `json:"model_map"`
+	Weight            int               `json:"weight"`
+	SelectionPriority int               `json:"selection_priority"`
+	Status            string            `json:"status"`
+	MaxConcurrent     int               `json:"max_concurrent"`
+	TestModel         string            `json:"test_model,omitempty"`
+	CreatedAt         time.Time         `json:"created_at"`
+	UpdatedAt         time.Time         `json:"updated_at"`
+}
+
+// ResolveModel returns the upstream model name for the given request model.
+// If a mapping exists in ModelMap, the mapped value is returned; otherwise
+// the original model name is returned unchanged.
+func (c *Channel) ResolveModel(requestModel string) string {
+	if c.ModelMap != nil {
+		if mapped, ok := c.ModelMap[requestModel]; ok {
+			return mapped
+		}
+	}
+	return requestModel
 }
 
 // ChannelRoute maps a model name pattern to specific channels.

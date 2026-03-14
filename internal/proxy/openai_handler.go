@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/modelserver/modelserver/internal/types"
+	"github.com/tidwall/sjson"
 )
 
 // HandleResponses proxies OpenAI /v1/responses requests.
@@ -68,6 +69,14 @@ func (h *Handler) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("no decrypted key for channel", "channel_id", channel.ID)
 		writeProxyError(w, http.StatusInternalServerError, "channel configuration error")
 		return
+	}
+
+	// Resolve model name via channel's model_map.
+	actualModel := channel.ResolveModel(model)
+	if actualModel != model {
+		bodyBytes, _ = sjson.SetBytes(bodyBytes, "model", actualModel)
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		r.ContentLength = int64(len(bodyBytes))
 	}
 
 	policy := PolicyFromContext(r.Context())
