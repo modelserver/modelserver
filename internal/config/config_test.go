@@ -34,9 +34,6 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Trace.TraceHeader != "X-Trace-Id" {
 		t.Errorf("Trace.TraceHeader = %q, want %q", cfg.Trace.TraceHeader, "X-Trace-Id")
 	}
-	if cfg.Trace.ThreadHeader != "X-Thread-Id" {
-		t.Errorf("Trace.ThreadHeader = %q, want %q", cfg.Trace.ThreadHeader, "X-Thread-Id")
-	}
 	if cfg.Collector.BatchSize != 100 {
 		t.Errorf("Collector.BatchSize = %d, want 100", cfg.Collector.BatchSize)
 	}
@@ -83,7 +80,6 @@ encryption:
   key: "my-enc-key"
 trace:
   trace_header: "X-Custom-Trace"
-  thread_header: "X-Custom-Thread"
 collector:
   batch_size: 50
   flush_interval: 500ms
@@ -146,9 +142,6 @@ cors:
 	}
 	if cfg.Trace.TraceHeader != "X-Custom-Trace" {
 		t.Errorf("Trace.TraceHeader = %q, want %q", cfg.Trace.TraceHeader, "X-Custom-Trace")
-	}
-	if cfg.Trace.ThreadHeader != "X-Custom-Thread" {
-		t.Errorf("Trace.ThreadHeader = %q, want %q", cfg.Trace.ThreadHeader, "X-Custom-Thread")
 	}
 	if cfg.Collector.BatchSize != 50 {
 		t.Errorf("Collector.BatchSize = %d, want 50", cfg.Collector.BatchSize)
@@ -334,7 +327,6 @@ func TestTraceConfigYAML(t *testing.T) {
 	yaml := []byte(`
 trace:
   trace_header: "X-Custom-Trace"
-  thread_header: "X-Custom-Thread"
   extra_trace_headers:
     - "X-Request-Id"
     - "X-Correlation-Id"
@@ -352,9 +344,6 @@ trace:
 
 	if cfg.Trace.TraceHeader != "X-Custom-Trace" {
 		t.Errorf("Trace.TraceHeader = %q, want %q", cfg.Trace.TraceHeader, "X-Custom-Trace")
-	}
-	if cfg.Trace.ThreadHeader != "X-Custom-Thread" {
-		t.Errorf("Trace.ThreadHeader = %q, want %q", cfg.Trace.ThreadHeader, "X-Custom-Thread")
 	}
 	if len(cfg.Trace.ExtraTraceHeaders) != 2 {
 		t.Fatalf("Trace.ExtraTraceHeaders len = %d, want 2", len(cfg.Trace.ExtraTraceHeaders))

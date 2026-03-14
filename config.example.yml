@@ -49,8 +49,6 @@ encryption:
 trace:
   # HTTP header name used to propagate a trace identifier across services.
   trace_header: "X-Trace-Id"
-  # HTTP header name used to group related requests into a thread.
-  thread_header: "X-Thread-Id"
 
 collector:
   # Number of events per flush batch.

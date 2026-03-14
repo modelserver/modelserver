@@ -16,7 +16,6 @@ import (
 
 const (
 	ctxTraceID     contextKey = "trace_id"
-	ctxThreadID    contextKey = "thread_id"
 	ctxTraceSource contextKey = "trace_source"
 
 	codexTraceHeader = "Session_id"
@@ -36,14 +35,6 @@ func TraceIDFromContext(ctx context.Context) string {
 	return ""
 }
 
-// ThreadIDFromContext returns the thread ID from the request context.
-func ThreadIDFromContext(ctx context.Context) string {
-	if id, ok := ctx.Value(ctxThreadID).(string); ok {
-		return id
-	}
-	return ""
-}
-
 // TraceSourceFromContext returns the trace source from the request context.
 func TraceSourceFromContext(ctx context.Context) string {
 	if s, ok := ctx.Value(ctxTraceSource).(string); ok {
@@ -52,7 +43,7 @@ func TraceSourceFromContext(ctx context.Context) string {
 	return ""
 }
 
-// TraceMiddleware extracts trace and thread IDs from multiple sources.
+// TraceMiddleware extracts trace IDs from multiple sources.
 // If no trace ID is found from any source, no trace context is set (no auto-generation).
 func TraceMiddleware(traceCfg config.TraceConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -68,15 +59,10 @@ func TraceMiddleware(traceCfg config.TraceConfig) func(http.Handler) http.Handle
 				}
 			}
 
-			threadID := r.Header.Get(traceCfg.ThreadHeader)
-
 			ctx := r.Context()
 			if traceID != "" {
 				ctx = context.WithValue(ctx, ctxTraceID, traceID)
 				ctx = context.WithValue(ctx, ctxTraceSource, source)
-			}
-			if threadID != "" {
-				ctx = context.WithValue(ctx, ctxThreadID, threadID)
 			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

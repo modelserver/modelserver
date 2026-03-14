@@ -290,15 +290,7 @@ export interface UsageByKey {
 export interface Trace {
   id: string;
   project_id: string;
-  thread_id?: string;
   source: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Thread {
-  id: string;
-  project_id: string;
   created_at: string;
   updated_at: string;
 }

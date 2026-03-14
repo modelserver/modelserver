@@ -72,7 +72,6 @@ func (h *Handler) HandleResponses(w http.ResponseWriter, r *http.Request) {
 
 	policy := PolicyFromContext(r.Context())
 	traceID := TraceIDFromContext(r.Context())
-	threadID := ThreadIDFromContext(r.Context())
 
 	logger := h.logger.With(
 		"project_id", project.ID,
@@ -87,7 +86,7 @@ func (h *Handler) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	// since requests.trace_id has a foreign key constraint on traces.id.
 	if traceID != "" {
 		source := TraceSourceFromContext(r.Context())
-		if err := h.store.EnsureTrace(project.ID, traceID, threadID, source); err != nil {
+		if err := h.store.EnsureTrace(project.ID, traceID, source); err != nil {
 			logger.Warn("failed to ensure trace", "error", err)
 		}
 	}

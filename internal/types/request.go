@@ -47,16 +47,7 @@ type Request struct {
 type Trace struct {
 	ID        string    `json:"id"`
 	ProjectID string    `json:"project_id"`
-	ThreadID  string    `json:"thread_id,omitempty"`
 	Source    string    `json:"source"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// Thread groups related requests under a conversational thread identifier.
-type Thread struct {
-	ID        string    `json:"id"`
-	ProjectID string    `json:"project_id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

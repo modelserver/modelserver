@@ -23,7 +23,7 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
-const traceHeaders = ["Trace ID", "Source", "Thread", "Created", "Updated", ""];
+const traceHeaders = ["Trace ID", "Source", "Created", "Updated", ""];
 
 export function TracesPage() {
   const projectId = useCurrentProject();
@@ -72,13 +72,6 @@ export function TracesPage() {
                       </TableCell>
                       <TableCell>
                         <StatusBadge status={t.source} />
-                      </TableCell>
-                      <TableCell>
-                        {t.thread_id ? (
-                          <span className="font-mono text-xs">{t.thread_id.slice(0, 8)}...</span>
-                        ) : (
-                          <span className="text-muted-foreground">-</span>
-                        )}
                       </TableCell>
                       <TableCell>{new Date(t.created_at).toLocaleString()}</TableCell>
                       <TableCell>{new Date(t.updated_at).toLocaleString()}</TableCell>
@@ -182,9 +175,6 @@ function TraceDetail({ projectId, trace }: { projectId: string; trace: Trace }) 
       <div className="grid grid-cols-2 gap-x-8 gap-y-2">
         <DetailRow label="Trace ID" value={trace.id} />
         <DetailRow label="Source" value={trace.source} />
-        {trace.thread_id && (
-          <DetailRow label="Thread ID" value={trace.thread_id} />
-        )}
         <DetailRow label="Created" value={new Date(trace.created_at).toLocaleString()} />
         <DetailRow label="Updated" value={new Date(trace.updated_at).toLocaleString()} />
       </div>

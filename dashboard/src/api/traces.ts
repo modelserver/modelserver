@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./client";
-import type { ListResponse, DataResponse, Trace, Thread, Request } from "./types";
+import type { ListResponse, DataResponse, Trace, Request } from "./types";
 
 export function useTraces(projectId: string, page = 1, perPage = 20) {
   return useQuery({
@@ -28,15 +28,5 @@ export function useTraceRequests(projectId: string, traceId: string) {
         `/api/v1/projects/${projectId}/traces/${traceId}/requests`,
       ),
     enabled: !!traceId,
-  });
-}
-
-export function useThreads(projectId: string, page = 1, perPage = 20) {
-  return useQuery({
-    queryKey: ["threads", projectId, page],
-    queryFn: () =>
-      api.get<ListResponse<Thread>>(
-        `/api/v1/projects/${projectId}/threads?page=${page}&per_page=${perPage}`,
-      ),
   });
 }

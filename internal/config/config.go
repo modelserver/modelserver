@@ -71,7 +71,6 @@ type EncryptionConfig struct {
 // TraceConfig holds HTTP header names used for distributed tracing.
 type TraceConfig struct {
 	TraceHeader            string        `yaml:"trace_header"              mapstructure:"trace_header"`
-	ThreadHeader           string        `yaml:"thread_header"             mapstructure:"thread_header"`
 	ExtraTraceHeaders      []string      `yaml:"extra_trace_headers"       mapstructure:"extra_trace_headers"`
 	ExtraTraceBodyFields   []string      `yaml:"extra_trace_body_fields"   mapstructure:"extra_trace_body_fields"`
 	ClaudeCodeTraceEnabled bool          `yaml:"claude_code_trace_enabled" mapstructure:"claude_code_trace_enabled"`
@@ -143,7 +142,6 @@ func setDefaults(v *viper.Viper) {
 
 	// Trace
 	v.SetDefault("trace.trace_header", "X-Trace-Id")
-	v.SetDefault("trace.thread_header", "X-Thread-Id")
 	_ = v.BindEnv("trace.extra_trace_headers")
 	_ = v.BindEnv("trace.extra_trace_body_fields")
 	v.SetDefault("trace.claude_code_trace_enabled", true)
