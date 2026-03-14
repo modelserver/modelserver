@@ -174,11 +174,8 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 				}
 				if pendingReq.ID != "" {
 					go func() {
-						rowsAffected, err := h.store.CompleteRequest(pendingReq.ID, &req)
-						if err != nil {
-							logger.Error("failed to complete request (error path)", "request_id", pendingReq.ID, "error", err)
-						} else {
-							logger.Info("error path: CompleteRequest done", "request_id", pendingReq.ID, "rows_affected", rowsAffected, "status", status)
+						if err := h.store.CompleteRequest(pendingReq.ID, &req); err != nil {
+							logger.Error("failed to complete request", "request_id", pendingReq.ID, "error", err)
 						}
 					}()
 				} else {
@@ -198,7 +195,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		},
 		FlushInterval: -1,
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			logger.Error("proxy error", "error", err, "request_id", pendingReq.ID)
+			logger.Error("proxy error", "error", err)
 			if pendingReq.ID != "" {
 				duration := time.Since(startTime).Milliseconds()
 				req := types.Request{
@@ -208,11 +205,8 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 					ClientIP:     clientIP,
 				}
 				go func() {
-					rowsAffected, dbErr := h.store.CompleteRequest(pendingReq.ID, &req)
-					if dbErr != nil {
-						logger.Error("failed to complete request (proxy error path)", "request_id", pendingReq.ID, "error", dbErr)
-					} else {
-						logger.Info("proxy error path: CompleteRequest done", "request_id", pendingReq.ID, "rows_affected", rowsAffected)
+					if err := h.store.CompleteRequest(pendingReq.ID, &req); err != nil {
+						logger.Error("failed to complete request", "request_id", pendingReq.ID, "error", err)
 					}
 				}()
 			}
@@ -269,16 +263,11 @@ func (h *Handler) interceptNonStreaming(resp *http.Response, requestID string, p
 	}
 	if requestID != "" {
 		go func() {
-			logger.Info("non-streaming: calling CompleteRequest", "request_id", requestID, "status", req.Status)
-			rowsAffected, err := h.store.CompleteRequest(requestID, &req)
-			if err != nil {
-				logger.Error("failed to complete request (non-streaming)", "request_id", requestID, "error", err)
-			} else {
-				logger.Info("non-streaming: CompleteRequest done", "request_id", requestID, "rows_affected", rowsAffected)
+			if err := h.store.CompleteRequest(requestID, &req); err != nil {
+				logger.Error("failed to complete request", "request_id", requestID, "error", err)
 			}
 		}()
 	} else {
-		logger.Info("non-streaming: no request_id, using collector", "status", req.Status)
 		h.collector.Record(req)
 	}
 
@@ -307,8 +296,7 @@ func (h *Handler) interceptNonStreaming(resp *http.Response, requestID string, p
 }
 
 func (h *Handler) interceptStreaming(resp *http.Response, requestID string, project *types.Project, apiKey *types.APIKey, channel *types.Channel, model, traceID string, policy *types.RateLimitPolicy, clientIP string, startTime time.Time, logger *slog.Logger) error {
-	logger.Info("interceptStreaming: setting up stream interceptor", "request_id", requestID, "model", model)
-	resp.Body = newStreamInterceptor(resp.Body, startTime, logger, func(parsedModel, msgID string, usage anthropic.Usage, ttft int64) {
+	resp.Body = newStreamInterceptor(resp.Body, startTime, func(parsedModel, msgID string, usage anthropic.Usage, ttft int64) {
 		if parsedModel != "" {
 			model = parsedModel
 		}
@@ -340,16 +328,11 @@ func (h *Handler) interceptStreaming(resp *http.Response, requestID string, proj
 		}
 		if requestID != "" {
 			go func() {
-				logger.Info("streaming: calling CompleteRequest", "request_id", requestID, "status", req.Status)
-				rowsAffected, err := h.store.CompleteRequest(requestID, &req)
-				if err != nil {
+				if err := h.store.CompleteRequest(requestID, &req); err != nil {
 					logger.Error("failed to complete request", "request_id", requestID, "error", err)
-				} else {
-					logger.Info("streaming: CompleteRequest done", "request_id", requestID, "rows_affected", rowsAffected)
 				}
 			}()
 		} else {
-			logger.Info("streaming: no request_id, using collector", "status", req.Status)
 			h.collector.Record(req)
 		}
 

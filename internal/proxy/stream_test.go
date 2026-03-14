@@ -33,7 +33,6 @@ func TestStreamInterceptor(t *testing.T) {
 	interceptor := newStreamInterceptor(
 		io.NopCloser(strings.NewReader(sseData)),
 		time.Now(),
-		nil,
 		func(model, msgID string, usage anthropic.Usage, ttft int64) {
 			gotModel = model
 			gotMsgID = msgID

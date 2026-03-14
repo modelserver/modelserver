@@ -3,7 +3,6 @@ package proxy
 import (
 	"bytes"
 	"io"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -23,18 +22,13 @@ type streamInterceptor struct {
 	gotFirst   bool
 	onComplete func(model, msgID string, usage anthropic.Usage, ttft int64)
 	once       sync.Once
-	logger     *slog.Logger
 }
 
-func newStreamInterceptor(inner io.ReadCloser, startTime time.Time, logger *slog.Logger, onComplete func(string, string, anthropic.Usage, int64)) *streamInterceptor {
-	if logger == nil {
-		logger = slog.Default()
-	}
+func newStreamInterceptor(inner io.ReadCloser, startTime time.Time, onComplete func(string, string, anthropic.Usage, int64)) *streamInterceptor {
 	return &streamInterceptor{
 		inner:      inner,
 		startTime:  startTime,
 		onComplete: onComplete,
-		logger:     logger,
 	}
 }
 
@@ -45,17 +39,13 @@ func (si *streamInterceptor) Read(p []byte) (int, error) {
 		si.processLines()
 	}
 	if err == io.EOF {
-		si.logger.Debug("stream interceptor: EOF received", "model", si.model, "msgID", si.msgID)
 		si.flushRemaining()
 		si.finish()
-	} else if err != nil {
-		si.logger.Warn("stream interceptor: read error", "error", err, "model", si.model)
 	}
 	return n, err
 }
 
 func (si *streamInterceptor) Close() error {
-	si.logger.Debug("stream interceptor: Close() called", "model", si.model, "msgID", si.msgID)
 	si.flushRemaining()
 	si.finish()
 	return si.inner.Close()
@@ -116,25 +106,8 @@ func (si *streamInterceptor) parseLine(line []byte) {
 
 func (si *streamInterceptor) finish() {
 	si.once.Do(func() {
-		if si.onComplete == nil {
-			si.logger.Warn("stream interceptor: finish called but onComplete is nil")
-			return
+		if si.onComplete != nil && si.model != "" {
+			si.onComplete(si.model, si.msgID, si.usage, si.ttft)
 		}
-		if si.model == "" {
-			si.logger.Error("stream interceptor: finish called but model is empty, skipping onComplete callback",
-				"msgID", si.msgID,
-				"inputTokens", si.usage.InputTokens,
-				"outputTokens", si.usage.OutputTokens,
-			)
-			return
-		}
-		si.logger.Info("stream interceptor: calling onComplete",
-			"model", si.model,
-			"msgID", si.msgID,
-			"inputTokens", si.usage.InputTokens,
-			"outputTokens", si.usage.OutputTokens,
-			"ttft", si.ttft,
-		)
-		si.onComplete(si.model, si.msgID, si.usage, si.ttft)
 	})
 }

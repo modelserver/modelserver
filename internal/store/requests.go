@@ -24,9 +24,8 @@ func (s *Store) CreateRequest(r *types.Request) error {
 }
 
 // CompleteRequest updates a pending request row with final data.
-// Returns the number of rows affected and any error.
-func (s *Store) CompleteRequest(id string, r *types.Request) (int64, error) {
-	ct, err := s.pool.Exec(context.Background(), `
+func (s *Store) CompleteRequest(id string, r *types.Request) error {
+	_, err := s.pool.Exec(context.Background(), `
 		UPDATE requests
 		SET status = $1, msg_id = $2, input_tokens = $3, output_tokens = $4,
 			cache_creation_tokens = $5, cache_read_tokens = $6, credits_consumed = $7,
@@ -36,10 +35,7 @@ func (s *Store) CompleteRequest(id string, r *types.Request) (int64, error) {
 		r.CacheCreationTokens, r.CacheReadTokens, r.CreditsConsumed,
 		r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP, id,
 	)
-	if err != nil {
-		return 0, err
-	}
-	return ct.RowsAffected(), nil
+	return err
 }
 
 // BatchCreateRequests inserts multiple request logs efficiently.
