@@ -151,6 +151,85 @@ func buildRequestFilters(projectID string, f RequestFilters) (string, []interfac
 	return where, args, n
 }
 
+// ListAllRequests returns request logs across all projects with pagination and filters (admin).
+func (s *Store) ListAllRequests(p types.PaginationParams, filters RequestFilters) ([]types.Request, int, error) {
+	ctx := context.Background()
+	where, args, argN := buildGlobalRequestFilters(filters)
+
+	var total int
+	if err := s.pool.QueryRow(ctx, fmt.Sprintf("SELECT COUNT(*) FROM requests %s", where), args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	args = append(args, p.Limit(), p.Offset())
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
+		SELECT id, project_id, api_key_id, channel_id, COALESCE(trace_id::text, ''), COALESCE(msg_id, ''),
+			provider, model, streaming, status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+			credits_consumed, latency_ms, ttft_ms, COALESCE(error_message, ''), client_ip, created_at
+		FROM requests %s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
+		where, sanitizeSort(p.Sort, "created_at"), sanitizeOrder(p.Order), argN, argN+1),
+		args...,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var requests []types.Request
+	for rows.Next() {
+		var r types.Request
+		if err := rows.Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.ChannelID, &r.TraceID, &r.MsgID,
+			&r.Provider, &r.Model, &r.Streaming, &r.Status,
+			&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
+			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		requests = append(requests, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return requests, total, nil
+}
+
+func buildGlobalRequestFilters(f RequestFilters) (string, []interface{}, int) {
+	var conditions []string
+	var args []interface{}
+	n := 1
+
+	if f.Model != "" {
+		conditions = append(conditions, fmt.Sprintf("model = $%d", n))
+		args = append(args, f.Model)
+		n++
+	}
+	if f.Status != "" {
+		conditions = append(conditions, fmt.Sprintf("status = $%d", n))
+		args = append(args, f.Status)
+		n++
+	}
+	if f.APIKeyID != "" {
+		conditions = append(conditions, fmt.Sprintf("api_key_id = $%d", n))
+		args = append(args, f.APIKeyID)
+		n++
+	}
+	if !f.Since.IsZero() {
+		conditions = append(conditions, fmt.Sprintf("created_at >= $%d", n))
+		args = append(args, f.Since)
+		n++
+	}
+	if !f.Until.IsZero() {
+		conditions = append(conditions, fmt.Sprintf("created_at <= $%d", n))
+		args = append(args, f.Until)
+		n++
+	}
+
+	where := ""
+	if len(conditions) > 0 {
+		where = "WHERE " + joinStrings(conditions, " AND ")
+	}
+	return where, args, n
+}
+
 // ListRequestsByTraceID returns all request logs associated with a trace ID.
 func (s *Store) ListRequestsByTraceID(traceID string) ([]types.Request, error) {
 	rows, err := s.pool.Query(context.Background(), `

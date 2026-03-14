@@ -39,6 +39,35 @@ func handleListRequests(st *store.Store) http.HandlerFunc {
 	}
 }
 
+func handleListAllRequests(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p := parsePagination(r)
+		q := r.URL.Query()
+
+		filters := store.RequestFilters{
+			Model:  q.Get("model"),
+			Status: q.Get("status"),
+		}
+		if since := q.Get("since"); since != "" {
+			if t, err := time.Parse(time.RFC3339, since); err == nil {
+				filters.Since = t
+			}
+		}
+		if until := q.Get("until"); until != "" {
+			if t, err := time.Parse(time.RFC3339, until); err == nil {
+				filters.Until = t
+			}
+		}
+
+		requests, total, err := st.ListAllRequests(p, filters)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to list requests")
+			return
+		}
+		writeList(w, requests, total, p.Page, p.Limit())
+	}
+}
+
 func handleGetUsage(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "projectID")

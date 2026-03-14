@@ -47,6 +47,9 @@ import { PlansPage } from "@/pages/admin/PlansPage";
 // Admin Routes
 import { RoutesPage } from "@/pages/admin/RoutesPage";
 
+// Admin Requests
+import { AdminRequestsPage } from "@/pages/admin/RequestsPage";
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -86,6 +89,7 @@ export function App() {
                 <Route path="admin/projects" element={<AdminProjectsPage />} />
                 <Route path="admin/plans" element={<PlansPage />} />
                 <Route path="admin/channels" element={<ChannelsPage />} />
+                <Route path="admin/requests" element={<AdminRequestsPage />} />
                 <Route path="admin/routes" element={<RoutesPage />} />
               </Route>
             </Routes>

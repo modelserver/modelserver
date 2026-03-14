@@ -132,6 +132,9 @@ export function Sidebar() {
             <SidebarLink to="/admin/plans" icon={Coins}>
               Plans
             </SidebarLink>
+            <SidebarLink to="/admin/requests" icon={FileText}>
+              Requests
+            </SidebarLink>
             <SidebarLink to="/admin/channels" icon={Radio}>
               Channels
             </SidebarLink>
