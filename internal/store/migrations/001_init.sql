@@ -253,7 +253,7 @@ VALUES
     ('Pro', 'pro', 'Pro', 'Same usage limits as Claude Pro', 100, 9999, 1,
      '[{"window":"5h","window_type":"sliding","max_credits":550000,"scope":"project"},{"window":"7d","window_type":"sliding","max_credits":5000000,"scope":"project"}]',
      '{"claude-opus-4-6":{"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},"claude-sonnet-4-6":{"input_rate":0.4,"output_rate":2.0,"cache_creation_rate":0.4,"cache_read_rate":0},"claude-haiku-4-5":{"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},"claude-haiku-4-5-20251001":{"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},"_default":{"input_rate":0.4,"output_rate":2.0,"cache_creation_rate":0.4,"cache_read_rate":0}}'),
-    ('Max 2x', 'max_2x', 'Max 2x', '', 200, 19999, 1,
+    ('Max 2x', 'max_2x', 'Max 2x', '2x usage limits of Claude Pro', 200, 19999, 1,
      '[{"window":"5h","window_type":"sliding","max_credits":1100000,"scope":"project"},{"window":"7d","window_type":"sliding","max_credits":10000000,"scope":"project"}]',
      '{"claude-opus-4-6":{"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},"claude-sonnet-4-6":{"input_rate":0.4,"output_rate":2.0,"cache_creation_rate":0.4,"cache_read_rate":0},"claude-haiku-4-5":{"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},"claude-haiku-4-5-20251001":{"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},"_default":{"input_rate":0.4,"output_rate":2.0,"cache_creation_rate":0.4,"cache_read_rate":0}}'),
     ('Max 5x', 'max_5x', 'Max 5x', 'Same usage limits as Claude Max (5x)', 500, 49999, 1,
