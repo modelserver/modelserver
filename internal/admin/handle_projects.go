@@ -15,15 +15,20 @@ func handleListProjects(st *store.Store) http.HandlerFunc {
 		user := UserFromContext(r.Context())
 		p := parsePagination(r)
 
-		var projects []types.Project
-		var total int
-		var err error
-
-		if user.IsSuperadmin {
-			projects, total, err = st.ListAllProjects(p)
-		} else {
-			projects, total, err = st.ListUserProjects(user.ID, p)
+		projects, total, err := st.ListUserProjects(user.ID, p)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to list projects")
+			return
 		}
+		writeList(w, projects, total, p.Page, p.Limit())
+	}
+}
+
+func handleListAllProjects(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p := parsePagination(r)
+
+		projects, total, err := st.ListAllProjects(p)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to list projects")
 			return

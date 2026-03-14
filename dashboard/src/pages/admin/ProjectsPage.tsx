@@ -1,4 +1,4 @@
-import { useProjects } from "@/api/projects";
+import { useAllProjects } from "@/api/projects";
 import { useUsers } from "@/api/users";
 import { usePlans } from "@/api/plans";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -25,7 +25,7 @@ function initials(name?: string): string {
 }
 
 export function AdminProjectsPage() {
-  const { data: projectsData, isLoading: loadingProjects } = useProjects();
+  const { data: projectsData, isLoading: loadingProjects } = useAllProjects();
   const { data: usersData, isLoading: loadingUsers } = useUsers();
   const { data: plansData } = usePlans();
   const navigate = useNavigate();

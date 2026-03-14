@@ -69,6 +69,12 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 				})
 			})
 
+			// Admin: all projects (superadmin only).
+			r.Route("/admin/projects", func(r chi.Router) {
+				r.Use(RequireSuperadmin)
+				r.Get("/", handleListAllProjects(st))
+			})
+
 			// Projects.
 			r.Route("/projects", func(r chi.Router) {
 				r.Get("/", handleListProjects(st))

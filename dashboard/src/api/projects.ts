@@ -9,6 +9,13 @@ export function useProjects() {
   });
 }
 
+export function useAllProjects() {
+  return useQuery({
+    queryKey: ["admin-projects"],
+    queryFn: () => api.get<ListResponse<Project>>("/api/v1/admin/projects?per_page=100"),
+  });
+}
+
 export function useProject(projectId: string) {
   return useQuery({
     queryKey: ["project", projectId],
