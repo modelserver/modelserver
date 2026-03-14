@@ -18,7 +18,8 @@ const (
 	ctxTraceID     contextKey = "trace_id"
 	ctxTraceSource contextKey = "trace_source"
 
-	codexTraceHeader = "Session_id"
+	openCodeTraceHeader = "X-Opencode-Session"
+	codexTraceHeader    = "Session_id"
 )
 
 // claudeUserIDPattern matches the Claude Code user_id format:
@@ -91,14 +92,19 @@ func extractTraceID(r *http.Request, cfg config.TraceConfig) (string, string) {
 		}
 	}
 
-	// 4. Codex extraction from Session_id header
+	// 4. OpenCode extraction from X-Opencode-Session header
+	if id := strings.TrimSpace(r.Header.Get(openCodeTraceHeader)); id != "" {
+		return id, types.TraceSourceOpenCode
+	}
+
+	// 5. Codex extraction from Session_id header
 	if cfg.CodexTraceEnabled {
 		if id := strings.TrimSpace(r.Header.Get(codexTraceHeader)); id != "" {
 			return id, types.TraceSourceCodex
 		}
 	}
 
-	// 5. Body field extraction via gjson paths
+	// 6. Body field extraction via gjson paths
 	if len(cfg.ExtraTraceBodyFields) > 0 {
 		if id, err := tryExtractTraceIDFromBody(r, cfg.ExtraTraceBodyFields); err == nil && id != "" {
 			return id, types.TraceSourceBody

@@ -15,6 +15,7 @@ const (
 	TraceSourceHeader     = "header"
 	TraceSourceAuto       = "auto"
 	TraceSourceClaudeCode = "claude-code"
+	TraceSourceOpenCode   = "opencode"
 	TraceSourceCodex      = "codex"
 	TraceSourceBody       = "body"
 )
