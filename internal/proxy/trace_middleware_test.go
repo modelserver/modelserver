@@ -91,25 +91,6 @@ func TestTraceMiddleware_RequireSessionDisabled_AllowsAnonymous(t *testing.T) {
 	}
 }
 
-func TestTraceMiddleware_RequireSession_RejectsAnthropicPrefix(t *testing.T) {
-	cfg := config.TraceConfig{
-		TraceHeader:    "X-Trace-Id",
-		RequireSession: true,
-	}
-
-	handler := TraceMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("handler should not be reached")
-	}))
-
-	req := httptest.NewRequest(http.MethodPost, "/anthropic/v1/messages", nil)
-	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", rr.Code)
-	}
-}
-
 func TestTraceMiddleware_RequireSession_RejectsOpenAIResponses(t *testing.T) {
 	cfg := config.TraceConfig{
 		TraceHeader:    "X-Trace-Id",

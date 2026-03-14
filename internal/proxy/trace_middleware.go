@@ -129,7 +129,7 @@ func tryExtractClaudeCodeTraceID(r *http.Request) (string, error) {
 		return "", nil
 	}
 	path := r.URL.Path
-	if path != "/v1/messages" && path != "/anthropic/v1/messages" {
+	if path != "/v1/messages" {
 		return "", nil
 	}
 
@@ -184,7 +184,7 @@ func tryExtractTraceIDFromBody(r *http.Request, fields []string) (string, error)
 
 // isCompletionEndpoint returns true for endpoints that create completions.
 func isCompletionEndpoint(path string) bool {
-	return path == "/v1/messages" || path == "/anthropic/v1/messages" || path == "/v1/responses"
+	return path == "/v1/messages" || path == "/v1/responses"
 }
 
 // readAndRestoreBody reads the entire request body and restores it so
