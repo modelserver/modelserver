@@ -143,6 +143,14 @@ function TraceDetail({ projectId, trace }: { projectId: string; trace: Trace }) 
 
   const reqColumns: Column<Request>[] = [
     {
+      header: "Msg ID",
+      accessor: (r) => r.msg_id ? (
+        <span className="font-mono text-xs">{r.msg_id.slice(0, 12)}...</span>
+      ) : (
+        <span className="text-muted-foreground">-</span>
+      ),
+    },
+    {
       header: "Model",
       accessor: (r) => (
         <span className="text-xs">{r.model}</span>
@@ -160,6 +168,16 @@ function TraceDetail({ projectId, trace }: { projectId: string; trace: Trace }) 
     {
       header: "Output",
       accessor: (r) => formatTokens(r.output_tokens),
+      className: "text-right",
+    },
+    {
+      header: "Cache Create",
+      accessor: (r) => formatTokens(r.cache_creation_tokens),
+      className: "text-right",
+    },
+    {
+      header: "Cache Read",
+      accessor: (r) => formatTokens(r.cache_read_tokens),
       className: "text-right",
     },
     {
