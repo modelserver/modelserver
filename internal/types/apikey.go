@@ -27,4 +27,6 @@ type APIKey struct {
 	LastUsedAt        *time.Time `json:"last_used_at,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
+	RequestCount      int64      `json:"request_count"`
+	TotalTokens       int64      `json:"total_tokens"`
 }

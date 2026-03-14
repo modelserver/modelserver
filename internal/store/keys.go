@@ -68,26 +68,34 @@ func (s *Store) ListAPIKeysByCreator(projectID, createdBy string, p types.Pagina
 
 func (s *Store) listAPIKeys(projectID, createdBy string, p types.PaginationParams) ([]types.APIKey, int, error) {
 	ctx := context.Background()
-	where := "project_id = $1 AND deleted_at IS NULL"
+	where := "k.project_id = $1 AND k.deleted_at IS NULL"
 	args := []interface{}{projectID}
 	if createdBy != "" {
-		where += " AND created_by = $2"
+		where += " AND k.created_by = $2"
 		args = append(args, createdBy)
 	}
 
 	var total int
-	if err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM api_keys WHERE "+where, args...).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM api_keys k WHERE "+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
 	limitIdx := len(args) + 1
 	offsetIdx := len(args) + 2
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
-		SELECT id, project_id, created_by, key_suffix, name, COALESCE(description, ''),
-			status, allowed_models, expires_at, last_used_at, created_at, updated_at
-		FROM api_keys WHERE %s
+		SELECT k.id, k.project_id, k.created_by, k.key_suffix, k.name, COALESCE(k.description, ''),
+			k.status, k.allowed_models, k.expires_at, k.last_used_at, k.created_at, k.updated_at,
+			COALESCE(s.request_count, 0), COALESCE(s.total_tokens, 0)
+		FROM api_keys k
+		LEFT JOIN (
+			SELECT api_key_id, COUNT(*) AS request_count,
+				SUM(input_tokens + output_tokens) AS total_tokens
+			FROM requests
+			GROUP BY api_key_id
+		) s ON s.api_key_id = k.id
+		WHERE %s
 		ORDER BY %s %s LIMIT $%d OFFSET $%d`,
-		where, sanitizeSort(p.Sort, "created_at"), sanitizeOrder(p.Order), limitIdx, offsetIdx),
+		where, sanitizeSort(p.Sort, "k.created_at"), sanitizeOrder(p.Order), limitIdx, offsetIdx),
 		append(args, p.Limit(), p.Offset())...,
 	)
 	if err != nil {
@@ -99,7 +107,8 @@ func (s *Store) listAPIKeys(projectID, createdBy string, p types.PaginationParam
 	for rows.Next() {
 		var k types.APIKey
 		if err := rows.Scan(&k.ID, &k.ProjectID, &k.CreatedBy, &k.KeySuffix, &k.Name, &k.Description,
-			&k.Status, &k.AllowedModels, &k.ExpiresAt, &k.LastUsedAt, &k.CreatedAt, &k.UpdatedAt); err != nil {
+			&k.Status, &k.AllowedModels, &k.ExpiresAt, &k.LastUsedAt, &k.CreatedAt, &k.UpdatedAt,
+			&k.RequestCount, &k.TotalTokens); err != nil {
 			return nil, 0, err
 		}
 		keys = append(keys, k)

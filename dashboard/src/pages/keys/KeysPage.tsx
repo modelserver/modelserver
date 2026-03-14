@@ -25,6 +25,12 @@ import type { APIKey } from "@/api/types";
 import { Plus, MoreHorizontal, Copy, Check, BookOpen } from "lucide-react";
 import { UsageGuideDialog } from "./UsageGuideDialog";
 
+function formatNumber(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return n.toString();
+}
+
 export function KeysPage() {
   const projectId = useCurrentProject();
   const { data, isLoading } = useKeys(projectId);
@@ -63,6 +69,16 @@ export function KeysPage() {
     {
       header: "Status",
       accessor: (k) => <StatusBadge status={k.status} />,
+    },
+    {
+      header: "Requests",
+      accessor: (k) => formatNumber(k.request_count),
+      className: "text-right",
+    },
+    {
+      header: "Tokens",
+      accessor: (k) => formatNumber(k.total_tokens),
+      className: "text-right",
     },
     {
       header: "Last Used",
