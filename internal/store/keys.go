@@ -85,8 +85,10 @@ func (s *Store) listAPIKeys(projectID, createdBy string, p types.PaginationParam
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT k.id, k.project_id, k.created_by, k.key_suffix, k.name, COALESCE(k.description, ''),
 			k.status, k.allowed_models, k.expires_at, k.last_used_at, k.created_at, k.updated_at,
-			COALESCE(s.request_count, 0), COALESCE(s.total_tokens, 0)
+			COALESCE(s.request_count, 0), COALESCE(s.total_tokens, 0),
+			COALESCE(u.nickname, ''), COALESCE(u.picture, '')
 		FROM api_keys k
+		LEFT JOIN users u ON u.id = k.created_by
 		LEFT JOIN (
 			SELECT api_key_id, COUNT(*) AS request_count,
 				SUM(input_tokens + output_tokens) AS total_tokens
@@ -108,7 +110,7 @@ func (s *Store) listAPIKeys(projectID, createdBy string, p types.PaginationParam
 		var k types.APIKey
 		if err := rows.Scan(&k.ID, &k.ProjectID, &k.CreatedBy, &k.KeySuffix, &k.Name, &k.Description,
 			&k.Status, &k.AllowedModels, &k.ExpiresAt, &k.LastUsedAt, &k.CreatedAt, &k.UpdatedAt,
-			&k.RequestCount, &k.TotalTokens); err != nil {
+			&k.RequestCount, &k.TotalTokens, &k.CreatedByNickname, &k.CreatedByPicture); err != nil {
 			return nil, 0, err
 		}
 		keys = append(keys, k)

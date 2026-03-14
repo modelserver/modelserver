@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Card, CardContent } from "@/components/ui/card";
 import type { APIKey } from "@/api/types";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Plus, MoreHorizontal, Copy, Check, BookOpen } from "lucide-react";
 import { UsageGuideDialog } from "./UsageGuideDialog";
 
@@ -65,6 +66,24 @@ export function KeysPage() {
 
   const columns: Column<APIKey>[] = [
     { header: "Name", accessor: "name" },
+    {
+      header: "Creator",
+      accessor: (k) => {
+        const name = k.created_by_nickname || "Unknown";
+        const initials = name.slice(0, 2).toUpperCase();
+        return (
+          <div className="flex items-center gap-2">
+            <Avatar size="sm">
+              {k.created_by_picture && (
+                <AvatarImage src={k.created_by_picture} alt={name} />
+              )}
+              <AvatarFallback>{initials}</AvatarFallback>
+            </Avatar>
+            <span>{name}</span>
+          </div>
+        );
+      },
+    },
     { header: "Key", accessor: (k) => `ms-...${k.key_suffix}` },
     {
       header: "Status",

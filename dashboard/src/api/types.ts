@@ -74,6 +74,8 @@ export interface APIKey {
   id: string;
   project_id: string;
   created_by: string;
+  created_by_nickname?: string;
+  created_by_picture?: string;
   key_suffix: string;
   name: string;
   description?: string;
