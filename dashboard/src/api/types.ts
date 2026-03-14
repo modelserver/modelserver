@@ -245,6 +245,7 @@ export interface Order {
   amount: number;
   currency: string;
   status: "pending" | "paying" | "paid" | "delivered" | "failed" | "cancelled";
+  channel?: string;
   payment_ref?: string;
   payment_url?: string;
   existing_subscription_id?: string;

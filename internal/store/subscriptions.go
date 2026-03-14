@@ -216,10 +216,10 @@ func (s *Store) DeliverOrder(orderID string, plan *types.Plan, project *types.Pr
 	var existSubID *string
 	err = tx.QueryRow(ctx, `
 		SELECT id, project_id, plan_id, periods, unit_price, amount, currency,
-			status, payment_ref, payment_url, existing_subscription_id, metadata, created_at, updated_at
+			status, channel, payment_ref, payment_url, existing_subscription_id, metadata, created_at, updated_at
 		FROM orders WHERE id = $1 FOR UPDATE`, orderID,
 	).Scan(&order.ID, &order.ProjectID, &order.PlanID, &order.Periods,
-		&order.UnitPrice, &order.Amount, &order.Currency, &order.Status, &order.PaymentRef,
+		&order.UnitPrice, &order.Amount, &order.Currency, &order.Status, &order.Channel, &order.PaymentRef,
 		&order.PaymentURL, &existSubID, &order.Metadata, &order.CreatedAt, &order.UpdatedAt)
 	if err != nil {
 		tx.Rollback(ctx)

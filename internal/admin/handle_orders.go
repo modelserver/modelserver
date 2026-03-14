@@ -183,6 +183,7 @@ func handleCreateOrder(st *store.Store, payClient billing.PaymentClient, billing
 			Amount:                 amount,
 			Currency:               "CNY",
 			Status:                 types.OrderStatusPending,
+			Channel:                body.Channel,
 			ExistingSubscriptionID: existingSubID,
 			Metadata:               "{}",
 		}

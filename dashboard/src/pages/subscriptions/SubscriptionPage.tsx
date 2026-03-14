@@ -185,8 +185,8 @@ export function SubscriptionPage() {
   }
 
   function openPaymentDialog(order: Order) {
-    const channel: PaymentChannel = order.payment_url?.startsWith("weixin://") ? "wechat" : "alipay";
-    setPaymentResult({ order, channel });
+    const ch: PaymentChannel = order.channel === "wechat" ? "wechat" : "alipay";
+    setPaymentResult({ order, channel: ch });
     setDialogStep("paying");
     setUpgradeDialog(plans.find((p: Plan) => p.id === order.plan_id) ?? null);
   }

@@ -22,6 +22,7 @@ type Order struct {
 	Amount                 int64     `json:"amount"`
 	Currency               string    `json:"currency"`
 	Status                 string    `json:"status"`
+	Channel                string    `json:"channel,omitempty"`
 	PaymentRef             string    `json:"payment_ref,omitempty"`
 	PaymentURL             string    `json:"payment_url,omitempty"`
 	ExistingSubscriptionID string    `json:"existing_subscription_id,omitempty"`
