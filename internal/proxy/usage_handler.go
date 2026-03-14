@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"time"
 
@@ -121,6 +122,8 @@ func computeCreditProgress(st *store.Store, projectID, apiKeyID string, rule typ
 		if percentage > 100 {
 			percentage = 100
 		}
+		// Round to 2 decimal places.
+		percentage = math.Round(percentage*100) / 100
 	}
 
 	return &UsageProgress{
