@@ -253,6 +253,9 @@ export function RequestsPage() {
               {selected.trace_id && (
                 <DetailRow label="Trace ID" value={selected.trace_id} />
               )}
+              {selected.client_ip && (
+                <DetailRow label="Client IP" value={selected.client_ip} />
+              )}
               {selected.error_message && (
                 <DetailRow label="Error" value={selected.error_message} />
               )}

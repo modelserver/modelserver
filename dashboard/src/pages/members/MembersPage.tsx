@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import type { ProjectMember } from "@/api/types";
 import { Plus, MoreHorizontal } from "lucide-react";
 
@@ -56,7 +57,21 @@ export function MembersPage() {
   const columns: Column<ProjectMember>[] = [
     {
       header: "User",
-      accessor: (m) => m.user?.nickname || m.user?.email || m.user_id,
+      accessor: (m) => {
+        const name = m.user?.nickname || m.user?.email || m.user_id;
+        const initials = (m.user?.nickname || m.user?.email || "?")
+          .slice(0, 2)
+          .toUpperCase();
+        return (
+          <div className="flex items-center gap-2">
+            <Avatar size="sm">
+              {m.user?.picture && <AvatarImage src={m.user.picture} alt={name} />}
+              <AvatarFallback>{initials}</AvatarFallback>
+            </Avatar>
+            <span>{name}</span>
+          </div>
+        );
+      },
     },
     {
       header: "Email",
