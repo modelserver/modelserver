@@ -568,15 +568,31 @@ export function SubscriptionPage() {
           {dialogStep === "paying" && paymentResult && (
             <>
               <div className="space-y-4 py-4">
-                {paymentResult.order.payment_url && (
+                {paymentResult.order.payment_url && paymentResult.channel === "wechat" && (
                   <div className="flex flex-col items-center gap-3">
                     <p className="text-sm text-muted-foreground">
-                      {paymentResult.channel === "wechat"
-                        ? "Scan the QR code with WeChat to pay"
-                        : "Scan the QR code with Alipay to pay"}
+                      Scan the QR code with WeChat to pay
                     </p>
                     <div className="rounded-lg border p-4 bg-white">
                       <QRCodeSVG value={paymentResult.order.payment_url} size={200} />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Amount: {formatPrice(paymentResult.order.amount)}
+                    </p>
+                  </div>
+                )}
+                {paymentResult.order.payment_url && paymentResult.channel === "alipay" && (
+                  <div className="flex flex-col items-center gap-3">
+                    <p className="text-sm text-muted-foreground">
+                      Scan the QR code with Alipay to pay
+                    </p>
+                    <div className="rounded-lg border overflow-hidden bg-white">
+                      <iframe
+                        src={paymentResult.order.payment_url}
+                        className="border-0"
+                        style={{ width: 200, height: 200 }}
+                        scrolling="no"
+                      />
                     </div>
                     <p className="text-xs text-muted-foreground">
                       Amount: {formatPrice(paymentResult.order.amount)}

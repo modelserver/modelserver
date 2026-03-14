@@ -1,7 +1,6 @@
 package gateway
 
 import (
-	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -9,9 +8,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -103,44 +99,21 @@ func TestAlipaySign(t *testing.T) {
 	}
 }
 
-func TestAlipayPrecreate(t *testing.T) {
+func TestAlipayPagePayQRMode(t *testing.T) {
 	privPath, pubPath := generateTestRSAKeys(t)
-
-	// Mock Alipay gateway that returns a precreate response.
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseForm(); err != nil {
-			t.Errorf("parse form: %v", err)
-		}
-		if got := r.FormValue("method"); got != "alipay.trade.precreate" {
-			t.Errorf("expected method alipay.trade.precreate, got %s", got)
-		}
-		if got := r.FormValue("app_id"); got != "2021000000000001" {
-			t.Errorf("expected app_id 2021000000000001, got %s", got)
-		}
-		if !strings.Contains(r.FormValue("biz_content"), "ORDER123") {
-			t.Errorf("biz_content missing order number")
-		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"alipay_trade_precreate_response":{"code":"10000","msg":"Success","qr_code":"https://qr.alipay.com/test123"}}`)
-	}))
-	defer mockServer.Close()
-
-	// Override gateway URL for test.
-	origURL := alipayGatewayURL
-	alipayGatewayURL = mockServer.URL
-	defer func() { alipayGatewayURL = origURL }()
 
 	gw, err := NewAlipayGateway(AlipayGatewayConfig{
 		AppID:               "2021000000000001",
 		PrivateKeyPath:      privPath,
 		AlipayPublicKeyPath: pubPath,
 		NotifyURL:           "https://example.com/notify/alipay",
+		ReturnURL:           "https://example.com/return",
 	})
 	if err != nil {
 		t.Fatalf("NewAlipayGateway: %v", err)
 	}
 
-	result, err := gw.CreatePayment(context.Background(), &PaymentRequest{
+	result, err := gw.CreatePayment(nil, &PaymentRequest{
 		OutTradeNo:  "ORDER123",
 		Description: "Test Product",
 		Amount:      2000,
@@ -148,7 +121,16 @@ func TestAlipayPrecreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreatePayment: %v", err)
 	}
-	if result.PaymentURL != "https://qr.alipay.com/test123" {
-		t.Errorf("expected QR code URL, got %s", result.PaymentURL)
+	if result.PaymentURL == "" {
+		t.Error("PaymentURL is empty")
+	}
+	if !strings.Contains(result.PaymentURL, "app_id=2021000000000001") {
+		t.Errorf("PaymentURL missing app_id: %s", result.PaymentURL)
+	}
+	if !strings.Contains(result.PaymentURL, "alipay.trade.page.pay") {
+		t.Errorf("PaymentURL should use alipay.trade.page.pay: %s", result.PaymentURL)
+	}
+	if !strings.Contains(result.PaymentURL, "qr_pay_mode") {
+		t.Errorf("biz_content should contain qr_pay_mode: %s", result.PaymentURL)
 	}
 }

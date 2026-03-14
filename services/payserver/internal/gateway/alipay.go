@@ -11,15 +11,13 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"time"
 )
 
-var alipayGatewayURL = "https://openapi.alipay.com/gateway.do"
+const alipayGatewayURL = "https://openapi.alipay.com/gateway.do"
 
 type AlipayGatewayConfig struct {
 	AppID               string
@@ -69,24 +67,16 @@ type alipayBizContent struct {
 	TotalAmount string `json:"total_amount"`
 	Subject     string `json:"subject"`
 	ProductCode string `json:"product_code"`
+	QRPayMode   string `json:"qr_pay_mode"`
 }
 
-type alipayPrecreateResponse struct {
-	Response struct {
-		Code    string `json:"code"`
-		Msg     string `json:"msg"`
-		SubCode string `json:"sub_code"`
-		SubMsg  string `json:"sub_msg"`
-		QRCode  string `json:"qr_code"`
-	} `json:"alipay_trade_precreate_response"`
-}
-
-func (g *AlipayGateway) CreatePayment(ctx context.Context, req *PaymentRequest) (*PaymentResult, error) {
+func (g *AlipayGateway) CreatePayment(_ context.Context, req *PaymentRequest) (*PaymentResult, error) {
 	bc := alipayBizContent{
 		OutTradeNo:  req.OutTradeNo,
 		TotalAmount: formatAmount(req.Amount),
 		Subject:     req.Description,
-		ProductCode: "FACE_TO_FACE_PAYMENT",
+		ProductCode: "FAST_INSTANT_TRADE_PAY",
+		QRPayMode:   "4",
 	}
 	bizContentBytes, err := json.Marshal(bc)
 	if err != nil {
@@ -95,12 +85,13 @@ func (g *AlipayGateway) CreatePayment(ctx context.Context, req *PaymentRequest) 
 
 	params := url.Values{}
 	params.Set("app_id", g.cfg.AppID)
-	params.Set("method", "alipay.trade.precreate")
+	params.Set("method", "alipay.trade.page.pay")
 	params.Set("charset", "utf-8")
 	params.Set("sign_type", "RSA2")
 	params.Set("timestamp", time.Now().Format("2006-01-02 15:04:05"))
 	params.Set("version", "1.0")
 	params.Set("notify_url", g.cfg.NotifyURL)
+	params.Set("return_url", g.cfg.ReturnURL)
 	params.Set("biz_content", string(bizContentBytes))
 
 	signStr := BuildSignString(params)
@@ -110,35 +101,11 @@ func (g *AlipayGateway) CreatePayment(ctx context.Context, req *PaymentRequest) 
 	}
 	params.Set("sign", sig)
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, alipayGatewayURL, strings.NewReader(params.Encode()))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded;charset=utf-8")
-
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("alipay precreate request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read alipay response: %w", err)
-	}
-
-	var result alipayPrecreateResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("parse alipay response: %w", err)
-	}
-	if result.Response.Code != "10000" {
-		return nil, fmt.Errorf("alipay precreate failed: %s %s (sub: %s %s)",
-			result.Response.Code, result.Response.Msg, result.Response.SubCode, result.Response.SubMsg)
-	}
+	payURL := alipayGatewayURL + "?" + params.Encode()
 
 	return &PaymentResult{
 		TradeNo:    "",
-		PaymentURL: result.Response.QRCode,
+		PaymentURL: payURL,
 	}, nil
 }
 
