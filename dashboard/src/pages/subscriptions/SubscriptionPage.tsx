@@ -499,6 +499,16 @@ export function SubscriptionPage() {
                     {dialogPlan.period_months === 1 ? "mo" : `${dialogPlan.period_months}mo`}
                   </span>
                 </div>
+                {!isFreePlan && !isRenewal && activeSubPlan && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">Current Plan</span>
+                    <span className="text-sm">
+                      {activeSubPlan.display_name || activeSubPlan.name}{" "}
+                      ({formatPrice(activeSubPlan.price_per_period)}/
+                      {activeSubPlan.period_months === 1 ? "mo" : `${activeSubPlan.period_months}mo`})
+                    </span>
+                  </div>
+                )}
 
                 {/* Periods selector — for free->paid upgrades and renewals */}
                 {(isFreePlan || isRenewal) && (
@@ -542,9 +552,27 @@ export function SubscriptionPage() {
                   <span className="font-medium">
                     {isFreePlan || isRenewal
                       ? formatPrice(dialogPlan.price_per_period * periods)
-                      : formatPrice(dialogPlan.price_per_period)}
+                      : (() => {
+                          const currentPrice = activeSubPlan?.price_per_period ?? 0;
+                          const diff = Math.max(dialogPlan.price_per_period - currentPrice, 0);
+                          if (!activeSub?.expires_at) return formatPrice(diff);
+                          const now = Date.now();
+                          const expiresAt = new Date(activeSub.expires_at).getTime();
+                          const remaining = expiresAt - now;
+                          const periodMonths = activeSubPlan?.period_months ?? 1;
+                          const periodEnd = new Date();
+                          periodEnd.setMonth(periodEnd.getMonth() + periodMonths);
+                          const periodDuration = periodEnd.getTime() - now;
+                          const remainingPeriods = Math.max(Math.ceil(remaining / periodDuration), 1);
+                          return formatPrice(diff * remainingPeriods);
+                        })()}
                   </span>
                 </div>
+                {!isFreePlan && !isRenewal && activeSubPlan && (
+                  <p className="text-xs text-muted-foreground">
+                    Price difference: {formatPrice(Math.max(dialogPlan.price_per_period - activeSubPlan.price_per_period, 0))}/mo, prorated for remaining subscription time
+                  </p>
+                )}
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={closeDialog}>
