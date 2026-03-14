@@ -59,9 +59,9 @@ func TraceMiddleware(traceCfg config.TraceConfig) func(http.Handler) http.Handle
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			traceID, source := extractTraceID(r, traceCfg)
 
-			// Enforce session for POST /v1/messages when configured.
+			// Enforce session for POST endpoints that create completions.
 			if traceCfg.RequireSession && traceID == "" {
-				if r.Method == http.MethodPost && isMessagesEndpoint(r.URL.Path) {
+				if r.Method == http.MethodPost && isCompletionEndpoint(r.URL.Path) {
 					writeProxyError(w, http.StatusBadRequest,
 						"session identification required: provide a trace/session ID via header or request metadata")
 					return
@@ -182,9 +182,9 @@ func tryExtractTraceIDFromBody(r *http.Request, fields []string) (string, error)
 	return "", nil
 }
 
-// isMessagesEndpoint returns true for the message creation endpoints.
-func isMessagesEndpoint(path string) bool {
-	return path == "/v1/messages" || path == "/anthropic/v1/messages"
+// isCompletionEndpoint returns true for endpoints that create completions.
+func isCompletionEndpoint(path string) bool {
+	return path == "/v1/messages" || path == "/anthropic/v1/messages" || path == "/v1/responses"
 }
 
 // readAndRestoreBody reads the entire request body and restores it so
