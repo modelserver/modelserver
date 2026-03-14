@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS threads (
 CREATE INDEX IF NOT EXISTS idx_threads_project ON threads(project_id);
 
 CREATE TABLE IF NOT EXISTS traces (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     thread_id UUID REFERENCES threads(id) ON DELETE SET NULL,
     source TEXT NOT NULL DEFAULT 'auto',
@@ -154,7 +154,7 @@ CREATE TABLE IF NOT EXISTS requests (
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
     api_key_id UUID NOT NULL REFERENCES api_keys(id) ON DELETE RESTRICT,
     channel_id UUID REFERENCES channels(id) ON DELETE SET NULL,
-    trace_id UUID REFERENCES traces(id) ON DELETE SET NULL,
+    trace_id TEXT REFERENCES traces(id) ON DELETE SET NULL,
     msg_id TEXT,
     provider TEXT NOT NULL,
     model TEXT NOT NULL,
