@@ -116,18 +116,17 @@ func handleCreateOrder(st *store.Store, payClient billing.PaymentClient, billing
 			writeError(w, http.StatusBadRequest, "no_subscription", "no active subscription — cannot create order")
 			return
 		}
-		if activeSub.PlanID == plan.ID || activeSub.PlanName == plan.Slug {
-			writeError(w, http.StatusConflict, "already_on_plan", "already on this plan")
-			return
-		}
+		isRenewal := activeSub.PlanID == plan.ID || activeSub.PlanName == plan.Slug
 
-		// Must be an upgrade.
+		// Look up active plan for tier checks and pricing.
 		activePlan, err := st.GetPlanBySlug(activeSub.PlanName)
 		if err != nil || activePlan == nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to look up active plan")
 			return
 		}
-		if plan.TierLevel <= activePlan.TierLevel {
+
+		// Must be an upgrade or renewal (same plan).
+		if !isRenewal && plan.TierLevel <= activePlan.TierLevel {
 			writeError(w, http.StatusConflict, "downgrade_not_allowed", "cannot downgrade to a lower or same tier plan")
 			return
 		}
@@ -148,12 +147,16 @@ func handleCreateOrder(st *store.Store, payClient billing.PaymentClient, billing
 		periods := body.Periods
 		existingSubID := activeSub.ID
 
-		if activePlan.PricePerPeriod == 0 {
+		if isRenewal {
+			// Renewal: same plan, user picks periods, full price.
+			unitPrice = plan.PricePerPeriod
+			amount = unitPrice * int64(periods)
+		} else if activePlan.PricePerPeriod == 0 {
 			// Free → paid: user picks periods, full price.
 			unitPrice = plan.PricePerPeriod
 			amount = unitPrice * int64(periods)
 		} else {
-			// Paid → paid: prorate remaining time.
+			// Paid → paid upgrade: prorate remaining time.
 			now := time.Now()
 			remaining := activeSub.ExpiresAt.Sub(now)
 			periodStart := now

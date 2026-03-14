@@ -63,6 +63,18 @@ export interface CreditWindowStatus {
   resets_at?: string;
 }
 
+export function useOrderStatus(projectId: string, orderId: string | null) {
+  return useQuery({
+    queryKey: ["order-status", projectId, orderId],
+    queryFn: () =>
+      api.get<DataResponse<Order>>(
+        `/api/v1/projects/${projectId}/orders/${orderId}`,
+      ),
+    enabled: !!orderId,
+    refetchInterval: 3000,
+  });
+}
+
 export function useSubscriptionUsage(projectId: string) {
   return useQuery({
     queryKey: ["subscription-usage", projectId],

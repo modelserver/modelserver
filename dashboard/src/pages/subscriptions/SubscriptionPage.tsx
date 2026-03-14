@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useCurrentProject } from "@/hooks/useCurrentProject";
 import { useAvailablePlans } from "@/api/plans";
-import { useSubscriptions, useOrders, useCreateOrder, useCancelOrder, useSubscriptionUsage } from "@/api/subscriptions";
+import { useSubscriptions, useOrders, useCreateOrder, useCancelOrder, useSubscriptionUsage, useOrderStatus } from "@/api/subscriptions";
 import type { Plan, Subscription, Order } from "@/api/types";
 import type { CreditWindowStatus } from "@/api/subscriptions";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -19,7 +19,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Zap, ExternalLink, XCircle, ChevronLeft, ChevronRight } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Loader2, Zap, ExternalLink, XCircle, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { QRCodeSVG } from "qrcode.react";
 
@@ -94,11 +95,30 @@ export function SubscriptionPage() {
   const createOrder = useCreateOrder(projectId);
   const cancelOrder = useCancelOrder(projectId);
 
+  const qc = useQueryClient();
   const [upgradeDialog, setUpgradeDialog] = useState<Plan | null>(null);
   const [periods, setPeriods] = useState(1);
   const [channel, setChannel] = useState<PaymentChannel>("wechat");
   const [paymentResult, setPaymentResult] = useState<PaymentResult | null>(null);
   const [dialogStep, setDialogStep] = useState<"form" | "paying">("form");
+  const [isRenewal, setIsRenewal] = useState(false);
+
+  const pollingOrderId = dialogStep === "paying" ? paymentResult?.order.id ?? null : null;
+  const { data: orderStatusData } = useOrderStatus(projectId, pollingOrderId);
+
+  useEffect(() => {
+    if (!orderStatusData?.data) return;
+    const status = orderStatusData.data.status;
+    if (status === "delivered") {
+      toast.success("Payment successful! Your subscription has been updated.");
+      closeDialog();
+      qc.invalidateQueries({ queryKey: ["subscriptions", projectId] });
+      qc.invalidateQueries({ queryKey: ["orders", projectId] });
+    } else if (status === "failed" || status === "cancelled") {
+      toast.error(`Payment ${status}`);
+      closeDialog();
+    }
+  }, [orderStatusData]);
 
   const plans = plansData?.data ?? [];
   const subscriptions = subsData?.data ?? [];
@@ -113,7 +133,10 @@ export function SubscriptionPage() {
 
   function getButtonState(plan: Plan) {
     if (activeSub?.plan_name === plan.slug) {
-      return { label: "Current Plan", disabled: true };
+      if (isFreePlan) {
+        return { label: "Current Plan", disabled: true };
+      }
+      return { label: "Renew", disabled: false };
     }
     const activePlan = plans.find((p: Plan) => p.slug === activeSub?.plan_name);
     if (activePlan && plan.tier_level > activePlan.tier_level) {
@@ -161,6 +184,7 @@ export function SubscriptionPage() {
     setDialogStep("form");
     setPeriods(1);
     setChannel("wechat");
+    setIsRenewal(false);
   }
 
   const orderColumns: Column<Order>[] = [
@@ -251,6 +275,23 @@ export function SubscriptionPage() {
                   </span>
                   <Badge variant={statusColor(activeSub.status)}>{activeSub.status}</Badge>
                   {isFreePlan && <Badge variant="secondary">Free Tier</Badge>}
+                  {!isFreePlan && activeSubPlan && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setUpgradeDialog(activeSubPlan);
+                        setIsRenewal(true);
+                        setPeriods(1);
+                        setChannel("wechat");
+                        setPaymentResult(null);
+                        setDialogStep("form");
+                      }}
+                    >
+                      <RefreshCw className="mr-1 h-3 w-3" />
+                      Renew
+                    </Button>
+                  )}
                 </div>
                 {!isFreePlan && (
                   <p className="text-sm text-muted-foreground">
@@ -350,13 +391,18 @@ export function SubscriptionPage() {
                       disabled={btn.disabled}
                       onClick={() => {
                         setUpgradeDialog(plan);
+                        setIsRenewal(btn.label === "Renew");
                         setPeriods(1);
                         setChannel("wechat");
                         setPaymentResult(null);
                         setDialogStep("form");
                       }}
                     >
-                      <Zap className="mr-2 h-4 w-4" />
+                      {btn.label === "Renew" ? (
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                      ) : (
+                        <Zap className="mr-2 h-4 w-4" />
+                      )}
                       {btn.label}
                     </Button>
                   </CardContent>
@@ -425,11 +471,13 @@ export function SubscriptionPage() {
       <Dialog open={!!upgradeDialog} onOpenChange={(open) => !open && closeDialog()}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Upgrade Plan</DialogTitle>
+            <DialogTitle>{isRenewal ? "Renew Subscription" : "Upgrade Plan"}</DialogTitle>
             <DialogDescription>
               {dialogStep === "paying"
                 ? "Complete your payment to activate the new plan."
-                : `Upgrade to ${dialogPlan?.display_name || dialogPlan?.name}.`}
+                : isRenewal
+                  ? `Renew your ${dialogPlan?.display_name || dialogPlan?.name} subscription.`
+                  : `Upgrade to ${dialogPlan?.display_name || dialogPlan?.name}.`}
             </DialogDescription>
           </DialogHeader>
 
@@ -450,8 +498,8 @@ export function SubscriptionPage() {
                   </span>
                 </div>
 
-                {/* Periods selector — only for free->paid upgrades */}
-                {isFreePlan && (
+                {/* Periods selector — for free->paid upgrades and renewals */}
+                {(isFreePlan || isRenewal) && (
                   <div className="space-y-2">
                     <Label>Periods</Label>
                     <Input
@@ -490,7 +538,7 @@ export function SubscriptionPage() {
                 <div className="flex items-center justify-between border-t pt-3">
                   <span className="font-medium">Estimated Total</span>
                   <span className="font-medium">
-                    {isFreePlan
+                    {isFreePlan || isRenewal
                       ? formatPrice(dialogPlan.price_per_period * periods)
                       : formatPrice(dialogPlan.price_per_period)}
                   </span>
