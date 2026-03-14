@@ -63,7 +63,7 @@ func TraceMiddleware(traceCfg config.TraceConfig) func(http.Handler) http.Handle
 			if traceCfg.RequireSession && traceID == "" {
 				if r.Method == http.MethodPost && isCompletionEndpoint(r.URL.Path) {
 					writeProxyError(w, http.StatusBadRequest,
-						"session identification required: provide a trace/session ID via header or request metadata")
+						"please use a coding agent such as Claude Code, OpenCode, Codex, or Gemini CLI")
 					return
 				}
 			}
