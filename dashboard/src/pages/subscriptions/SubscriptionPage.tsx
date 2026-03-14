@@ -157,9 +157,6 @@ export function SubscriptionPage() {
       if (order.payment_url) {
         setPaymentResult({ order, channel });
         setDialogStep("paying");
-        if (channel === "alipay") {
-          window.open(order.payment_url, "_blank");
-        }
       } else {
         toast.success("Order created successfully");
         closeDialog();
@@ -558,35 +555,19 @@ export function SubscriptionPage() {
           {dialogStep === "paying" && paymentResult && (
             <>
               <div className="space-y-4 py-4">
-                {paymentResult.channel === "wechat" && paymentResult.order.payment_url && (
+                {paymentResult.order.payment_url && (
                   <div className="flex flex-col items-center gap-3">
-                    <p className="text-sm text-muted-foreground">Scan the QR code with WeChat to pay</p>
+                    <p className="text-sm text-muted-foreground">
+                      {paymentResult.channel === "wechat"
+                        ? "Scan the QR code with WeChat to pay"
+                        : "Scan the QR code with Alipay to pay"}
+                    </p>
                     <div className="rounded-lg border p-4 bg-white">
                       <QRCodeSVG value={paymentResult.order.payment_url} size={200} />
                     </div>
                     <p className="text-xs text-muted-foreground">
                       Amount: {formatPrice(paymentResult.order.amount)}
                     </p>
-                  </div>
-                )}
-                {paymentResult.channel === "alipay" && (
-                  <div className="flex flex-col items-center gap-3">
-                    <p className="text-sm text-muted-foreground">
-                      Alipay payment page has been opened in a new tab.
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Amount: {formatPrice(paymentResult.order.amount)}
-                    </p>
-                    {paymentResult.order.payment_url && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => window.open(paymentResult.order.payment_url, "_blank")}
-                      >
-                        <ExternalLink className="mr-2 h-4 w-4" />
-                        Reopen Alipay
-                      </Button>
-                    )}
                   </div>
                 )}
               </div>
