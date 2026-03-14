@@ -215,6 +215,14 @@ export function SubscriptionPage() {
       accessor: (o) => formatPrice(o.amount),
     },
     {
+      header: "Channel",
+      accessor: (o) => o.channel ? (
+        <span className="capitalize">{o.channel}</span>
+      ) : (
+        <span className="text-muted-foreground">-</span>
+      ),
+    },
+    {
       header: "Status",
       accessor: (o) => (
         <Badge variant={statusColor(o.status)}>{o.status}</Badge>
