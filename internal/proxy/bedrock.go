@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -50,22 +51,33 @@ func bedrockURLPath(model string, streaming bool) string {
 // directorSetBedrockUpstream configures the reverse-proxy request for a Bedrock upstream.
 func directorSetBedrockUpstream(req *http.Request, baseURL, apiKey string, model string, streaming bool) {
 	req.URL.Scheme = "https"
+	var basePath string
 	if baseURL != "" {
-		req.URL.Host = stripScheme(baseURL)
-		if hasScheme(baseURL, "http") {
-			req.URL.Scheme = "http"
+		if target, err := url.Parse(baseURL); err == nil {
+			req.URL.Scheme = target.Scheme
+			req.URL.Host = target.Host
+			basePath = target.Path
 		}
 	}
 	req.Host = req.URL.Host
 
-	path := bedrockURLPath(model, streaming)
-	req.URL.Path = path
-	req.URL.RawPath = fmt.Sprintf("/model/%s/%s", url.QueryEscape(model), func() string {
+	bPath := bedrockURLPath(model, streaming)
+	if basePath != "" && basePath != "/" {
+		req.URL.Path = path.Join(basePath, bPath)
+	} else {
+		req.URL.Path = bPath
+	}
+	rawSuffix := fmt.Sprintf("/model/%s/%s", url.QueryEscape(model), func() string {
 		if streaming {
 			return "invoke-with-response-stream"
 		}
 		return "invoke"
 	}())
+	if basePath != "" && basePath != "/" {
+		req.URL.RawPath = path.Join(basePath, rawSuffix)
+	} else {
+		req.URL.RawPath = rawSuffix
+	}
 
 	// Remove Anthropic-specific headers that Bedrock does not use.
 	req.Header.Del("x-api-key")

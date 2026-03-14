@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
+	"path"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -423,9 +425,12 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 func directorSetUpstream(req *http.Request, baseURL, apiKey string) {
 	req.URL.Scheme = "https"
 	if baseURL != "" {
-		req.URL.Host = stripScheme(baseURL)
-		if hasScheme(baseURL, "http") {
-			req.URL.Scheme = "http"
+		if target, err := url.Parse(baseURL); err == nil {
+			req.URL.Scheme = target.Scheme
+			req.URL.Host = target.Host
+			if target.Path != "" && target.Path != "/" {
+				req.URL.Path = path.Join(target.Path, req.URL.Path)
+			}
 		}
 	}
 	req.Host = req.URL.Host
@@ -449,18 +454,6 @@ func directorSetUpstream(req *http.Request, baseURL, apiKey string) {
 	}
 }
 
-func stripScheme(u string) string {
-	for _, prefix := range []string{"https://", "http://"} {
-		if len(u) > len(prefix) && u[:len(prefix)] == prefix {
-			return u[len(prefix):]
-		}
-	}
-	return u
-}
-
-func hasScheme(u, scheme string) bool {
-	return len(u) > len(scheme)+3 && u[:len(scheme)+3] == scheme+"://"
-}
 
 func modelInList(list []string, model string) bool {
 	for _, m := range list {

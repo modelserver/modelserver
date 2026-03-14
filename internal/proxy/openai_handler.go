@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
+	"path"
 	"time"
 
 	"github.com/modelserver/modelserver/internal/types"
@@ -326,9 +328,12 @@ func (h *Handler) interceptOpenAIStreaming(resp *http.Response, requestID string
 func directorSetOpenAIUpstream(req *http.Request, baseURL, apiKey string) {
 	req.URL.Scheme = "https"
 	if baseURL != "" {
-		req.URL.Host = stripScheme(baseURL)
-		if hasScheme(baseURL, "http") {
-			req.URL.Scheme = "http"
+		if target, err := url.Parse(baseURL); err == nil {
+			req.URL.Scheme = target.Scheme
+			req.URL.Host = target.Host
+			if target.Path != "" && target.Path != "/" {
+				req.URL.Path = path.Join(target.Path, req.URL.Path)
+			}
 		}
 	}
 	req.Host = req.URL.Host

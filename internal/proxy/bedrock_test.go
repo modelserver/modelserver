@@ -146,6 +146,63 @@ func TestDirectorSetBedrockUpstream(t *testing.T) {
 	}
 }
 
+func TestDirectorSetUpstream_BaseURLWithPath(t *testing.T) {
+	req := mustNewRequest(t, "POST", "http://localhost/v1/messages", nil)
+	directorSetUpstream(req, "https://custom-proxy.example.com/prefix", "key123")
+
+	if req.URL.Host != "custom-proxy.example.com" {
+		t.Errorf("host = %s, want custom-proxy.example.com", req.URL.Host)
+	}
+	if req.URL.Path != "/prefix/v1/messages" {
+		t.Errorf("path = %s, want /prefix/v1/messages", req.URL.Path)
+	}
+	if req.URL.Scheme != "https" {
+		t.Errorf("scheme = %s, want https", req.URL.Scheme)
+	}
+}
+
+func TestDirectorSetOpenAIUpstream_AzureBaseURL(t *testing.T) {
+	req := mustNewRequest(t, "POST", "http://localhost/v1/responses", nil)
+	directorSetOpenAIUpstream(req, "https://myresource.cognitiveservices.azure.com/openai", "azure-key")
+
+	if req.URL.Host != "myresource.cognitiveservices.azure.com" {
+		t.Errorf("host = %s, want myresource.cognitiveservices.azure.com", req.URL.Host)
+	}
+	if req.URL.Path != "/openai/v1/responses" {
+		t.Errorf("path = %s, want /openai/v1/responses", req.URL.Path)
+	}
+	if req.URL.Scheme != "https" {
+		t.Errorf("scheme = %s, want https", req.URL.Scheme)
+	}
+	if req.Header.Get("Authorization") != "Bearer azure-key" {
+		t.Errorf("Authorization = %s, want Bearer azure-key", req.Header.Get("Authorization"))
+	}
+}
+
+func TestDirectorSetOpenAIUpstream_PlainBaseURL(t *testing.T) {
+	req := mustNewRequest(t, "POST", "http://localhost/v1/responses", nil)
+	directorSetOpenAIUpstream(req, "https://api.openai.com", "sk-key")
+
+	if req.URL.Host != "api.openai.com" {
+		t.Errorf("host = %s, want api.openai.com", req.URL.Host)
+	}
+	if req.URL.Path != "/v1/responses" {
+		t.Errorf("path = %s, want /v1/responses", req.URL.Path)
+	}
+}
+
+func TestDirectorSetBedrockUpstream_BaseURLWithPath(t *testing.T) {
+	req := mustNewRequest(t, "POST", "http://localhost/v1/messages", nil)
+	directorSetBedrockUpstream(req, "https://custom-proxy.example.com/bedrock", "token", "anthropic.claude-3-sonnet-20240229-v1:0", false)
+
+	if req.URL.Host != "custom-proxy.example.com" {
+		t.Errorf("host = %s, want custom-proxy.example.com", req.URL.Host)
+	}
+	if req.URL.Path != "/bedrock/model/anthropic.claude-3-sonnet-20240229-v1:0/invoke" {
+		t.Errorf("path = %s, want /bedrock/model/anthropic.claude-3-sonnet-20240229-v1:0/invoke", req.URL.Path)
+	}
+}
+
 func contains(s, sub string) bool {
 	return strings.Contains(s, sub)
 }

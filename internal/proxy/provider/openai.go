@@ -3,6 +3,7 @@ package provider
 import (
 	"net/http"
 	"net/url"
+	"path"
 )
 
 // OpenAI implements the Provider interface for the OpenAI API.
@@ -19,6 +20,9 @@ func (o *OpenAI) Director(req *http.Request, baseURL, apiKey string) {
 	req.URL.Scheme = target.Scheme
 	req.URL.Host = target.Host
 	req.Host = target.Host
+	if target.Path != "" && target.Path != "/" {
+		req.URL.Path = path.Join(target.Path, req.URL.Path)
+	}
 
 	req.Header.Del("x-api-key")
 	req.Header.Del("anthropic-version")
