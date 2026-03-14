@@ -100,7 +100,7 @@ func writeRateLimitError(w http.ResponseWriter, retryAfter time.Duration) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Retry-After", strconv.Itoa(retrySeconds))
-	w.WriteHeader(http.StatusTooManyRequests)
+	w.WriteHeader(http.StatusBadRequest)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"type": "error",
 		"error": map[string]string{
