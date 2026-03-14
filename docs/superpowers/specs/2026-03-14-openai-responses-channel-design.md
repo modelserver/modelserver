@@ -235,60 +235,71 @@ For reference, Claude rates: Sonnet 4.6 input=$3→0.4, output=$15→2.0; Opus 4
 
 ### OpenAI Model Credit Rates
 
+Models grouped by pricing tier. All `cache_creation_rate` = 0 (OpenAI has no cache creation charge), all `cache_read_rate` = 0 (free on subscription plans, consistent with Claude).
+
+**Tier: $2.50 / $15.00** — `input_rate: 0.333, output_rate: 2.0`
+- `gpt-5.4`
+
+**Tier: $1.75 / $14.00** — `input_rate: 0.233, output_rate: 1.867`
+- `gpt-5.2`, `gpt-5.3-codex`, `gpt-5.2-codex`
+- `gpt-5.3-chat-latest`, `gpt-5.2-chat-latest`
+
+**Tier: $1.25 / $10.00** — `input_rate: 0.167, output_rate: 1.333`
+- `gpt-5.1`, `gpt-5`, `gpt-5.1-codex-max`, `gpt-5.1-codex`, `gpt-5-codex`
+- `gpt-5.1-chat-latest`, `gpt-5-chat-latest`
+
+**Tier: $0.25 / $2.00** — `input_rate: 0.033, output_rate: 0.267`
+- `gpt-5-mini`
+
+**Tier: $0.05 / $0.40** — `input_rate: 0.007, output_rate: 0.053`
+- `gpt-5-nano`
+
+**Tier: $21.00 / $168.00** — `input_rate: 2.8, output_rate: 22.4`
+- `gpt-5.2-pro`
+
+**Tier: $15.00 / $120.00** — `input_rate: 2.0, output_rate: 16.0`
+- `gpt-5-pro`
+
+Full JSON config for `model_credit_rates`:
+
 ```json
 {
-  "gpt-5.4": {
-    "input_rate": 0.333,
-    "output_rate": 2.0,
-    "cache_creation_rate": 0,
-    "cache_read_rate": 0
-  },
-  "gpt-5.3-codex": {
-    "input_rate": 0.233,
-    "output_rate": 1.867,
-    "cache_creation_rate": 0,
-    "cache_read_rate": 0
-  },
-  "gpt-5.2": {
-    "input_rate": 0.233,
-    "output_rate": 1.867,
-    "cache_creation_rate": 0,
-    "cache_read_rate": 0
-  },
-  "gpt-5.2-codex": {
-    "input_rate": 0.233,
-    "output_rate": 1.867,
-    "cache_creation_rate": 0,
-    "cache_read_rate": 0
-  },
-  "gpt-5.1-codex-max": {
-    "input_rate": 0.167,
-    "output_rate": 1.333,
-    "cache_creation_rate": 0,
-    "cache_read_rate": 0
-  },
-  "gpt-5.1-codex-mini": {
-    "input_rate": 0.033,
-    "output_rate": 0.267,
-    "cache_creation_rate": 0,
-    "cache_read_rate": 0
-  }
+  "gpt-5.4":              {"input_rate": 0.333, "output_rate": 2.0,   "cache_creation_rate": 0, "cache_read_rate": 0},
+  "gpt-5.2":              {"input_rate": 0.233, "output_rate": 1.867, "cache_creation_rate": 0, "cache_read_rate": 0},
+  "gpt-5.1":              {"input_rate": 0.167, "output_rate": 1.333, "cache_creation_rate": 0, "cache_read_rate": 0},
+  "gpt-5":                {"input_rate": 0.167, "output_rate": 1.333, "cache_creation_rate": 0, "cache_read_rate": 0},
+  "gpt-5-mini":           {"input_rate": 0.033, "output_rate": 0.267, "cache_creation_rate": 0, "cache_read_rate": 0},
+  "gpt-5-nano":           {"input_rate": 0.007, "output_rate": 0.053, "cache_creation_rate": 0, "cache_read_rate": 0},
+  "gpt-5.3-chat-latest":  {"input_rate": 0.233, "output_rate": 1.867, "cache_creation_rate": 0, "cache_read_rate": 0},
+  "gpt-5.2-chat-latest":  {"input_rate": 0.233, "output_rate": 1.867, "cache_creation_rate": 0, "cache_read_rate": 0},
+  "gpt-5.1-chat-latest":  {"input_rate": 0.167, "output_rate": 1.333, "cache_creation_rate": 0, "cache_read_rate": 0},
+  "gpt-5-chat-latest":    {"input_rate": 0.167, "output_rate": 1.333, "cache_creation_rate": 0, "cache_read_rate": 0},
+  "gpt-5.3-codex":        {"input_rate": 0.233, "output_rate": 1.867, "cache_creation_rate": 0, "cache_read_rate": 0},
+  "gpt-5.2-codex":        {"input_rate": 0.233, "output_rate": 1.867, "cache_creation_rate": 0, "cache_read_rate": 0},
+  "gpt-5.1-codex-max":    {"input_rate": 0.167, "output_rate": 1.333, "cache_creation_rate": 0, "cache_read_rate": 0},
+  "gpt-5.1-codex":        {"input_rate": 0.167, "output_rate": 1.333, "cache_creation_rate": 0, "cache_read_rate": 0},
+  "gpt-5-codex":          {"input_rate": 0.167, "output_rate": 1.333, "cache_creation_rate": 0, "cache_read_rate": 0},
+  "gpt-5.2-pro":          {"input_rate": 2.8,   "output_rate": 22.4,  "cache_creation_rate": 0, "cache_read_rate": 0},
+  "gpt-5-pro":            {"input_rate": 2.0,   "output_rate": 16.0,  "cache_creation_rate": 0, "cache_read_rate": 0}
 }
 ```
 
-### Pricing source (per 1M tokens)
+### Pricing source (per 1M tokens, from OpenAI official)
 
-| Model | Input | Cached Input | Output | Source |
-|---|---|---|---|---|
-| gpt-5.4 | $2.50 | $0.25 | $15.00 | OpenAI API |
-| gpt-5.3-codex | $1.75 | $0.175 | $14.00 | OpenAI API |
-| gpt-5.2 / gpt-5.2-codex | $1.75 | $0.175 | $14.00 | OpenAI API |
-| gpt-5.1-codex-max | $1.25 | $0.125 | $10.00 | OpenAI API |
-| gpt-5.1-codex-mini | $0.25 | $0.025 | $2.00 | OpenAI API |
+| Model | Input | Cached Input | Output |
+|---|---|---|---|
+| gpt-5.4 | $2.50 | $0.25 | $15.00 |
+| gpt-5.2, gpt-5.3-codex, gpt-5.2-codex, gpt-5.3/5.2-chat-latest | $1.75 | $0.175 | $14.00 |
+| gpt-5.1, gpt-5, gpt-5.1-codex-max, gpt-5.1-codex, gpt-5-codex, gpt-5.1/5-chat-latest | $1.25 | $0.125 | $10.00 |
+| gpt-5-mini | $0.25 | $0.025 | $2.00 |
+| gpt-5-nano | $0.05 | $0.005 | $0.40 |
+| gpt-5.2-pro | $21.00 | — | $168.00 |
+| gpt-5-pro | $15.00 | — | $120.00 |
 
 Notes:
 - `cache_creation_rate`: always 0 for OpenAI (no cache creation charge; caching is automatic)
 - `cache_read_rate`: 0 on subscription plans (consistent with Claude models where cache reads are free)
+- Pro models have no cached input pricing (caching not supported)
 
 ## Testing Strategy
 
