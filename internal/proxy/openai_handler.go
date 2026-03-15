@@ -130,6 +130,16 @@ func (h *Handler) HandleResponses(w http.ResponseWriter, r *http.Request) {
 				if resp.StatusCode == http.StatusTooManyRequests {
 					status = types.RequestStatusRateLimited
 				}
+
+				// Read and log the upstream error body for debugging.
+				errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+				resp.Body.Close()
+				resp.Body = io.NopCloser(bytes.NewReader(errBody))
+				logger.Warn("upstream error response",
+					"status", resp.StatusCode,
+					"body", string(errBody),
+				)
+
 				req := types.Request{
 					ProjectID: project.ID,
 					APIKeyID:  apiKey.ID,

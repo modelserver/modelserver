@@ -107,9 +107,11 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Transform request body for Bedrock provider.
+	// Do NOT forward anthropic-beta header values: they are Anthropic-API-specific
+	// and often invalid on Bedrock (e.g. prompt-caching, output-128k).  If Bedrock
+	// betas are needed, set anthropic_beta in the request body directly.
 	if channel.Provider == types.ProviderBedrock {
-		betaValues := r.Header.Values("anthropic-beta")
-		bodyBytes, err = transformBedrockBody(bodyBytes, betaValues)
+		bodyBytes, err = transformBedrockBody(bodyBytes)
 		if err != nil {
 			writeProxyError(w, http.StatusInternalServerError, "failed to transform request for bedrock")
 			return
@@ -173,6 +175,16 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 				if resp.StatusCode == http.StatusTooManyRequests {
 					status = types.RequestStatusRateLimited
 				}
+
+				// Read and log the upstream error body for debugging.
+				errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+				resp.Body.Close()
+				resp.Body = io.NopCloser(bytes.NewReader(errBody))
+				logger.Warn("upstream error response",
+					"status", resp.StatusCode,
+					"body", string(errBody),
+				)
+
 				req := types.Request{
 					ProjectID: project.ID,
 					APIKeyID:  apiKey.ID,
