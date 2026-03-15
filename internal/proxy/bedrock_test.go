@@ -34,6 +34,37 @@ func TestSplitBetaHeaders(t *testing.T) {
 	}
 }
 
+func TestFilterBedrockBetas(t *testing.T) {
+	input := []string{
+		"interleaved-thinking-2025-05-14",
+		"claude-code-20250219",
+		"effort-2025-11-24",
+		"redact-thinking-2026-02-12",
+		"prompt-caching-scope-2026-01-05",
+	}
+	supported, dropped := filterBedrockBetas(input)
+
+	wantSupported := []string{"interleaved-thinking-2025-05-14", "effort-2025-11-24"}
+	wantDropped := []string{"claude-code-20250219", "redact-thinking-2026-02-12", "prompt-caching-scope-2026-01-05"}
+
+	if len(supported) != len(wantSupported) {
+		t.Fatalf("supported = %v, want %v", supported, wantSupported)
+	}
+	for i := range supported {
+		if supported[i] != wantSupported[i] {
+			t.Errorf("supported[%d] = %q, want %q", i, supported[i], wantSupported[i])
+		}
+	}
+	if len(dropped) != len(wantDropped) {
+		t.Fatalf("dropped = %v, want %v", dropped, wantDropped)
+	}
+	for i := range dropped {
+		if dropped[i] != wantDropped[i] {
+			t.Errorf("dropped[%d] = %q, want %q", i, dropped[i], wantDropped[i])
+		}
+	}
+}
+
 func TestTransformBedrockBody(t *testing.T) {
 	tests := []struct {
 		name      string

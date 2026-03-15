@@ -108,10 +108,12 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 
 	// Transform request body for Bedrock provider.
 	if channel.Provider == types.ProviderBedrock {
-		betas := splitBetaHeaders(r.Header.Values("anthropic-beta"))
-		if len(betas) > 0 {
-			h.logger.Info("forwarding anthropic-beta to bedrock",
-				"betas", betas,
+		allBetas := splitBetaHeaders(r.Header.Values("anthropic-beta"))
+		betas, dropped := filterBedrockBetas(allBetas)
+		if len(dropped) > 0 {
+			h.logger.Info("dropped unsupported bedrock beta flags",
+				"dropped", dropped,
+				"forwarded", betas,
 				"channel_id", channel.ID,
 				"model", model,
 			)

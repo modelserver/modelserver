@@ -13,6 +13,22 @@ import (
 
 const bedrockDefaultVersion = "bedrock-2023-05-31"
 
+// bedrockSupportedBetas is the set of anthropic_beta flags that Bedrock
+// recognises.  Flags not in this set cause a 400 "invalid beta flag" error.
+// Source: https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages-request-response.html
+var bedrockSupportedBetas = map[string]bool{
+	"computer-use-2025-01-24":          true,
+	"token-efficient-tools-2025-02-19": true,
+	"interleaved-thinking-2025-05-14":  true,
+	"output-128k-2025-02-19":           true,
+	"dev-full-thinking-2025-05-14":     true,
+	"context-1m-2025-08-07":            true,
+	"context-management-2025-06-27":    true,
+	"effort-2025-11-24":                true,
+	"tool-search-tool-2025-10-19":      true,
+	"tool-examples-2025-10-29":         true,
+}
+
 // splitBetaHeaders splits potentially comma-separated anthropic-beta header
 // values into individual beta feature strings.
 func splitBetaHeaders(headerValues []string) []string {
@@ -25,6 +41,19 @@ func splitBetaHeaders(headerValues []string) []string {
 		}
 	}
 	return betas
+}
+
+// filterBedrockBetas returns only the beta flags that Bedrock supports,
+// plus any that are not in the whitelist (logged as dropped).
+func filterBedrockBetas(betas []string) (supported, dropped []string) {
+	for _, b := range betas {
+		if bedrockSupportedBetas[b] {
+			supported = append(supported, b)
+		} else {
+			dropped = append(dropped, b)
+		}
+	}
+	return
 }
 
 // transformBedrockBody modifies the request body for Bedrock format:
