@@ -8,6 +8,7 @@ const (
 	ProviderOpenAI    = "openai"
 	ProviderGemini    = "gemini"
 	ProviderBedrock   = "bedrock"
+	ProviderClaudeCode = "claudecode"
 )
 
 // Channel status constants.

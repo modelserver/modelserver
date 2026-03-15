@@ -148,6 +148,8 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 				r.Get("/", handleListChannels(st, encKey))
 				r.Post("/", handleCreateChannel(st, encKey))
 				r.Get("/stats", handleChannelStats(st))
+				r.Post("/claudecode/oauth/start", handleClaudeCodeOAuthStart())
+				r.Post("/claudecode/oauth/exchange", handleClaudeCodeOAuthExchange())
 				r.Route("/{channelID}", func(r chi.Router) {
 					r.Get("/", handleGetChannel(st))
 					r.Put("/", handleUpdateChannel(st, encKey))

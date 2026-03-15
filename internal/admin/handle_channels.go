@@ -225,6 +225,13 @@ func handleTestChannel(st *store.Store, encKey []byte) http.HandlerFunc {
 				"max_tokens":        10,
 				"messages":          []map[string]string{{"role": "user", "content": "Hi"}},
 			})
+		case types.ProviderClaudeCode:
+			endpoint = baseURL + "/v1/messages?beta=true"
+			reqBody, _ = json.Marshal(map[string]interface{}{
+				"model":      upstreamTestModel,
+				"max_tokens": 10,
+				"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
+			})
 		default: // anthropic, gemini, etc.
 			endpoint = baseURL + "/v1/messages"
 			reqBody, _ = json.Marshal(map[string]interface{}{
@@ -250,6 +257,21 @@ func handleTestChannel(st *store.Store, encKey []byte) http.HandlerFunc {
 			req.Header.Set("Authorization", "Bearer "+string(apiKey))
 		case types.ProviderBedrock:
 			req.Header.Set("Authorization", "Bearer "+string(apiKey))
+		case types.ProviderClaudeCode:
+			var creds struct {
+				AccessToken string `json:"access_token"`
+			}
+			if err := json.Unmarshal(apiKey, &creds); err != nil || creds.AccessToken == "" {
+				writeData(w, http.StatusOK, map[string]interface{}{
+					"success": false,
+					"error":   "failed to parse claudecode credentials",
+				})
+				return
+			}
+			req.Header.Set("Authorization", "Bearer "+creds.AccessToken)
+			req.Header.Set("Anthropic-Version", "2023-06-01")
+			req.Header.Set("Anthropic-Beta", "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14")
+			req.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
 		default: // anthropic
 			req.Header.Set("x-api-key", string(apiKey))
 			req.Header.Set("anthropic-version", "2023-06-01")

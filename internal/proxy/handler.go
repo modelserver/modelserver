@@ -169,9 +169,17 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 
 	proxy := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
-			if channel.Provider == types.ProviderBedrock {
+			switch channel.Provider {
+			case types.ProviderBedrock:
 				directorSetBedrockUpstream(req, channel.BaseURL, channelAPIKey, actualModel, isStreaming)
-			} else {
+			case types.ProviderClaudeCode:
+				accessToken, err := h.channelRouter.GetClaudeCodeAccessToken(channel.ID)
+				if err != nil {
+					logger.Error("claudecode token error", "error", err)
+					accessToken = ParseClaudeCodeAccessToken(channelAPIKey)
+				}
+				directorSetClaudeCodeUpstream(req, channel.BaseURL, accessToken)
+			default:
 				directorSetUpstream(req, channel.BaseURL, channelAPIKey)
 			}
 		},
@@ -421,10 +429,10 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 	}
 
 	candidates := h.channelRouter.MatchChannels(project.ID, model)
-	// count_tokens is only supported by the Anthropic API.
+	// count_tokens is only supported by the Anthropic API (including Claude Code).
 	filtered := candidates[:0]
 	for _, c := range candidates {
-		if c.Provider == types.ProviderAnthropic {
+		if c.Provider == types.ProviderAnthropic || c.Provider == types.ProviderClaudeCode {
 			filtered = append(filtered, c)
 		}
 	}
@@ -456,7 +464,16 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 
 	proxy := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
-			directorSetUpstream(req, channel.BaseURL, channelAPIKey)
+			if channel.Provider == types.ProviderClaudeCode {
+				accessToken, err := h.channelRouter.GetClaudeCodeAccessToken(channel.ID)
+				if err != nil {
+					h.logger.Error("claudecode token error for count_tokens", "error", err)
+					accessToken = ParseClaudeCodeAccessToken(channelAPIKey)
+				}
+				directorSetClaudeCodeUpstream(req, channel.BaseURL, accessToken)
+			} else {
+				directorSetUpstream(req, channel.BaseURL, channelAPIKey)
+			}
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			h.logger.Error("count_tokens proxy error", "error", err, "project_id", project.ID, "model", model)

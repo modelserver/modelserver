@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"fmt"
 	"log/slog"
 	"math/rand"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/modelserver/modelserver/internal/crypto"
+	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
 
@@ -26,22 +28,28 @@ type ChannelRouter struct {
 	decryptedKeys map[string]string // channelID → plaintext API key
 	sessionMap    sync.Map          // string → sessionBinding
 	sessionTTL    time.Duration
+	oauthMgr      *OAuthTokenManager
 }
 
 // NewChannelRouter creates a channel router with the given channels and routes.
 // Decrypts all channel API keys at construction time.
-func NewChannelRouter(channels []types.Channel, routes []types.ChannelRoute, encKey []byte, logger *slog.Logger, sessionTTL time.Duration) *ChannelRouter {
+func NewChannelRouter(channels []types.Channel, routes []types.ChannelRoute, encKey []byte, logger *slog.Logger, sessionTTL time.Duration, st *store.Store) *ChannelRouter {
 	cm := make(map[string]*types.Channel, len(channels))
 	for i := range channels {
 		cm[channels[i].ID] = &channels[i]
 	}
 	keys := decryptChannelKeys(channels, encKey, logger)
+
+	oauthMgr := NewOAuthTokenManager(st, encKey, logger)
+	oauthMgr.LoadCredentials(channels, keys)
+
 	return &ChannelRouter{
 		channels:      channels,
 		channelMap:    cm,
 		routes:        routes,
 		decryptedKeys: keys,
 		sessionTTL:    sessionTTL,
+		oauthMgr:      oauthMgr,
 	}
 }
 
@@ -58,6 +66,7 @@ func (cr *ChannelRouter) Reload(channels []types.Channel, routes []types.Channel
 	cr.routes = routes
 	cr.decryptedKeys = keys
 	cr.mu.Unlock()
+	cr.oauthMgr.Reload(channels, keys)
 }
 
 // GetChannelKey returns the decrypted API key for a channel, or empty string if not found.
@@ -65,6 +74,15 @@ func (cr *ChannelRouter) GetChannelKey(channelID string) string {
 	cr.mu.RLock()
 	defer cr.mu.RUnlock()
 	return cr.decryptedKeys[channelID]
+}
+
+// GetClaudeCodeAccessToken returns a valid OAuth access token for the given
+// Claude Code channel, refreshing if necessary.
+func (cr *ChannelRouter) GetClaudeCodeAccessToken(channelID string) (string, error) {
+	if cr.oauthMgr == nil {
+		return "", fmt.Errorf("oauth manager not initialized")
+	}
+	return cr.oauthMgr.GetAccessToken(channelID)
 }
 
 // MatchChannels returns the channels to use for a given project + model.

@@ -105,7 +105,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to load channel routes: %v", err)
 	}
-	channelRouter := proxy.NewChannelRouter(channels, routes, encryptionKey, logger, cfg.Trace.SessionChannelTTL)
+	channelRouter := proxy.NewChannelRouter(channels, routes, encryptionKey, logger, cfg.Trace.SessionChannelTTL, st)
 	channelRouter.StartSessionCleanup(10 * time.Minute)
 
 	// Periodically reload channels and routes from the database.

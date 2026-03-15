@@ -17,7 +17,7 @@ func TestMatchChannels_ProjectSpecificRoute(t *testing.T) {
 		{ProjectID: "proj1", ModelPattern: "claude-sonnet-4", ChannelIDs: []string{"ch2"}, MatchPriority: 10, Status: "active"},
 	}
 
-	router := NewChannelRouter(channels, routes, nil, nil, 0)
+	router := NewChannelRouter(channels, routes, nil, nil, 0, nil)
 	selected := router.MatchChannels("proj1", "claude-sonnet-4")
 
 	if len(selected) != 1 {
@@ -37,7 +37,7 @@ func TestMatchChannels_GlobalRoute(t *testing.T) {
 		{ProjectID: "", ModelPattern: "*", ChannelIDs: []string{"ch1"}, MatchPriority: 0, Status: "active"},
 	}
 
-	router := NewChannelRouter(channels, routes, nil, nil, 0)
+	router := NewChannelRouter(channels, routes, nil, nil, 0, nil)
 	selected := router.MatchChannels("any-project", "claude-sonnet-4")
 
 	if len(selected) != 1 {
@@ -54,7 +54,7 @@ func TestMatchChannels_FallbackToAllActive(t *testing.T) {
 		{ID: "ch2", Status: "disabled", SupportedModels: []string{"claude-sonnet-4"}, SelectionPriority: 0},
 	}
 
-	router := NewChannelRouter(channels, nil, nil, nil, 0)
+	router := NewChannelRouter(channels, nil, nil, nil, 0, nil)
 	selected := router.MatchChannels("proj1", "claude-sonnet-4")
 
 	if len(selected) != 1 {
@@ -73,7 +73,7 @@ func TestMatchChannels_WildcardPattern(t *testing.T) {
 		{ProjectID: "proj1", ModelPattern: "claude-sonnet-*", ChannelIDs: []string{"ch1"}, MatchPriority: 5, Status: "active"},
 	}
 
-	router := NewChannelRouter(channels, routes, nil, nil, 0)
+	router := NewChannelRouter(channels, routes, nil, nil, 0, nil)
 	selected := router.MatchChannels("proj1", "claude-sonnet-4-20250514")
 
 	if len(selected) != 1 {
@@ -85,7 +85,7 @@ func TestSelectChannelForSession_StoresBinding(t *testing.T) {
 	candidates := []types.Channel{
 		{ID: "ch1", Weight: 1, SelectionPriority: 0},
 	}
-	router := NewChannelRouter(nil, nil, nil, nil, time.Hour)
+	router := NewChannelRouter(nil, nil, nil, nil, time.Hour, nil)
 
 	ch := router.SelectChannelForSession(candidates, "session-1")
 	if ch == nil || ch.ID != "ch1" {
@@ -104,7 +104,7 @@ func TestSelectChannelForSession_StickyAcrossCalls(t *testing.T) {
 		{ID: "ch1", Weight: 1, SelectionPriority: 10},
 		{ID: "ch2", Weight: 1, SelectionPriority: 0},
 	}
-	router := NewChannelRouter(nil, nil, nil, nil, time.Hour)
+	router := NewChannelRouter(nil, nil, nil, nil, time.Hour, nil)
 
 	// First call will select ch1 (highest priority).
 	ch := router.SelectChannelForSession(candidates, "session-sticky")
@@ -125,7 +125,7 @@ func TestSelectChannelForSession_ExpiredBinding(t *testing.T) {
 	candidates := []types.Channel{
 		{ID: "ch1", Weight: 1, SelectionPriority: 0},
 	}
-	router := NewChannelRouter(nil, nil, nil, nil, 1*time.Millisecond)
+	router := NewChannelRouter(nil, nil, nil, nil, 1*time.Millisecond, nil)
 
 	router.SelectChannelForSession(candidates, "session-expire")
 	time.Sleep(5 * time.Millisecond)
@@ -138,7 +138,7 @@ func TestSelectChannelForSession_ExpiredBinding(t *testing.T) {
 }
 
 func TestSelectChannelForSession_BoundChannelNotInCandidates(t *testing.T) {
-	router := NewChannelRouter(nil, nil, nil, nil, time.Hour)
+	router := NewChannelRouter(nil, nil, nil, nil, time.Hour, nil)
 
 	// Bind session to ch1.
 	initial := []types.Channel{
@@ -160,7 +160,7 @@ func TestSelectChannelForSession_EmptySessionFallback(t *testing.T) {
 	candidates := []types.Channel{
 		{ID: "ch1", Weight: 1, SelectionPriority: 0},
 	}
-	router := NewChannelRouter(nil, nil, nil, nil, time.Hour)
+	router := NewChannelRouter(nil, nil, nil, nil, time.Hour, nil)
 
 	ch := router.SelectChannelForSession(candidates, "")
 	if ch == nil || ch.ID != "ch1" {
