@@ -56,7 +56,6 @@ func (a *bedrockStreamAdapter) decodeNext() {
 	msg, err := a.decoder.Decode(a.inner, nil)
 	if err != nil {
 		if err == io.EOF {
-			a.buf = []byte("data: [DONE]\n\n")
 			a.done = true
 			return
 		}
@@ -105,8 +104,31 @@ func (a *bedrockStreamAdapter) handleEvent(msg eventstream.Message) {
 		return
 	}
 
-	// Emit as SSE: "data: {json}\n\n"
-	a.buf = append([]byte("data: "), decoded...)
+	// Extract the "type" field for the SSE event line.
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(decoded, &envelope); err != nil {
+		a.err = fmt.Errorf("unmarshal type from chunk: %w", err)
+		return
+	}
+
+	// Strip amazon-bedrock-invocationMetrics from message_stop events.
+	if envelope.Type == "message_stop" {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(decoded, &fields); err == nil {
+			if _, ok := fields["amazon-bedrock-invocationMetrics"]; ok {
+				delete(fields, "amazon-bedrock-invocationMetrics")
+				if cleaned, err := json.Marshal(fields); err == nil {
+					decoded = cleaned
+				}
+			}
+		}
+	}
+
+	// Emit as SSE: "event: <type>\ndata: {json}\n\n"
+	a.buf = fmt.Appendf(nil, "event: %s\ndata: ", envelope.Type)
+	a.buf = append(a.buf, decoded...)
 	a.buf = append(a.buf, '\n', '\n')
 }
 

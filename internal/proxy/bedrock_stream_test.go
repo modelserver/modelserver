@@ -55,11 +55,9 @@ func TestBedrockStreamAdapter_SingleChunk(t *testing.T) {
 	}
 
 	got := string(result)
-	if !strings.Contains(got, "data: "+sseJSON+"\n\n") {
-		t.Errorf("expected SSE event with JSON data, got:\n%s", got)
-	}
-	if !strings.Contains(got, "data: [DONE]\n\n") {
-		t.Errorf("expected [DONE] sentinel, got:\n%s", got)
+	want := "event: message_start\ndata: " + sseJSON + "\n\n"
+	if got != want {
+		t.Errorf("unexpected SSE output:\n  got:  %q\n  want: %q", got, want)
 	}
 }
 
@@ -82,13 +80,15 @@ func TestBedrockStreamAdapter_MultipleChunks(t *testing.T) {
 	}
 
 	got := string(result)
-	for _, evt := range events {
-		if !strings.Contains(got, "data: "+evt+"\n\n") {
-			t.Errorf("missing expected SSE event:\n  want: data: %s\n  in: %s", evt, got)
+	expectedTypes := []string{"message_start", "content_block_delta", "message_delta"}
+	for i, evt := range events {
+		want := "event: " + expectedTypes[i] + "\ndata: " + evt + "\n\n"
+		if !strings.Contains(got, want) {
+			t.Errorf("missing expected SSE event:\n  want: %q\n  in: %q", want, got)
 		}
 	}
-	if !strings.HasSuffix(got, "data: [DONE]\n\n") {
-		t.Errorf("expected to end with [DONE], got:\n%s", got)
+	if strings.Contains(got, "[DONE]") {
+		t.Errorf("output should not contain [DONE], got:\n%s", got)
 	}
 }
 
@@ -138,13 +138,35 @@ func TestBedrockStreamAdapter_ErrorMessage(t *testing.T) {
 	}
 }
 
+func TestBedrockStreamAdapter_MessageStopStripsMetrics(t *testing.T) {
+	sseJSON := `{"type":"message_stop","amazon-bedrock-invocationMetrics":{"inputTokenCount":10,"outputTokenCount":20}}`
+	data := makeChunkMessage(t, sseJSON)
+
+	adapter := newBedrockStreamAdapter(io.NopCloser(bytes.NewReader(data)))
+	result, err := io.ReadAll(adapter)
+	if err != nil {
+		t.Fatalf("ReadAll error: %v", err)
+	}
+
+	got := string(result)
+	if strings.Contains(got, "invocationMetrics") {
+		t.Errorf("output should not contain invocationMetrics, got:\n%s", got)
+	}
+	if !strings.Contains(got, "event: message_stop\ndata: ") {
+		t.Errorf("expected event: message_stop line, got:\n%s", got)
+	}
+	if !strings.Contains(got, `"type":"message_stop"`) {
+		t.Errorf("expected type field preserved, got:\n%s", got)
+	}
+}
+
 func TestBedrockStreamAdapter_EmptyStream(t *testing.T) {
 	adapter := newBedrockStreamAdapter(io.NopCloser(bytes.NewReader(nil)))
 	result, err := io.ReadAll(adapter)
 	if err != nil {
 		t.Fatalf("ReadAll error: %v", err)
 	}
-	if string(result) != "data: [DONE]\n\n" {
-		t.Errorf("empty stream should produce only [DONE], got: %q", string(result))
+	if len(result) != 0 {
+		t.Errorf("empty stream should produce no output, got: %q", string(result))
 	}
 }
