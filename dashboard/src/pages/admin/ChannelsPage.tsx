@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { useChannels, useCreateChannel, useUpdateChannel, useDeleteChannel, useChannelStats, useTestChannel } from "@/api/channels";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useChannels, useCreateChannel, useUpdateChannel, useDeleteChannel, useChannelStats, useTestChannel, useClaudeCodeOAuthStart, useClaudeCodeOAuthExchange } from "@/api/channels";
 import { usePlans } from "@/api/plans";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
@@ -29,7 +29,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { Channel, ChannelUsageSummary } from "@/api/types";
-import { Plus, MoreHorizontal, Zap, Loader2, Pencil, X } from "lucide-react";
+import { Plus, MoreHorizontal, Zap, Loader2, Pencil, X, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 
 export function ChannelsPage() {
@@ -44,8 +44,12 @@ export function ChannelsPage() {
   const updateChannel = useUpdateChannel();
   const deleteChannel = useDeleteChannel();
   const testChannel = useTestChannel();
+  const oauthStart = useClaudeCodeOAuthStart();
+  const oauthExchange = useClaudeCodeOAuthExchange();
 
   const [showCreate, setShowCreate] = useState(false);
+  const [oauthDone, setOauthDone] = useState(false);
+  const oauthRef = useRef<{ codeVerifier: string; state: string; redirectUri: string } | null>(null);
   const [editingChannel, setEditingChannel] = useState<Channel | null>(null);
   const [form, setForm] = useState({
     provider: "anthropic",
@@ -93,7 +97,20 @@ export function ChannelsPage() {
   }, [plansData]);
 
   function updateForm<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
-    setForm((prev) => ({ ...prev, [key]: value }));
+    setForm((prev) => {
+      const next = { ...prev, [key]: value };
+      if (key === "provider") {
+        if (value === "claudecode") {
+          next.base_url = "https://api.anthropic.com";
+          next.api_key = "";
+          setOauthDone(false);
+        } else if (prev.provider === "claudecode") {
+          next.api_key = "";
+          setOauthDone(false);
+        }
+      }
+      return next;
+    });
   }
 
   function modelMapToRecord(pairs: Array<{ from: string; to: string }>): Record<string, string> | undefined {
@@ -127,6 +144,7 @@ export function ChannelsPage() {
       test_model: form.test_model || undefined,
     });
     setShowCreate(false);
+    setOauthDone(false);
     setForm({
       provider: "anthropic",
       name: "",
@@ -154,6 +172,7 @@ export function ChannelsPage() {
       max_concurrent: String(c.max_concurrent),
       test_model: c.test_model ?? "",
     });
+    setOauthDone(c.provider === "claudecode");
     setEditingChannel(c);
   }
 
@@ -192,6 +211,51 @@ export function ChannelsPage() {
       }
     } catch {
       toast.error(`${channelName}: connection test failed`);
+    }
+  }
+
+  const handleOAuthMessage = useCallback(
+    async (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type !== "claudecode-oauth-callback") return;
+      const ref = oauthRef.current;
+      if (!ref) return;
+      try {
+        const res = await oauthExchange.mutateAsync({
+          code: event.data.code,
+          state: event.data.state,
+          code_verifier: ref.codeVerifier,
+          redirect_uri: ref.redirectUri,
+        });
+        updateForm("api_key", JSON.stringify(res.data));
+        setOauthDone(true);
+        toast.success("Claude Code authorized successfully");
+      } catch {
+        toast.error("OAuth token exchange failed");
+      }
+      oauthRef.current = null;
+    },
+    [oauthExchange],
+  );
+
+  useEffect(() => {
+    window.addEventListener("message", handleOAuthMessage);
+    return () => window.removeEventListener("message", handleOAuthMessage);
+  }, [handleOAuthMessage]);
+
+  async function handleOAuthAuthorize() {
+    const redirectUri = window.location.origin + "/oauth/claudecode/callback";
+    try {
+      const res = await oauthStart.mutateAsync({ redirect_uri: redirectUri });
+      const data = res.data;
+      oauthRef.current = {
+        codeVerifier: data.code_verifier,
+        state: data.state,
+        redirectUri: data.redirect_uri,
+      };
+      window.open(data.auth_url, "_blank", "popup,width=600,height=700");
+    } catch {
+      toast.error("Failed to start OAuth flow");
     }
   }
 
@@ -366,6 +430,7 @@ export function ChannelsPage() {
                   <SelectItem value="openai">OpenAI</SelectItem>
                   <SelectItem value="gemini">Gemini</SelectItem>
                   <SelectItem value="bedrock">AWS Bedrock</SelectItem>
+                  <SelectItem value="claudecode">Claude Code</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -387,12 +452,40 @@ export function ChannelsPage() {
             </div>
             <div className="space-y-2">
               <Label>API Key</Label>
-              <Input
-                type="password"
-                value={form.api_key}
-                onChange={(e) => updateForm("api_key", e.target.value)}
-                placeholder="sk-..."
-              />
+              {form.provider !== "claudecode" ? (
+                <Input
+                  type="password"
+                  value={form.api_key}
+                  onChange={(e) => updateForm("api_key", e.target.value)}
+                  placeholder="sk-..."
+                />
+              ) : !oauthDone && !form.api_key ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={handleOAuthAuthorize}
+                  disabled={oauthStart.isPending}
+                >
+                  {oauthStart.isPending ? (
+                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Starting...</>
+                  ) : (
+                    "Authorize with Claude"
+                  )}
+                </Button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-green-500" />
+                  <span className="text-sm text-green-600">Authorized</span>
+                  <button
+                    type="button"
+                    className="text-sm text-muted-foreground underline ml-auto"
+                    onClick={() => { updateForm("api_key", ""); setOauthDone(false); }}
+                  >
+                    Re-authorize
+                  </button>
+                </div>
+              )}
             </div>
             <div className="space-y-2">
               <Label>Supported Models (comma-separated)</Label>
@@ -516,6 +609,7 @@ export function ChannelsPage() {
                   <SelectItem value="openai">OpenAI</SelectItem>
                   <SelectItem value="gemini">Gemini</SelectItem>
                   <SelectItem value="bedrock">AWS Bedrock</SelectItem>
+                  <SelectItem value="claudecode">Claude Code</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -536,13 +630,41 @@ export function ChannelsPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label>API Key (leave blank to keep current)</Label>
-              <Input
-                type="password"
-                value={form.api_key}
-                onChange={(e) => updateForm("api_key", e.target.value)}
-                placeholder="sk-..."
-              />
+              <Label>{form.provider === "claudecode" ? "API Key" : "API Key (leave blank to keep current)"}</Label>
+              {form.provider !== "claudecode" ? (
+                <Input
+                  type="password"
+                  value={form.api_key}
+                  onChange={(e) => updateForm("api_key", e.target.value)}
+                  placeholder="sk-..."
+                />
+              ) : !oauthDone && !form.api_key ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={handleOAuthAuthorize}
+                  disabled={oauthStart.isPending}
+                >
+                  {oauthStart.isPending ? (
+                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Starting...</>
+                  ) : (
+                    "Authorize with Claude"
+                  )}
+                </Button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-green-500" />
+                  <span className="text-sm text-green-600">Authorized</span>
+                  <button
+                    type="button"
+                    className="text-sm text-muted-foreground underline ml-auto"
+                    onClick={() => { updateForm("api_key", ""); setOauthDone(false); }}
+                  >
+                    Re-authorize
+                  </button>
+                </div>
+              )}
             </div>
             <div className="space-y-2">
               <Label>Supported Models (comma-separated)</Label>

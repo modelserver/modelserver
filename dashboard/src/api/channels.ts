@@ -75,6 +75,28 @@ export function useDeleteChannel() {
   });
 }
 
+// --- Claude Code OAuth ---
+
+export function useClaudeCodeOAuthStart() {
+  return useMutation({
+    mutationFn: (body: { redirect_uri: string }) =>
+      api.post<DataResponse<{ auth_url: string; state: string; code_verifier: string; redirect_uri: string }>>(
+        "/api/v1/channels/claudecode/oauth/start",
+        body,
+      ),
+  });
+}
+
+export function useClaudeCodeOAuthExchange() {
+  return useMutation({
+    mutationFn: (body: { code: string; state: string; code_verifier: string; redirect_uri: string }) =>
+      api.post<DataResponse<Record<string, unknown>>>(
+        "/api/v1/channels/claudecode/oauth/exchange",
+        body,
+      ),
+  });
+}
+
 // --- Channel Routes ---
 
 export function useChannelRoutes() {
