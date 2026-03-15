@@ -11,6 +11,7 @@ export interface Column<T> {
   header: string;
   accessor: keyof T | ((row: T) => React.ReactNode);
   className?: string;
+  cellClassName?: string;
 }
 
 interface DataTableProps<T> {
@@ -54,7 +55,7 @@ export function DataTable<T>({
               onClick={onRowClick ? () => onRowClick(row) : undefined}
             >
               {columns.map((col, i) => (
-                <TableCell key={i} className={col.className}>
+                <TableCell key={i} className={col.cellClassName ?? col.className}>
                   {typeof col.accessor === "function"
                     ? col.accessor(row)
                     : (row[col.accessor] as React.ReactNode)}

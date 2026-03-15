@@ -84,7 +84,7 @@ export function KeysPage() {
         );
       },
     },
-    { header: "Key", accessor: (k) => `ms-...${k.key_suffix}` },
+    { header: "Key", accessor: (k) => `ms-...${k.key_suffix}`, cellClassName: "font-mono" },
     {
       header: "Status",
       accessor: (k) => <StatusBadge status={k.status} />,
