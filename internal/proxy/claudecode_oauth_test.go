@@ -94,8 +94,16 @@ func TestGetAccessToken_NotFound(t *testing.T) {
 }
 
 func TestGetAccessToken_Expired_TriggersRefresh(t *testing.T) {
-	// Set up a mock OAuth server that returns new tokens.
+	// Set up a mock OAuth server that validates the request and returns new tokens.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		if body["scope"] != ClaudeCodeScopes {
+			t.Errorf("refresh request scope = %q, want %q", body["scope"], ClaudeCodeScopes)
+		}
+		if body["grant_type"] != "refresh_token" {
+			t.Errorf("grant_type = %q, want refresh_token", body["grant_type"])
+		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"access_token":  "new-token",
 			"refresh_token": "new-rt",

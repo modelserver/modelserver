@@ -18,11 +18,16 @@ import (
 )
 
 const (
-	defaultOAuthTokenURL = "https://console.anthropic.com/v1/oauth/token"
+	// ClaudeCodeTokenURL is the OAuth token endpoint for Claude Code.
+	ClaudeCodeTokenURL = "https://platform.claude.com/v1/oauth/token"
+	// ClaudeCodeAuthURL is the OAuth authorization endpoint for Claude Code.
+	ClaudeCodeAuthURL = "https://claude.ai/oauth/authorize"
 	// ClaudeCodeClientID is the public OAuth client ID for Claude Code.
 	ClaudeCodeClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	// Refresh tokens 3 minutes before expiry.
-	tokenExpiryBuffer = 180
+	// ClaudeCodeScopes is the full set of OAuth scopes used by Claude Code CLI.
+	ClaudeCodeScopes = "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
+	// Refresh tokens 5 minutes before expiry (matches CLI behavior).
+	tokenExpiryBuffer = 300
 )
 
 // ClaudeCodeCredentials holds OAuth credentials for a Claude Code channel.
@@ -53,7 +58,7 @@ func NewOAuthTokenManager(st *store.Store, encKey []byte, logger *slog.Logger) *
 		encryptionKey: encKey,
 		logger:        logger,
 		httpClient:    &http.Client{Timeout: 15 * time.Second},
-		tokenURL:      defaultOAuthTokenURL,
+		tokenURL:      ClaudeCodeTokenURL,
 	}
 }
 
@@ -182,6 +187,7 @@ func (m *OAuthTokenManager) refreshToken(channelID string) error {
 		"grant_type":    "refresh_token",
 		"client_id":     clientID,
 		"refresh_token": refreshToken,
+		"scope":         ClaudeCodeScopes,
 	})
 
 	resp, err := m.httpClient.Post(m.tokenURL, "application/json", bytes.NewReader(reqBody))

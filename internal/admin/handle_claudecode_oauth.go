@@ -16,14 +16,22 @@ import (
 )
 
 const (
-	claudeCodeAuthURL     = "https://claude.ai/oauth/authorize"
-	claudeCodeTokenURL    = "https://console.anthropic.com/v1/oauth/token"
-	claudeCodeRedirectURI = "http://localhost:54545/callback"
-	claudeCodeScopes      = "org:create_api_key user:profile user:inference"
+	defaultClaudeCodeRedirectURI = "http://localhost:54545/callback"
 )
 
 func handleClaudeCodeOAuthStart() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			RedirectURI string `json:"redirect_uri"`
+		}
+		// Body is optional; ignore decode errors.
+		decodeBody(r, &body)
+
+		redirectURI := body.RedirectURI
+		if redirectURI == "" {
+			redirectURI = defaultClaudeCodeRedirectURI
+		}
+
 		// Generate PKCE code_verifier (64 bytes, base64url-encoded).
 		verifierBytes := make([]byte, 64)
 		if _, err := rand.Read(verifierBytes); err != nil {
@@ -48,18 +56,19 @@ func handleClaudeCodeOAuthStart() http.HandlerFunc {
 		params := url.Values{
 			"response_type":         {"code"},
 			"client_id":             {proxy.ClaudeCodeClientID},
-			"redirect_uri":          {claudeCodeRedirectURI},
-			"scope":                 {claudeCodeScopes},
+			"redirect_uri":          {redirectURI},
+			"scope":                 {proxy.ClaudeCodeScopes},
 			"code_challenge":        {codeChallenge},
 			"code_challenge_method": {"S256"},
 			"state":                 {state},
 		}
-		authURL := claudeCodeAuthURL + "?" + params.Encode()
+		authURL := proxy.ClaudeCodeAuthURL + "?" + params.Encode()
 
-		writeData(w, http.StatusOK, map[string]string{
+		writeData(w, http.StatusOK, map[string]interface{}{
 			"auth_url":      authURL,
 			"state":         state,
 			"code_verifier": codeVerifier,
+			"redirect_uri":  redirectURI,
 		})
 	}
 }
@@ -71,6 +80,7 @@ func handleClaudeCodeOAuthExchange() http.HandlerFunc {
 			CallbackURL  string `json:"callback_url"`
 			State        string `json:"state"`
 			CodeVerifier string `json:"code_verifier"`
+			RedirectURI  string `json:"redirect_uri"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
@@ -92,18 +102,23 @@ func handleClaudeCodeOAuthExchange() http.HandlerFunc {
 			return
 		}
 
+		redirectURI := body.RedirectURI
+		if redirectURI == "" {
+			redirectURI = defaultClaudeCodeRedirectURI
+		}
+
 		// Exchange authorization code for tokens.
 		tokenReqBody, _ := json.Marshal(map[string]string{
 			"grant_type":    "authorization_code",
 			"code":          code,
 			"client_id":     proxy.ClaudeCodeClientID,
-			"redirect_uri":  claudeCodeRedirectURI,
+			"redirect_uri":  redirectURI,
 			"code_verifier": body.CodeVerifier,
 			"state":         body.State,
 		})
 
 		client := &http.Client{Timeout: 15 * time.Second}
-		resp, err := client.Post(claudeCodeTokenURL, "application/json", bytes.NewReader(tokenReqBody))
+		resp, err := client.Post(proxy.ClaudeCodeTokenURL, "application/json", bytes.NewReader(tokenReqBody))
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "upstream_error", fmt.Sprintf("token exchange failed: %v", err))
 			return
