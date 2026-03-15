@@ -402,12 +402,19 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 	}
 
 	candidates := h.channelRouter.MatchChannels(project.ID, model)
-	if len(candidates) == 0 {
-		writeProxyError(w, http.StatusServiceUnavailable, "no channels available for model "+model)
+	// count_tokens is only supported by the Anthropic API.
+	filtered := candidates[:0]
+	for _, c := range candidates {
+		if c.Provider == types.ProviderAnthropic {
+			filtered = append(filtered, c)
+		}
+	}
+	if len(filtered) == 0 {
+		writeProxyError(w, http.StatusServiceUnavailable, "no Anthropic channels available for model "+model)
 		return
 	}
 
-	channel := SelectChannel(candidates)
+	channel := SelectChannel(filtered)
 	if channel == nil {
 		writeProxyError(w, http.StatusServiceUnavailable, "no channels available")
 		return
