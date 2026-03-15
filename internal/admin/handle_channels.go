@@ -269,7 +269,7 @@ func handleTestChannel(st *store.Store, encKey []byte) http.HandlerFunc {
 			return
 		}
 		defer resp.Body.Close()
-		io.Copy(io.Discard, resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 
 		success := resp.StatusCode >= 200 && resp.StatusCode < 300
 		result := map[string]interface{}{
@@ -279,7 +279,7 @@ func handleTestChannel(st *store.Store, encKey []byte) http.HandlerFunc {
 			"model":       testModel,
 		}
 		if !success {
-			result["error"] = fmt.Sprintf("upstream returned %d", resp.StatusCode)
+			result["error"] = fmt.Sprintf("upstream returned %d: %s", resp.StatusCode, string(respBody))
 		}
 		writeData(w, http.StatusOK, result)
 	}
