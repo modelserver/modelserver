@@ -275,16 +275,13 @@ func (s *Store) DeliverOrder(orderID string, plan *types.Plan, project *types.Pr
 	}
 
 	// Determine expiry based on transition type:
-	// - Free → paid: fresh expiry from now
 	// - Renewal (same plan): extend from old expiry
-	// - Paid → paid upgrade: keep old expiry (prorated upgrade preserves remaining time)
+	// - Free → paid or paid → paid upgrade: fresh period from now
 	var newExpiresAt time.Time
-	if oldPlanName == "free" {
-		newExpiresAt = now.AddDate(0, plan.PeriodMonths*order.Periods, 0)
-	} else if oldPlanName == plan.Slug {
+	if oldPlanName == plan.Slug {
 		newExpiresAt = oldExpiresAt.AddDate(0, plan.PeriodMonths*order.Periods, 0)
 	} else {
-		newExpiresAt = oldExpiresAt
+		newExpiresAt = now.AddDate(0, plan.PeriodMonths*order.Periods, 0)
 	}
 
 	sub := &types.Subscription{ProjectID: order.ProjectID, PlanID: plan.ID, PlanName: plan.Slug, Status: types.SubscriptionStatusActive, StartsAt: now, ExpiresAt: newExpiresAt}

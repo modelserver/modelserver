@@ -554,23 +554,25 @@ export function SubscriptionPage() {
                       ? formatPrice(dialogPlan.price_per_period * periods)
                       : (() => {
                           const currentPrice = activeSubPlan?.price_per_period ?? 0;
-                          const diff = Math.max(dialogPlan.price_per_period - currentPrice, 0);
-                          if (!activeSub?.expires_at) return formatPrice(diff);
+                          if (!activeSub?.starts_at || !activeSub?.expires_at) {
+                            return formatPrice(Math.max(dialogPlan.price_per_period - currentPrice, 0));
+                          }
                           const now = Date.now();
+                          const startsAt = new Date(activeSub.starts_at).getTime();
                           const expiresAt = new Date(activeSub.expires_at).getTime();
-                          const remaining = expiresAt - now;
-                          const periodMonths = activeSubPlan?.period_months ?? 1;
-                          const periodEnd = new Date();
-                          periodEnd.setMonth(periodEnd.getMonth() + periodMonths);
-                          const periodDuration = periodEnd.getTime() - now;
-                          const remainingPeriods = Math.max(Math.ceil(remaining / periodDuration), 1);
-                          return formatPrice(diff * remainingPeriods);
+                          const totalDuration = expiresAt - startsAt;
+                          const usedDuration = now - startsAt;
+                          let remainingValue = 0;
+                          if (totalDuration > 0 && usedDuration < totalDuration) {
+                            remainingValue = Math.round(((totalDuration - usedDuration) / totalDuration) * currentPrice);
+                          }
+                          return formatPrice(Math.max(dialogPlan.price_per_period - remainingValue, 0));
                         })()}
                   </span>
                 </div>
                 {!isFreePlan && !isRenewal && activeSubPlan && (
                   <p className="text-xs text-muted-foreground">
-                    Price difference: {formatPrice(Math.max(dialogPlan.price_per_period - activeSubPlan.price_per_period, 0))}/mo, prorated for remaining subscription time
+                    New plan price minus remaining value of current subscription
                   </p>
                 )}
               </div>

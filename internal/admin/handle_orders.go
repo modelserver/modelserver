@@ -156,22 +156,21 @@ func handleCreateOrder(st *store.Store, payClient billing.PaymentClient, billing
 			unitPrice = plan.PricePerPeriod
 			amount = unitPrice * int64(periods)
 		} else {
-			// Paid → paid upgrade: prorate remaining time.
+			// Paid → paid upgrade: credit remaining value of current subscription.
 			now := time.Now()
-			remaining := activeSub.ExpiresAt.Sub(now)
-			periodStart := now
-			periodEnd := periodStart.AddDate(0, activePlan.PeriodMonths, 0)
-			periodDuration := periodEnd.Sub(periodStart)
-			remainingPeriods := int(math.Ceil(float64(remaining) / float64(periodDuration)))
-			if remainingPeriods < 1 {
-				remainingPeriods = 1
+			totalDuration := activeSub.ExpiresAt.Sub(activeSub.StartsAt)
+			usedDuration := now.Sub(activeSub.StartsAt)
+			var remainingValue int64
+			if totalDuration > 0 && usedDuration < totalDuration {
+				fraction := float64(totalDuration-usedDuration) / float64(totalDuration)
+				remainingValue = int64(math.Round(fraction * float64(activePlan.PricePerPeriod)))
 			}
-			unitPrice = plan.PricePerPeriod - activePlan.PricePerPeriod
+			unitPrice = plan.PricePerPeriod - remainingValue
 			if unitPrice < 0 {
 				unitPrice = 0
 			}
-			amount = unitPrice * int64(remainingPeriods)
-			periods = remainingPeriods
+			amount = unitPrice
+			periods = 1
 		}
 
 		// Create order.
