@@ -58,6 +58,18 @@ func TestTransformBedrockBody(t *testing.T) {
 			},
 		},
 		{
+			name:  "splits comma-separated beta header values",
+			body:  `{"model":"m","stream":false}`,
+			betas: []string{"prompt-caching-2024-07-31,interleaved-thinking-2025-05-14, output-128k-2025-02-19"},
+			wantCheck: func(t *testing.T, result string) {
+				for _, b := range []string{"prompt-caching-2024-07-31", "interleaved-thinking-2025-05-14", "output-128k-2025-02-19"} {
+					if !contains(result, `"`+b+`"`) {
+						t.Errorf("expected individual beta %q in body, got %s", b, result)
+					}
+				}
+			},
+		},
+		{
 			name:  "no betas means no anthropic_beta field",
 			body:  `{"model":"m","stream":false}`,
 			betas: nil,

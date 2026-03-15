@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strings"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -27,7 +28,17 @@ func transformBedrockBody(body []byte, betaHeaderValues []string) ([]byte, error
 	}
 
 	if len(betaHeaderValues) > 0 {
-		body, err = sjson.SetBytes(body, "anthropic_beta", betaHeaderValues)
+		// Header values may be comma-separated (e.g. "beta1,beta2") per HTTP
+		// spec.  Split each value so Bedrock receives individual feature strings.
+		var betas []string
+		for _, v := range betaHeaderValues {
+			for _, b := range strings.Split(v, ",") {
+				if b = strings.TrimSpace(b); b != "" {
+					betas = append(betas, b)
+				}
+			}
+		}
+		body, err = sjson.SetBytes(body, "anthropic_beta", betas)
 		if err != nil {
 			return nil, fmt.Errorf("setting anthropic_beta: %w", err)
 		}
