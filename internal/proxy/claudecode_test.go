@@ -38,8 +38,21 @@ func TestDirectorSetClaudeCodeUpstream(t *testing.T) {
 	if req.Header.Get("X-App") != "cli" {
 		t.Errorf("X-App = %s, want cli", req.Header.Get("X-App"))
 	}
-	if req.Header.Get("Anthropic-Beta") == "" {
-		t.Error("expected Anthropic-Beta header to be set")
+	wantBeta := "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27"
+	if got := req.Header.Get("Anthropic-Beta"); got != wantBeta {
+		t.Errorf("Anthropic-Beta = %s, want %s", got, wantBeta)
+	}
+	if got := req.Header.Get("User-Agent"); got != "claude-cli/2.1.76 (external, cli)" {
+		t.Errorf("User-Agent = %s, want claude-cli/2.1.76 (external, cli)", got)
+	}
+	if got := req.Header.Get("X-Stainless-Package-Version"); got != "0.74.0" {
+		t.Errorf("X-Stainless-Package-Version = %s, want 0.74.0", got)
+	}
+	if got := req.Header.Get("X-Stainless-Runtime"); got != "bun" {
+		t.Errorf("X-Stainless-Runtime = %s, want bun", got)
+	}
+	if got := req.Header.Get("X-Stainless-Runtime-Version"); got != "1.3.11" {
+		t.Errorf("X-Stainless-Runtime-Version = %s, want 1.3.11", got)
 	}
 	if req.Header.Get("Connection") != "keep-alive" {
 		t.Errorf("Connection = %s, want keep-alive", req.Header.Get("Connection"))

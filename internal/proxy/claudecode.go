@@ -38,17 +38,17 @@ func directorSetClaudeCodeUpstream(req *http.Request, baseURL, accessToken strin
 	// Set OAuth Bearer auth.
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	// Claude Code specific headers.
-	req.Header.Set("Anthropic-Beta", "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14")
+	// Claude Code specific headers — aligned with CLI v2.1.76.
+	req.Header.Set("Anthropic-Beta", "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27")
 	req.Header.Set("Anthropic-Version", "2023-06-01")
 	req.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
 	req.Header.Set("X-App", "cli")
-	req.Header.Set("User-Agent", "claude-cli/1.0.83 (external, cli)")
+	req.Header.Set("User-Agent", "claude-cli/2.1.76 (external, cli)")
 	req.Header.Set("X-Stainless-Lang", "js")
-	req.Header.Set("X-Stainless-Package-Version", "0.52.0")
+	req.Header.Set("X-Stainless-Package-Version", "0.74.0")
 	req.Header.Set("X-Stainless-OS", "Linux")
-	req.Header.Set("X-Stainless-Runtime", "node")
-	req.Header.Set("X-Stainless-Runtime-Version", "v22.13.1")
+	req.Header.Set("X-Stainless-Runtime", "bun")
+	req.Header.Set("X-Stainless-Runtime-Version", "1.3.11")
 	req.Header.Set("X-Stainless-Arch", "x64")
 	req.Header.Set("Connection", "keep-alive")
 }
