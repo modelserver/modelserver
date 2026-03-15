@@ -223,7 +223,8 @@ export function ChannelsPage() {
   }
 
   async function handleOAuthAuthorize() {
-    const redirectUri = "http://localhost";
+    const port = 49152 + Math.floor(Math.random() * (65535 - 49152 + 1));
+    const redirectUri = `http://localhost:${port}/callback`;
     try {
       const res = await oauthStart.mutateAsync({ redirect_uri: redirectUri });
       const data = res.data;
@@ -488,7 +489,7 @@ export function ChannelsPage() {
                   <Input
                     value={callbackUrl}
                     onChange={(e) => setCallbackUrl(e.target.value)}
-                    placeholder="http://localhost?code=..."
+                    placeholder="http://localhost:PORT/callback?code=..."
                   />
                   <Button
                     type="button"
@@ -692,7 +693,7 @@ export function ChannelsPage() {
                   <Input
                     value={callbackUrl}
                     onChange={(e) => setCallbackUrl(e.target.value)}
-                    placeholder="http://localhost?code=..."
+                    placeholder="http://localhost:PORT/callback?code=..."
                   />
                   <Button
                     type="button"
