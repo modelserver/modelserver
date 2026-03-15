@@ -38,7 +38,7 @@ func TestDirectorSetClaudeCodeUpstream(t *testing.T) {
 	if req.Header.Get("X-App") != "cli" {
 		t.Errorf("X-App = %s, want cli", req.Header.Get("X-App"))
 	}
-	wantBeta := "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27"
+	wantBeta := "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27"
 	if got := req.Header.Get("Anthropic-Beta"); got != wantBeta {
 		t.Errorf("Anthropic-Beta = %s, want %s", got, wantBeta)
 	}

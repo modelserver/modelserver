@@ -39,7 +39,7 @@ func directorSetClaudeCodeUpstream(req *http.Request, baseURL, accessToken strin
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
 	// Claude Code specific headers — aligned with CLI v2.1.76.
-	req.Header.Set("Anthropic-Beta", "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27")
+	req.Header.Set("Anthropic-Beta", "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27")
 	req.Header.Set("Anthropic-Version", "2023-06-01")
 	req.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
 	req.Header.Set("X-App", "cli")
