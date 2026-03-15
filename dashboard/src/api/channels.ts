@@ -9,10 +9,11 @@ export function useChannels() {
   });
 }
 
-export function useChannelStats() {
+export function useChannelStats(since?: string) {
+  const params = since ? `?since=${encodeURIComponent(since)}` : "";
   return useQuery({
-    queryKey: ["admin", "channels", "stats"],
-    queryFn: () => api.get<DataResponse<ChannelUsageSummary[]>>("/api/v1/channels/stats"),
+    queryKey: ["admin", "channels", "stats", since ?? "default"],
+    queryFn: () => api.get<DataResponse<ChannelUsageSummary[]>>(`/api/v1/channels/stats${params}`),
   });
 }
 

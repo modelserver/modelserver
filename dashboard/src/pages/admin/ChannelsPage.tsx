@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useChannels, useCreateChannel, useUpdateChannel, useDeleteChannel, useChannelStats, useTestChannel } from "@/api/channels";
+import { usePlans } from "@/api/plans";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { StatusBadge } from "@/components/shared/StatusBadge";
@@ -34,6 +35,11 @@ import { toast } from "sonner";
 export function ChannelsPage() {
   const { data, isLoading } = useChannels();
   const { data: statsData } = useChannelStats();
+  const since5h = useMemo(() => new Date(Date.now() - 5 * 3600_000).toISOString(), []);
+  const since7d = useMemo(() => new Date(Date.now() - 7 * 86400_000).toISOString(), []);
+  const { data: stats5hData } = useChannelStats(since5h);
+  const { data: stats7dData } = useChannelStats(since7d);
+  const { data: plansData } = usePlans();
   const createChannel = useCreateChannel();
   const updateChannel = useUpdateChannel();
   const deleteChannel = useDeleteChannel();
@@ -62,6 +68,29 @@ export function ChannelsPage() {
     }
     return m;
   }, [statsData]);
+
+  const stats5hMap = useMemo(() => {
+    const m = new Map<string, ChannelUsageSummary>();
+    for (const s of stats5hData?.data ?? []) m.set(s.channel_id, s);
+    return m;
+  }, [stats5hData]);
+
+  const stats7dMap = useMemo(() => {
+    const m = new Map<string, ChannelUsageSummary>();
+    for (const s of stats7dData?.data ?? []) m.set(s.channel_id, s);
+    return m;
+  }, [stats7dData]);
+
+  const max20xLimits = useMemo(() => {
+    const plan = (plansData?.data ?? []).find((p) => p.slug === "max_20x");
+    if (!plan?.credit_rules) return { h5: 0, d7: 0 };
+    let h5 = 0, d7 = 0;
+    for (const rule of plan.credit_rules) {
+      if (rule.window === "5h") h5 = rule.max_credits;
+      else if (rule.window === "7d" || rule.window === "1w") d7 = rule.max_credits;
+    }
+    return { h5, d7 };
+  }, [plansData]);
 
   function updateForm<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -191,14 +220,6 @@ export function ChannelsPage() {
       accessor: (c) => c.supported_models?.join(", ") || "—",
     },
     {
-      header: "Mappings",
-      accessor: (c) => {
-        const count = c.model_map ? Object.keys(c.model_map).length : 0;
-        return count > 0 ? String(count) : "—";
-      },
-      className: "text-right",
-    },
-    {
       header: "Requests",
       accessor: (c) => {
         const s = statsMap.get(c.id);
@@ -215,10 +236,24 @@ export function ChannelsPage() {
       className: "text-right",
     },
     {
-      header: "Avg Latency",
+      header: "5h / Max20x",
       accessor: (c) => {
-        const s = statsMap.get(c.id);
-        return s ? `${Math.round(s.avg_latency_ms)}ms` : "—";
+        if (!max20xLimits.h5) return "—";
+        const s = stats5hMap.get(c.id);
+        if (!s) return "0%";
+        const pct = (s.total_credits / max20xLimits.h5) * 100;
+        return `${pct.toFixed(1)}%`;
+      },
+      className: "text-right",
+    },
+    {
+      header: "7d / Max20x",
+      accessor: (c) => {
+        if (!max20xLimits.d7) return "—";
+        const s = stats7dMap.get(c.id);
+        if (!s) return "0%";
+        const pct = (s.total_credits / max20xLimits.d7) * 100;
+        return `${pct.toFixed(1)}%`;
       },
       className: "text-right",
     },
