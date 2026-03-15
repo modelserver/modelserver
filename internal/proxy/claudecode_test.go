@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -56,6 +57,88 @@ func TestDirectorSetClaudeCodeUpstream(t *testing.T) {
 	}
 	if req.Header.Get("Connection") != "keep-alive" {
 		t.Errorf("Connection = %s, want keep-alive", req.Header.Get("Connection"))
+	}
+}
+
+func TestDirectorSetClaudeCodeUpstream_ClientBetaPassthrough(t *testing.T) {
+	req := mustNewRequest(t, "POST", "http://localhost/v1/messages", nil)
+	// Simulate a client that sends additional beta flags (e.g. context-1m).
+	req.Header.Set("Anthropic-Beta", "claude-code-20250219,interleaved-thinking-2025-05-14,context-1m-2025-08-07")
+
+	directorSetClaudeCodeUpstream(req, "https://api.anthropic.com", "token")
+
+	got := req.Header.Get("Anthropic-Beta")
+	// Base betas must always be present.
+	for _, b := range claudeCodeBaseBetas {
+		if !strings.Contains(got, b) {
+			t.Errorf("Anthropic-Beta missing base beta %s, got %s", b, got)
+		}
+	}
+	// Client-only beta must be preserved.
+	if !strings.Contains(got, "context-1m-2025-08-07") {
+		t.Errorf("Anthropic-Beta should contain client beta context-1m-2025-08-07, got %s", got)
+	}
+	// Base betas should come first.
+	wantPrefix := "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27"
+	if !strings.HasPrefix(got, wantPrefix) {
+		t.Errorf("Anthropic-Beta should start with base betas %s, got %s", wantPrefix, got)
+	}
+}
+
+func TestDirectorSetClaudeCodeUpstream_NoDuplicateBetas(t *testing.T) {
+	req := mustNewRequest(t, "POST", "http://localhost/v1/messages", nil)
+	// Client sends betas that overlap with the base set.
+	req.Header.Set("Anthropic-Beta", "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27")
+
+	directorSetClaudeCodeUpstream(req, "https://api.anthropic.com", "token")
+
+	got := req.Header.Get("Anthropic-Beta")
+	want := "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27"
+	if got != want {
+		t.Errorf("Anthropic-Beta = %s, want %s (no duplicates)", got, want)
+	}
+}
+
+func TestMergeClaudeCodeBetas(t *testing.T) {
+	tests := []struct {
+		name       string
+		clientBeta string
+		want       string
+	}{
+		{
+			name:       "empty client",
+			clientBeta: "",
+			want:       "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27",
+		},
+		{
+			name:       "client with new beta",
+			clientBeta: "context-1m-2025-08-07",
+			want:       "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27,context-1m-2025-08-07",
+		},
+		{
+			name:       "client with overlap and new",
+			clientBeta: "claude-code-20250219,context-1m-2025-08-07,tool-search-tool-2025-10-19",
+			want:       "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27,context-1m-2025-08-07,tool-search-tool-2025-10-19",
+		},
+		{
+			name:       "client exact match",
+			clientBeta: "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27",
+			want:       "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27",
+		},
+		{
+			name:       "client with whitespace",
+			clientBeta: " context-1m-2025-08-07 , tool-examples-2025-10-29 ",
+			want:       "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27,context-1m-2025-08-07,tool-examples-2025-10-29",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mergeClaudeCodeBetas(tt.clientBeta)
+			if got != tt.want {
+				t.Errorf("mergeClaudeCodeBetas(%q) = %q, want %q", tt.clientBeta, got, tt.want)
+			}
+		})
 	}
 }
 
