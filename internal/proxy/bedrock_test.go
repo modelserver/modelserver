@@ -187,6 +187,11 @@ func TestDirectorSetBedrockUpstream(t *testing.T) {
 	if want := "/model/anthropic.claude-3-sonnet-20240229-v1:0/invoke-with-response-stream"; req.URL.Path != want {
 		t.Errorf("path = %s, want %s", req.URL.Path, want)
 	}
+	// RawPath must preserve the colon — url.PathEscape keeps ":" intact,
+	// whereas url.QueryEscape would turn it into "%3A".
+	if strings.Contains(req.URL.RawPath, "%3A") {
+		t.Errorf("RawPath should not encode colon, got %s", req.URL.RawPath)
+	}
 	if req.Header.Get("Authorization") != "Bearer test-token" {
 		t.Errorf("Authorization = %s, want Bearer test-token", req.Header.Get("Authorization"))
 	}

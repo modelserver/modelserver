@@ -28,7 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { Channel, ChannelUsageSummary } from "@/api/types";
-import { Plus, MoreHorizontal, Zap, Loader2, Pencil } from "lucide-react";
+import { Plus, MoreHorizontal, Zap, Loader2, Pencil, X } from "lucide-react";
 import { toast } from "sonner";
 
 export function ChannelsPage() {
@@ -47,7 +47,7 @@ export function ChannelsPage() {
     base_url: "",
     api_key: "",
     supported_models: "",
-    model_map: "",
+    model_map: [] as Array<{ from: string; to: string }>,
     weight: "1",
     selection_priority: "0",
     max_concurrent: "10",
@@ -63,24 +63,22 @@ export function ChannelsPage() {
     return m;
   }, [statsData]);
 
-  function updateForm(key: string, value: string) {
+  function updateForm<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
-  function parseModelMap(text: string): Record<string, string> | undefined {
-    const entries = text.split(",").map((s) => s.trim()).filter(Boolean);
-    if (entries.length === 0) return undefined;
+  function modelMapToRecord(pairs: Array<{ from: string; to: string }>): Record<string, string> | undefined {
     const map: Record<string, string> = {};
-    for (const entry of entries) {
-      const [from, to] = entry.split(":").map((s) => s.trim());
-      if (from && to) map[from] = to;
+    for (const { from, to } of pairs) {
+      const f = from.trim(), t = to.trim();
+      if (f && t) map[f] = t;
     }
     return Object.keys(map).length > 0 ? map : undefined;
   }
 
-  function modelMapToText(map?: Record<string, string> | null): string {
-    if (!map) return "";
-    return Object.entries(map).map(([k, v]) => `${k}:${v}`).join(", ");
+  function recordToModelMap(map?: Record<string, string> | null): Array<{ from: string; to: string }> {
+    if (!map) return [];
+    return Object.entries(map).map(([k, v]) => ({ from: k, to: v }));
   }
 
   async function handleCreate() {
@@ -93,7 +91,7 @@ export function ChannelsPage() {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean),
-      model_map: parseModelMap(form.model_map),
+      model_map: modelMapToRecord(form.model_map),
       weight: Number(form.weight) || 1,
       selection_priority: Number(form.selection_priority) || 0,
       max_concurrent: Number(form.max_concurrent) || 10,
@@ -106,7 +104,7 @@ export function ChannelsPage() {
       base_url: "",
       api_key: "",
       supported_models: "",
-      model_map: "",
+      model_map: [],
       weight: "1",
       selection_priority: "0",
       max_concurrent: "10",
@@ -121,7 +119,7 @@ export function ChannelsPage() {
       base_url: c.base_url,
       api_key: "",
       supported_models: c.supported_models?.join(", ") ?? "",
-      model_map: modelMapToText(c.model_map),
+      model_map: recordToModelMap(c.model_map),
       weight: String(c.weight),
       selection_priority: String(c.selection_priority),
       max_concurrent: String(c.max_concurrent),
@@ -141,7 +139,7 @@ export function ChannelsPage() {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean),
-      model_map: parseModelMap(form.model_map) ?? {},
+      model_map: modelMapToRecord(form.model_map) ?? {},
       weight: Number(form.weight) || 1,
       selection_priority: Number(form.selection_priority) || 0,
       max_concurrent: Number(form.max_concurrent) || 10,
@@ -370,12 +368,54 @@ export function ChannelsPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label>Model Mappings (from:to, comma-separated)</Label>
-              <Input
-                value={form.model_map}
-                onChange={(e) => updateForm("model_map", e.target.value)}
-                placeholder="claude-opus-4-6:global.anthropic.claude-opus-4-6-v1"
-              />
+              <Label>Model Mappings</Label>
+              <div className="space-y-2">
+                {form.model_map.map((pair, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Input
+                      value={pair.from}
+                      onChange={(e) => {
+                        updateForm("model_map", form.model_map.map((p, j) =>
+                          j === i ? { from: e.target.value, to: p.to } : p
+                        ));
+                      }}
+                      placeholder="From model"
+                      className="flex-1"
+                    />
+                    <span className="text-muted-foreground shrink-0">→</span>
+                    <Input
+                      value={pair.to}
+                      onChange={(e) => {
+                        updateForm("model_map", form.model_map.map((p, j) =>
+                          j === i ? { from: p.from, to: e.target.value } : p
+                        ));
+                      }}
+                      placeholder="To upstream model"
+                      className="flex-1"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0"
+                      onClick={() => {
+                        const next = form.model_map.filter((_, j) => j !== i);
+                        updateForm("model_map", next);
+                      }}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => updateForm("model_map", [...form.model_map, { from: "", to: "" }])}
+                >
+                  <Plus className="h-4 w-4 mr-1" /> Add mapping
+                </Button>
+              </div>
             </div>
             <div className="space-y-2">
               <Label>Test Model (optional, for connectivity test)</Label>
@@ -478,12 +518,54 @@ export function ChannelsPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label>Model Mappings (from:to, comma-separated)</Label>
-              <Input
-                value={form.model_map}
-                onChange={(e) => updateForm("model_map", e.target.value)}
-                placeholder="claude-opus-4-6:global.anthropic.claude-opus-4-6-v1"
-              />
+              <Label>Model Mappings</Label>
+              <div className="space-y-2">
+                {form.model_map.map((pair, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Input
+                      value={pair.from}
+                      onChange={(e) => {
+                        updateForm("model_map", form.model_map.map((p, j) =>
+                          j === i ? { from: e.target.value, to: p.to } : p
+                        ));
+                      }}
+                      placeholder="From model"
+                      className="flex-1"
+                    />
+                    <span className="text-muted-foreground shrink-0">→</span>
+                    <Input
+                      value={pair.to}
+                      onChange={(e) => {
+                        updateForm("model_map", form.model_map.map((p, j) =>
+                          j === i ? { from: p.from, to: e.target.value } : p
+                        ));
+                      }}
+                      placeholder="To upstream model"
+                      className="flex-1"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0"
+                      onClick={() => {
+                        const next = form.model_map.filter((_, j) => j !== i);
+                        updateForm("model_map", next);
+                      }}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => updateForm("model_map", [...form.model_map, { from: "", to: "" }])}
+                >
+                  <Plus className="h-4 w-4 mr-1" /> Add mapping
+                </Button>
+              </div>
             </div>
             <div className="space-y-2">
               <Label>Test Model (optional)</Label>

@@ -111,7 +111,7 @@ func directorSetBedrockUpstream(req *http.Request, baseURL, apiKey string, model
 	} else {
 		req.URL.Path = bPath
 	}
-	rawSuffix := fmt.Sprintf("/model/%s/%s", url.QueryEscape(model), func() string {
+	rawSuffix := fmt.Sprintf("/model/%s/%s", url.PathEscape(model), func() string {
 		if streaming {
 			return "invoke-with-response-stream"
 		}
