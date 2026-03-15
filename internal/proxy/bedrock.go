@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strings"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -12,21 +13,38 @@ import (
 
 const bedrockDefaultVersion = "bedrock-2023-05-31"
 
+// splitBetaHeaders splits potentially comma-separated anthropic-beta header
+// values into individual beta feature strings.
+func splitBetaHeaders(headerValues []string) []string {
+	var betas []string
+	for _, v := range headerValues {
+		for _, b := range strings.Split(v, ",") {
+			if b = strings.TrimSpace(b); b != "" {
+				betas = append(betas, b)
+			}
+		}
+	}
+	return betas
+}
+
 // transformBedrockBody modifies the request body for Bedrock format:
 //   - Sets anthropic_version to "bedrock-2023-05-31" if not present
+//   - Moves anthropic-beta header values into body as anthropic_beta array
 //   - Removes model and stream fields
-//
-// Note: anthropic-beta header values are NOT injected here because they are
-// Anthropic-API-specific and frequently invalid on Bedrock (causing 400 errors).
-// If Bedrock beta features are needed, clients should set anthropic_beta in the
-// request body directly.
-func transformBedrockBody(body []byte) ([]byte, error) {
+func transformBedrockBody(body []byte, betas []string) ([]byte, error) {
 	var err error
 
 	if !gjson.GetBytes(body, "anthropic_version").Exists() {
 		body, err = sjson.SetBytes(body, "anthropic_version", bedrockDefaultVersion)
 		if err != nil {
 			return nil, fmt.Errorf("setting anthropic_version: %w", err)
+		}
+	}
+
+	if len(betas) > 0 {
+		body, err = sjson.SetBytes(body, "anthropic_beta", betas)
+		if err != nil {
+			return nil, fmt.Errorf("setting anthropic_beta: %w", err)
 		}
 	}
 

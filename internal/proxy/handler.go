@@ -107,11 +107,16 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Transform request body for Bedrock provider.
-	// Do NOT forward anthropic-beta header values: they are Anthropic-API-specific
-	// and often invalid on Bedrock (e.g. prompt-caching, output-128k).  If Bedrock
-	// betas are needed, set anthropic_beta in the request body directly.
 	if channel.Provider == types.ProviderBedrock {
-		bodyBytes, err = transformBedrockBody(bodyBytes)
+		betas := splitBetaHeaders(r.Header.Values("anthropic-beta"))
+		if len(betas) > 0 {
+			h.logger.Info("forwarding anthropic-beta to bedrock",
+				"betas", betas,
+				"channel_id", channel.ID,
+				"model", model,
+			)
+		}
+		bodyBytes, err = transformBedrockBody(bodyBytes, betas)
 		if err != nil {
 			writeProxyError(w, http.StatusInternalServerError, "failed to transform request for bedrock")
 			return

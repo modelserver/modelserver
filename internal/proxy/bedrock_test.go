@@ -7,10 +7,38 @@ import (
 	"testing"
 )
 
+func TestSplitBetaHeaders(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  []string
+		want   []string
+	}{
+		{"nil", nil, nil},
+		{"single value", []string{"beta1"}, []string{"beta1"}},
+		{"comma-separated", []string{"beta1,beta2, beta3"}, []string{"beta1", "beta2", "beta3"}},
+		{"multiple headers", []string{"beta1", "beta2"}, []string{"beta1", "beta2"}},
+		{"mixed", []string{"beta1,beta2", "beta3"}, []string{"beta1", "beta2", "beta3"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := splitBetaHeaders(tt.input)
+			if len(got) != len(tt.want) {
+				t.Fatalf("splitBetaHeaders(%v) = %v, want %v", tt.input, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("splitBetaHeaders(%v)[%d] = %q, want %q", tt.input, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestTransformBedrockBody(t *testing.T) {
 	tests := []struct {
 		name      string
 		body      string
+		betas     []string
 		wantCheck func(t *testing.T, result string)
 		wantErr   bool
 	}{
@@ -42,19 +70,20 @@ func TestTransformBedrockBody(t *testing.T) {
 			},
 		},
 		{
-			name: "preserves existing anthropic_beta in body",
-			body: `{"model":"m","stream":false,"anthropic_beta":["interleaved-thinking-2025-05-14"]}`,
+			name:  "injects betas into body",
+			body:  `{"model":"m","stream":false}`,
+			betas: []string{"prompt-caching-2024-07-31", "max-tokens-3-5-sonnet-2024-07-15"},
 			wantCheck: func(t *testing.T, result string) {
 				if !contains(result, `"anthropic_beta"`) {
-					t.Errorf("expected anthropic_beta preserved, got %s", result)
+					t.Errorf("expected anthropic_beta in body, got %s", result)
 				}
-				if !contains(result, "interleaved-thinking-2025-05-14") {
-					t.Errorf("expected beta value preserved, got %s", result)
+				if !contains(result, "prompt-caching-2024-07-31") || !contains(result, "max-tokens-3-5-sonnet-2024-07-15") {
+					t.Errorf("expected beta values in body, got %s", result)
 				}
 			},
 		},
 		{
-			name: "no anthropic_beta added when absent from body",
+			name: "no anthropic_beta added when no betas provided",
 			body: `{"model":"m","stream":false}`,
 			wantCheck: func(t *testing.T, result string) {
 				if contains(result, `"anthropic_beta"`) {
@@ -66,7 +95,7 @@ func TestTransformBedrockBody(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := transformBedrockBody([]byte(tt.body))
+			result, err := transformBedrockBody([]byte(tt.body), tt.betas)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("transformBedrockBody() error = %v, wantErr %v", err, tt.wantErr)
 			}
