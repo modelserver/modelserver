@@ -321,9 +321,23 @@ func handleAuthConfig(cfg *config.Config) http.HandlerFunc {
 		if providers == nil {
 			providers = []string{}
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+
+		// Optional display-name overrides for OAuth providers.
+		oauthLabels := map[string]string{}
+		if cfg.Auth.OAuth.OIDC.DisplayName != "" {
+			oauthLabels["oidc"] = cfg.Auth.OAuth.OIDC.DisplayName
+		}
+
+		resp := map[string]interface{}{
 			"oauth_providers": providers,
-		})
+		}
+		if cfg.Auth.LoginDescription != "" {
+			resp["login_description"] = cfg.Auth.LoginDescription
+		}
+		if len(oauthLabels) > 0 {
+			resp["oauth_labels"] = oauthLabels
+		}
+		writeJSON(w, http.StatusOK, resp)
 	}
 }
 

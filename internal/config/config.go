@@ -36,10 +36,11 @@ type DBConfig struct {
 
 // AuthConfig holds authentication settings.
 type AuthConfig struct {
-	JWTSecret       string        `yaml:"jwt_secret"         mapstructure:"jwt_secret"`
-	AccessTokenTTL  time.Duration `yaml:"access_token_ttl"   mapstructure:"access_token_ttl"`
-	RefreshTokenTTL time.Duration `yaml:"refresh_token_ttl"  mapstructure:"refresh_token_ttl"`
-	OAuth           OAuthConfig   `yaml:"oauth"              mapstructure:"oauth"`
+	JWTSecret        string        `yaml:"jwt_secret"          mapstructure:"jwt_secret"`
+	AccessTokenTTL   time.Duration `yaml:"access_token_ttl"    mapstructure:"access_token_ttl"`
+	RefreshTokenTTL  time.Duration `yaml:"refresh_token_ttl"   mapstructure:"refresh_token_ttl"`
+	OAuth            OAuthConfig   `yaml:"oauth"               mapstructure:"oauth"`
+	LoginDescription string        `yaml:"login_description"   mapstructure:"login_description"`
 }
 
 // OAuthConfig holds OAuth provider configurations.
@@ -61,6 +62,7 @@ type OIDCConfig struct {
 	ClientID     string `yaml:"client_id"     mapstructure:"client_id"`
 	ClientSecret string `yaml:"client_secret" mapstructure:"client_secret"`
 	RedirectURI  string `yaml:"redirect_uri"  mapstructure:"redirect_uri"`
+	DisplayName  string `yaml:"display_name"  mapstructure:"display_name"`
 }
 
 // EncryptionConfig holds the encryption key used for at-rest data.

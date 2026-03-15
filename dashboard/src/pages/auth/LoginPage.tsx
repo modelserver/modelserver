@@ -3,16 +3,20 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Loader2 } from "lucide-react";
 
-const OAUTH_LABELS: Record<string, string> = {
+const DEFAULT_OAUTH_LABELS: Record<string, string> = {
   github: "GitHub",
   google: "Google",
   oidc: "SSO (OIDC)",
 };
 
+const DEFAULT_DESCRIPTION = "Sign in to your ModelServer account";
+
 export function LoginPage() {
   const { data: authConfig, isLoading: configLoading } = useAuthConfig();
 
   const oauthProviders = authConfig?.oauth_providers ?? [];
+  const oauthLabels = { ...DEFAULT_OAUTH_LABELS, ...authConfig?.oauth_labels };
+  const description = authConfig?.login_description || DEFAULT_DESCRIPTION;
 
   function handleOAuth(provider: string) {
     const apiBase = import.meta.env.VITE_API_BASE_URL || "";
@@ -32,7 +36,7 @@ export function LoginPage() {
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">Sign In</CardTitle>
-          <CardDescription>Sign in to your ModelServer account</CardDescription>
+          <CardDescription>{description}</CardDescription>
         </CardHeader>
         <CardContent>
           {oauthProviders.length > 0 ? (
@@ -44,7 +48,7 @@ export function LoginPage() {
                   className="w-full"
                   onClick={() => handleOAuth(provider)}
                 >
-                  Continue with {OAUTH_LABELS[provider] ?? provider}
+                  Continue with {oauthLabels[provider] ?? provider}
                 </Button>
               ))}
             </div>

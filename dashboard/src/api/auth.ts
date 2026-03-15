@@ -3,6 +3,8 @@ import { api } from "./client";
 
 export interface AuthConfig {
   oauth_providers: string[];
+  login_description?: string;
+  oauth_labels?: Record<string, string>;
 }
 
 export function useAuthConfig() {
