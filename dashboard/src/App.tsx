@@ -8,7 +8,6 @@ import { AppShell } from "@/components/layout/AppShell";
 // Auth pages
 import { LoginPage } from "@/pages/auth/LoginPage";
 import { OAuthCallback } from "@/pages/auth/OAuthCallback";
-import { ClaudeCodeOAuthCallback } from "@/pages/admin/ClaudeCodeOAuthCallback";
 
 // Project pages
 import { ProjectListPage } from "@/pages/projects/ProjectListPage";
@@ -71,7 +70,6 @@ export function App() {
               {/* Public routes */}
               <Route path="/login" element={<LoginPage />} />
               <Route path="/auth/callback/:provider" element={<OAuthCallback />} />
-              <Route path="/oauth/claudecode/callback" element={<ClaudeCodeOAuthCallback />} />
 
               {/* Authenticated routes */}
               <Route element={<AppShell />}>

@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useChannels, useCreateChannel, useUpdateChannel, useDeleteChannel, useChannelStats, useTestChannel, useClaudeCodeOAuthStart, useClaudeCodeOAuthExchange } from "@/api/channels";
 import { usePlans } from "@/api/plans";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -49,6 +49,8 @@ export function ChannelsPage() {
 
   const [showCreate, setShowCreate] = useState(false);
   const [oauthDone, setOauthDone] = useState(false);
+  const [oauthWaiting, setOauthWaiting] = useState(false);
+  const [callbackUrl, setCallbackUrl] = useState("");
   const oauthRef = useRef<{ codeVerifier: string; state: string; redirectUri: string } | null>(null);
   const [editingChannel, setEditingChannel] = useState<Channel | null>(null);
   const [form, setForm] = useState({
@@ -104,9 +106,13 @@ export function ChannelsPage() {
           next.base_url = "https://api.anthropic.com";
           next.api_key = "";
           setOauthDone(false);
+          setOauthWaiting(false);
+          setCallbackUrl("");
         } else if (prev.provider === "claudecode") {
           next.api_key = "";
           setOauthDone(false);
+          setOauthWaiting(false);
+          setCallbackUrl("");
         }
       }
       return next;
@@ -145,6 +151,8 @@ export function ChannelsPage() {
     });
     setShowCreate(false);
     setOauthDone(false);
+    setOauthWaiting(false);
+    setCallbackUrl("");
     setForm({
       provider: "anthropic",
       name: "",
@@ -214,37 +222,8 @@ export function ChannelsPage() {
     }
   }
 
-  const handleOAuthMessage = useCallback(
-    async (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return;
-      if (event.data?.type !== "claudecode-oauth-callback") return;
-      const ref = oauthRef.current;
-      if (!ref) return;
-      try {
-        const res = await oauthExchange.mutateAsync({
-          code: event.data.code,
-          state: event.data.state,
-          code_verifier: ref.codeVerifier,
-          redirect_uri: ref.redirectUri,
-        });
-        updateForm("api_key", JSON.stringify(res.data));
-        setOauthDone(true);
-        toast.success("Claude Code authorized successfully");
-      } catch {
-        toast.error("OAuth token exchange failed");
-      }
-      oauthRef.current = null;
-    },
-    [oauthExchange],
-  );
-
-  useEffect(() => {
-    window.addEventListener("message", handleOAuthMessage);
-    return () => window.removeEventListener("message", handleOAuthMessage);
-  }, [handleOAuthMessage]);
-
   async function handleOAuthAuthorize() {
-    const redirectUri = window.location.origin + "/oauth/claudecode/callback";
+    const redirectUri = "http://localhost";
     try {
       const res = await oauthStart.mutateAsync({ redirect_uri: redirectUri });
       const data = res.data;
@@ -253,9 +232,39 @@ export function ChannelsPage() {
         state: data.state,
         redirectUri: data.redirect_uri,
       };
-      window.open(data.auth_url, "_blank", "popup,width=600,height=700");
+      window.open(data.auth_url, "_blank");
+      setOauthWaiting(true);
+      setCallbackUrl("");
     } catch {
       toast.error("Failed to start OAuth flow");
+    }
+  }
+
+  async function handleOAuthComplete() {
+    const ref = oauthRef.current;
+    if (!ref || !callbackUrl) return;
+    try {
+      const url = new URL(callbackUrl);
+      const code = url.searchParams.get("code");
+      const state = url.searchParams.get("state");
+      if (!code) {
+        toast.error("No authorization code found in URL");
+        return;
+      }
+      const res = await oauthExchange.mutateAsync({
+        code,
+        state: state ?? ref.state,
+        code_verifier: ref.codeVerifier,
+        redirect_uri: ref.redirectUri,
+      });
+      updateForm("api_key", JSON.stringify(res.data));
+      setOauthDone(true);
+      setOauthWaiting(false);
+      setCallbackUrl("");
+      oauthRef.current = null;
+      toast.success("Claude Code authorized successfully");
+    } catch {
+      toast.error("OAuth token exchange failed");
     }
   }
 
@@ -459,7 +468,44 @@ export function ChannelsPage() {
                   onChange={(e) => updateForm("api_key", e.target.value)}
                   placeholder="sk-..."
                 />
-              ) : !oauthDone && !form.api_key ? (
+              ) : oauthDone || form.api_key ? (
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-green-500" />
+                  <span className="text-sm text-green-600">Authorized</span>
+                  <button
+                    type="button"
+                    className="text-sm text-muted-foreground underline ml-auto"
+                    onClick={() => { updateForm("api_key", ""); setOauthDone(false); setOauthWaiting(false); setCallbackUrl(""); }}
+                  >
+                    Re-authorize
+                  </button>
+                </div>
+              ) : oauthWaiting ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    Authorize in the opened tab, then paste the redirect URL below:
+                  </p>
+                  <Input
+                    value={callbackUrl}
+                    onChange={(e) => setCallbackUrl(e.target.value)}
+                    placeholder="http://localhost?code=..."
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={handleOAuthComplete}
+                    disabled={!callbackUrl || oauthExchange.isPending}
+                  >
+                    {oauthExchange.isPending ? (
+                      <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Exchanging...</>
+                    ) : (
+                      "Complete Authorization"
+                    )}
+                  </Button>
+                </div>
+              ) : (
                 <Button
                   type="button"
                   variant="outline"
@@ -473,18 +519,6 @@ export function ChannelsPage() {
                     "Authorize with Claude"
                   )}
                 </Button>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-green-500" />
-                  <span className="text-sm text-green-600">Authorized</span>
-                  <button
-                    type="button"
-                    className="text-sm text-muted-foreground underline ml-auto"
-                    onClick={() => { updateForm("api_key", ""); setOauthDone(false); }}
-                  >
-                    Re-authorize
-                  </button>
-                </div>
               )}
             </div>
             <div className="space-y-2">
@@ -638,7 +672,44 @@ export function ChannelsPage() {
                   onChange={(e) => updateForm("api_key", e.target.value)}
                   placeholder="sk-..."
                 />
-              ) : !oauthDone && !form.api_key ? (
+              ) : oauthDone || form.api_key ? (
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-green-500" />
+                  <span className="text-sm text-green-600">Authorized</span>
+                  <button
+                    type="button"
+                    className="text-sm text-muted-foreground underline ml-auto"
+                    onClick={() => { updateForm("api_key", ""); setOauthDone(false); setOauthWaiting(false); setCallbackUrl(""); }}
+                  >
+                    Re-authorize
+                  </button>
+                </div>
+              ) : oauthWaiting ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    Authorize in the opened tab, then paste the redirect URL below:
+                  </p>
+                  <Input
+                    value={callbackUrl}
+                    onChange={(e) => setCallbackUrl(e.target.value)}
+                    placeholder="http://localhost?code=..."
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={handleOAuthComplete}
+                    disabled={!callbackUrl || oauthExchange.isPending}
+                  >
+                    {oauthExchange.isPending ? (
+                      <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Exchanging...</>
+                    ) : (
+                      "Complete Authorization"
+                    )}
+                  </Button>
+                </div>
+              ) : (
                 <Button
                   type="button"
                   variant="outline"
@@ -652,18 +723,6 @@ export function ChannelsPage() {
                     "Authorize with Claude"
                   )}
                 </Button>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-green-500" />
-                  <span className="text-sm text-green-600">Authorized</span>
-                  <button
-                    type="button"
-                    className="text-sm text-muted-foreground underline ml-auto"
-                    onClick={() => { updateForm("api_key", ""); setOauthDone(false); }}
-                  >
-                    Re-authorize
-                  </button>
-                </div>
               )}
             </div>
             <div className="space-y-2">
