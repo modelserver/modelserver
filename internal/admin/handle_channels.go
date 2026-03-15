@@ -270,16 +270,8 @@ func handleTestChannel(st *store.Store, encKey []byte) http.HandlerFunc {
 			}
 			req.Header.Set("Authorization", "Bearer "+creds.AccessToken)
 			req.Header.Set("Anthropic-Version", "2023-06-01")
-			req.Header.Set("Anthropic-Beta", "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27")
+			req.Header.Set("Anthropic-Beta", "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14")
 			req.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
-			req.Header.Set("X-App", "cli")
-			req.Header.Set("User-Agent", "claude-cli/2.1.76 (external, cli)")
-			req.Header.Set("X-Stainless-Lang", "js")
-			req.Header.Set("X-Stainless-Package-Version", "0.74.0")
-			req.Header.Set("X-Stainless-OS", "Linux")
-			req.Header.Set("X-Stainless-Runtime", "bun")
-			req.Header.Set("X-Stainless-Runtime-Version", "1.3.11")
-			req.Header.Set("X-Stainless-Arch", "x64")
 		default: // anthropic
 			req.Header.Set("x-api-key", string(apiKey))
 			req.Header.Set("anthropic-version", "2023-06-01")

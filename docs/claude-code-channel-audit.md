@@ -1,14 +1,13 @@
 # Claude Code Channel 实现审计报告
 
 > 审计日期: 2026-03-15
-> 最后更新: 2026-03-15
 > Claude Code CLI 版本: 2.1.76 (binary at `/root/.local/share/claude/versions/2.1.76`)
-> Modelserver 分支: main
+> Modelserver 分支: main (commit b9b6868)
 
 ## 概述
 
 本报告对比 Claude Code CLI v2.1.76 的实际行为与 modelserver 中 Claude Code channel 的代理实现，
-覆盖 OAuth 流程、API 请求 headers、token 刷新逻辑、Test Connection 以及 Beta 透传等方面。
+覆盖 OAuth 流程、API 请求 headers、token 刷新逻辑等方面。
 
 ---
 
@@ -52,31 +51,23 @@
 
 ---
 
-## 2. HTTP Headers 对比（LLM API 代理请求）
+## 2. HTTP Headers 对比（LLM API 请求）
 
-> 代码路径: `internal/proxy/claudecode.go` — `directorSetClaudeCodeUpstream()`
+### 2.1 核心 Anthropic Headers
 
-### 2.1 核心 Anthropic Headers — ✅ 全部一致
+| Header | CLI 实际值 | Modelserver 值 | 一致性 | 严重程度 |
+|--------|-----------|---------------|--------|---------|
+| `Authorization` | `Bearer {token}` | `Bearer {token}` | ✅ 一致 | - |
+| `Anthropic-Version` | `2023-06-01` | `2023-06-01` | ✅ 一致 | - |
+| `Anthropic-Dangerous-Direct-Browser-Access` | `true` | `true` | ✅ 一致 | - |
+| `X-App` | `cli` | `cli` | ✅ 一致 | - |
 
-| Header | CLI 实际值 | Modelserver 值 | 状态 |
-|--------|-----------|---------------|------|
-| `Authorization` | `Bearer {token}` | `Bearer {token}` | ✅ |
-| `Anthropic-Version` | `2023-06-01` | `2023-06-01` | ✅ |
-| `Anthropic-Dangerous-Direct-Browser-Access` | `true` | `true` | ✅ |
-| `X-App` | `cli` | `cli` | ✅ |
+### 2.2 Anthropic-Beta Header ❌ 有差异
 
-### 2.2 Anthropic-Beta Header — ✅ 已修复 + 动态合并
-
-**基础集合 (硬编码，与 CLI JHA 一致):**
+**Modelserver 当前值:**
 ```
-claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27
+claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14
 ```
-
-**动态合并机制:** Modelserver 现在从客户端请求中读取 `Anthropic-Beta` header，
-将客户端发送的额外 beta flags（如 `context-1m-2025-08-07`）与基础集合合并后发送到上游，
-确保基础 beta 始终存在，同时透传客户端新增的 beta。
-
-实现: `mergeClaudeCodeBetas()` in `internal/proxy/claudecode.go`
 
 **CLI v2.1.76 的 beta 常量定义:**
 ```javascript
@@ -111,11 +102,41 @@ XHA = Set(["interleaved-thinking-2025-05-14", "context-1m-2025-08-07", "tool-sea
 uj = "oauth-2025-04-20"  // 仅用于非 API 调用（如 client_data 请求）
 ```
 
-### 2.3 User-Agent — ✅ 已修复
+**差异分析:**
 
-| 项目 | CLI 实际值 | Modelserver 值 | 状态 |
+| Beta Flag | CLI 是否使用 | Modelserver 是否使用 | 问题 |
+|-----------|-------------|---------------------|------|
+| `claude-code-20250219` | ✅ (核心) | ✅ | 一致 |
+| `oauth-2025-04-20` | ❌ 仅用于非 API 调用 | ✅ 包含在 API 请求中 | ⚠️ 不影响功能但不一致 |
+| `interleaved-thinking-2025-05-14` | ✅ (核心) | ✅ | 一致 |
+| `fine-grained-tool-streaming-2025-05-14` | ❌ **不存在于 CLI 中** | ✅ 包含在 API 请求中 | ❌ **已过时/无效** |
+| `context-management-2025-06-27` | ✅ (核心) | ❌ 缺失 | ❌ **缺失关键 beta** |
+
+**建议修改 `Anthropic-Beta` 为:**
+
+CLI 中 beta 是动态组合的，但基础集合 (JHA) 是:
+```
+claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27
+```
+
+根据请求内容的不同，CLI 还会动态添加其他 beta（如 `context-1m-2025-08-07`, `structured-outputs-2025-12-15` 等），
+但 modelserver 作为代理无法预知用户请求需要哪些 beta。
+
+**推荐的最小一致集合:**
+```
+claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27
+```
+
+如果需要支持更多特性，可以扩展为（包括所有可能被用到的 beta）:
+```
+claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27,context-1m-2025-08-07,structured-outputs-2025-12-15,prompt-caching-scope-2026-01-05
+```
+
+### 2.3 User-Agent ❌ 版本过时
+
+| 项目 | CLI 实际值 | Modelserver 值 | 问题 |
 |------|-----------|---------------|------|
-| User-Agent | `claude-cli/2.1.76 (external, cli)` | `claude-cli/2.1.76 (external, cli)` | ✅ |
+| User-Agent | `claude-cli/2.1.76 (external, cli)` | `claude-cli/1.0.83 (external, cli)` | ❌ **版本严重过时** |
 
 CLI 的 User-Agent 格式为:
 ```
@@ -123,16 +144,22 @@ claude-cli/{VERSION} (external, {ENTRYPOINT}{agent_sdk}{client_app}{workload})
 ```
 其中 VERSION 来自编译时常量，ENTRYPOINT 通常为 `cli`。
 
-### 2.4 X-Stainless SDK Headers — ✅ 已修复
+**建议: 更新为 `claude-cli/2.1.76 (external, cli)` 或更高版本。**
 
-| Header | CLI 实际值 (v2.1.76) | Modelserver 值 | 状态 |
+### 2.4 X-Stainless SDK Headers ❌ 多个值过时
+
+这些 headers 由 Anthropic JS SDK 自动生成，反映实际运行环境。
+
+| Header | CLI 实际值 (v2.1.76) | Modelserver 值 | 问题 |
 |--------|---------------------|---------------|------|
-| `X-Stainless-Lang` | `js` | `js` | ✅ |
-| `X-Stainless-Package-Version` | `0.74.0` | `0.74.0` | ✅ |
-| `X-Stainless-OS` | `Linux` | `Linux` | ✅ |
-| `X-Stainless-Runtime` | `bun` | `bun` | ✅ |
-| `X-Stainless-Runtime-Version` | `1.3.11` | `1.3.11` | ✅ |
-| `X-Stainless-Arch` | `x64` | `x64` | ✅ |
+| `X-Stainless-Lang` | `js` | `js` | ✅ 一致 |
+| `X-Stainless-Package-Version` | `0.74.0` | `0.52.0` | ❌ **SDK 版本过时** |
+| `X-Stainless-OS` | `Linux` | `Linux` | ✅ 一致 |
+| `X-Stainless-Runtime` | `bun` | `node` | ❌ **运行时错误** (CLI 使用 Bun, 非 Node.js) |
+| `X-Stainless-Runtime-Version` | `1.3.11` | `v22.13.1` | ❌ **版本错误** (应为 Bun 版本) |
+| `X-Stainless-Arch` | `x64` | `x64` | ✅ 一致 |
+
+**说明:** Claude Code v2.1.76 使用 Bun 运行时（v1.3.11）编译为原生二进制。SDK 版本为 `@anthropic-ai/sdk@0.74.0`。
 
 ### 2.5 其他 Headers
 
@@ -150,78 +177,75 @@ claude-cli/{VERSION} (external, {ENTRYPOINT}{agent_sdk}{client_app}{workload})
 
 ---
 
-## 3. Test Connection Headers — ✅ 已修复
+## 3. 问题汇总与优先级
 
-> 代码路径: `internal/admin/handle_channels.go` — `handleTestChannel()`
+### 🔴 高优先级（可能影响功能或被服务端检测）
 
-Test Connection 对 Claude Code channel 的请求现在与代理请求保持一致的 headers:
+1. **`Anthropic-Beta` 包含不存在的 beta `fine-grained-tool-streaming-2025-05-14`**
+   - 文件: `internal/proxy/claudecode.go:42`
+   - 该 beta 不存在于 CLI v2.1.76 的代码中，可能是早期版本遗留
+   - 风险: 服务端可能忽略未知 beta，但也可能触发异常行为
 
-| Header | 值 | 状态 |
-|--------|---|------|
-| `Authorization` | `Bearer {access_token}` | ✅ |
-| `Anthropic-Version` | `2023-06-01` | ✅ |
-| `Anthropic-Beta` | `claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27` | ✅ |
-| `Anthropic-Dangerous-Direct-Browser-Access` | `true` | ✅ |
-| `X-App` | `cli` | ✅ |
-| `User-Agent` | `claude-cli/2.1.76 (external, cli)` | ✅ |
-| `X-Stainless-Lang` | `js` | ✅ |
-| `X-Stainless-Package-Version` | `0.74.0` | ✅ |
-| `X-Stainless-OS` | `Linux` | ✅ |
-| `X-Stainless-Runtime` | `bun` | ✅ |
-| `X-Stainless-Runtime-Version` | `1.3.11` | ✅ |
-| `X-Stainless-Arch` | `x64` | ✅ |
-| `?beta=true` query param | 包含在 endpoint URL 中 | ✅ |
+2. **`Anthropic-Beta` 缺失核心 beta `context-management-2025-06-27`**
+   - 文件: `internal/proxy/claudecode.go:42`
+   - 这是 CLI 基础 beta 集合 (JHA) 的成员
+   - 风险: 缺失该 beta 可能导致部分上下文管理功能不可用
 
-**注意:** Test Connection 是管理员发起的一次性检测请求，不经过 reverse proxy director，
-因此 headers 需要独立维护。未来更新 headers 时需同步修改两处。
+3. **`User-Agent` 版本严重过时 (`1.0.83` → 应为 `2.1.76`)**
+   - 文件: `internal/proxy/claudecode.go:46`
+   - 风险: 服务端可能基于版本号进行功能门控或行为调整
 
----
+### 🟡 中优先级（不一致但短期不太可能导致问题）
 
-## 4. 已修复问题追溯
+4. **`X-Stainless-Package-Version` 过时 (`0.52.0` → 应为 `0.74.0`)**
+   - 文件: `internal/proxy/claudecode.go:48`
 
-### 初始审计发现的问题（已全部修复）:
+5. **`X-Stainless-Runtime` 错误 (`node` → 应为 `bun`)**
+   - 文件: `internal/proxy/claudecode.go:50`
 
-| # | 问题 | 原始优先级 | 修复 commit | 状态 |
-|---|------|----------|------------|------|
-| 1 | `Anthropic-Beta` 包含不存在的 `fine-grained-tool-streaming` | 🔴 高 | d10ed79 | ✅ 已修复 |
-| 2 | `Anthropic-Beta` 缺失核心 `context-management` | 🔴 高 | d10ed79 | ✅ 已修复 |
-| 3 | `User-Agent` 版本过时 (`1.0.83` → `2.1.76`) | 🔴 高 | d10ed79 | ✅ 已修复 |
-| 4 | `X-Stainless-Package-Version` 过时 (`0.52.0` → `0.74.0`) | 🟡 中 | d10ed79 | ✅ 已修复 |
-| 5 | `X-Stainless-Runtime` 错误 (`node` → `bun`) | 🟡 中 | d10ed79 | ✅ 已修复 |
-| 6 | `X-Stainless-Runtime-Version` 错误 | 🟡 中 | d10ed79 | ✅ 已修复 |
-| 7 | `Anthropic-Beta` 中多余的 `oauth-2025-04-20` | 🟡 中 | d10ed79 | ✅ 已修复 |
-| 8 | `Connection: keep-alive` 多余 | 🟢 低 | - | 保留（无害） |
+6. **`X-Stainless-Runtime-Version` 错误 (`v22.13.1` → 应为 `1.3.11`)**
+   - 文件: `internal/proxy/claudecode.go:51`
 
-### 本次审阅新发现并修复的问题:
+7. **`Anthropic-Beta` 中 `oauth-2025-04-20` 不应出现在 API 请求中**
+   - 该 beta 在 CLI 中仅用于非 API 调用 (client_data 等)
 
-| # | 问题 | 优先级 | 状态 |
-|---|------|-------|------|
-| 9 | Test Connection headers 未同步修复 — beta/UA/Stainless 全部过时 | 🔴 高 | ✅ 已修复 |
-| 10 | Beta header 硬覆盖导致客户端新增 beta 被丢弃 | 🔴 高 | ✅ 已修复（合并策略） |
+### 🟢 低优先级（设计差异，可接受）
+
+8. **`Connection: keep-alive` 是多余的**（HTTP/1.1 默认行为）
 
 ---
 
-## 5. 剩余低优先级项
+## 4. 建议修改
 
-### 🟢 `Connection: keep-alive` 多余（保留）
+### `internal/proxy/claudecode.go` 第 42-52 行:
 
-HTTP/1.1 默认行为。无害但多余，保留不影响功能。
+```go
+// 修改前:
+req.Header.Set("Anthropic-Beta", "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14")
+req.Header.Set("User-Agent", "claude-cli/1.0.83 (external, cli)")
+req.Header.Set("X-Stainless-Package-Version", "0.52.0")
+req.Header.Set("X-Stainless-Runtime", "node")
+req.Header.Set("X-Stainless-Runtime-Version", "v22.13.1")
+
+// 修改后:
+req.Header.Set("Anthropic-Beta", "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27")
+req.Header.Set("User-Agent", "claude-cli/2.1.76 (external, cli)")
+req.Header.Set("X-Stainless-Package-Version", "0.74.0")
+req.Header.Set("X-Stainless-Runtime", "bun")
+req.Header.Set("X-Stainless-Runtime-Version", "1.3.11")
+```
 
 ---
 
-## 6. 长期维护建议
+## 5. 长期维护建议
 
 1. **版本跟踪**: CLI 和 SDK 版本频繁更新。建议将这些版本号提取为可配置常量或环境变量，
    而不是硬编码在代码中，以便跟随 CLI 升级更新。
 
-2. **Beta 动态合并 (已实现)**: `mergeClaudeCodeBetas()` 函数确保基础 beta 始终存在，
-   同时透传客户端发送的额外 beta flags。当 CLI 添加新 beta（如 `context-1m`）时，
-   modelserver 无需代码修改即可透传。
+2. **Beta 动态传递**: 考虑将 `Anthropic-Beta` header 改为从请求中透传（如果客户端已设置），
+   而不是完全覆盖。或者至少将 modelserver 硬编码的 beta 与请求中已有的 beta 合并。
 
-3. **Test Connection 同步**: `handleTestChannel()` 中的 Claude Code headers 需要
-   与 `directorSetClaudeCodeUpstream()` 手动保持同步。未来可考虑提取为共享的 header 设置函数。
-
-4. **定期审计**: 每次 Claude Code CLI 重大版本更新时，重新审计 headers 的一致性。
+3. **定期审计**: 每次 Claude Code CLI 重大版本更新时，重新审计 headers 的一致性。
 
 ---
 
