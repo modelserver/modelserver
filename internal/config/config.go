@@ -138,6 +138,8 @@ func setDefaults(v *viper.Viper) {
 	_ = v.BindEnv("auth.oauth.oidc.client_id", "MODELSERVER_AUTH_OIDC_CLIENT_ID")
 	_ = v.BindEnv("auth.oauth.oidc.client_secret", "MODELSERVER_AUTH_OIDC_CLIENT_SECRET")
 	_ = v.BindEnv("auth.oauth.oidc.redirect_uri", "MODELSERVER_AUTH_OIDC_REDIRECT_URI")
+	_ = v.BindEnv("auth.oauth.oidc.display_name", "MODELSERVER_AUTH_OIDC_DISPLAY_NAME")
+	_ = v.BindEnv("auth.login_description")
 
 	// Encryption
 	_ = v.BindEnv("encryption.key")
