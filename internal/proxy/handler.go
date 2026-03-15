@@ -466,6 +466,10 @@ func directorSetUpstream(req *http.Request, baseURL, apiKey string) {
 	// and the interceptor always sees plain-text SSE data.
 	req.Header.Del("Accept-Encoding")
 
+	// Suppress X-Forwarded-For so the client's IP is never forwarded to
+	// the upstream provider, preventing geo-restriction errors.
+	req.Header["X-Forwarded-For"] = nil
+
 	// Set the channel's own API key for the upstream request.
 	req.Header.Set("x-api-key", apiKey)
 	if req.Header.Get("anthropic-version") == "" {

@@ -86,6 +86,12 @@ func directorSetBedrockUpstream(req *http.Request, baseURL, apiKey string, model
 	req.Header.Del("anthropic-beta")
 	req.Header.Del("Accept-Encoding") // let Transport handle compression
 
+	// Suppress X-Forwarded-For so the client's IP is never forwarded to
+	// the upstream. httputil.ReverseProxy skips appending X-Forwarded-For
+	// when the header key is already present (even if nil), preventing
+	// geo-restriction errors from gateways that inspect client IPs.
+	req.Header["X-Forwarded-For"] = nil
+
 	// Set Bearer token auth for Bedrock.
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 }

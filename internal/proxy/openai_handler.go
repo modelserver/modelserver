@@ -351,6 +351,10 @@ func directorSetOpenAIUpstream(req *http.Request, baseURL, apiKey string) {
 	req.Header.Del("anthropic-version")
 	req.Header.Del("anthropic-beta")
 
+	// Suppress X-Forwarded-For so the client's IP is never forwarded to
+	// the upstream provider, preventing geo-restriction errors.
+	req.Header["X-Forwarded-For"] = nil
+
 	// Remove Accept-Encoding so that Go's http.Transport controls compression.
 	// When a client sends Accept-Encoding (e.g. gzip), the Transport forwards it
 	// to the upstream but does NOT auto-decompress the response — leaving the
