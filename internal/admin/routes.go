@@ -155,6 +155,8 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 					r.Put("/", handleUpdateChannel(st, encKey))
 					r.Delete("/", handleDeleteChannel(st))
 					r.Post("/test", handleTestChannel(st, encKey))
+					r.Get("/oauth/status", handleClaudeCodeTokenStatus(st, encKey))
+					r.Post("/oauth/refresh", handleClaudeCodeTokenRefresh(st, encKey))
 				})
 			})
 

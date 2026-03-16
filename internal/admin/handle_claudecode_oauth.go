@@ -8,11 +8,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/modelserver/modelserver/internal/crypto"
 	"github.com/modelserver/modelserver/internal/proxy"
+	"github.com/modelserver/modelserver/internal/store"
 )
 
 const (
@@ -151,5 +155,143 @@ func handleClaudeCodeOAuthExchange() http.HandlerFunc {
 		}
 
 		writeData(w, http.StatusOK, credentials)
+	}
+}
+
+func handleClaudeCodeTokenStatus(st *store.Store, encKey []byte) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		channelID := chi.URLParam(r, "channelID")
+		ch, err := st.GetChannelByID(channelID)
+		if err != nil || ch == nil {
+			writeError(w, http.StatusNotFound, "not_found", "channel not found")
+			return
+		}
+		if ch.Provider != "claudecode" {
+			writeError(w, http.StatusBadRequest, "bad_request", "channel is not a claudecode channel")
+			return
+		}
+
+		plaintext, err := crypto.Decrypt(encKey, ch.APIKeyEncrypted)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to decrypt credentials")
+			return
+		}
+
+		var creds proxy.ClaudeCodeCredentials
+		if err := json.Unmarshal(plaintext, &creds); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to parse credentials")
+			return
+		}
+
+		writeData(w, http.StatusOK, map[string]interface{}{
+			"expires_at":        creds.ExpiresAt,
+			"has_refresh_token": creds.RefreshToken != "",
+		})
+	}
+}
+
+func handleClaudeCodeTokenRefresh(st *store.Store, encKey []byte) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		channelID := chi.URLParam(r, "channelID")
+		ch, err := st.GetChannelByID(channelID)
+		if err != nil || ch == nil {
+			writeError(w, http.StatusNotFound, "not_found", "channel not found")
+			return
+		}
+		if ch.Provider != "claudecode" {
+			writeError(w, http.StatusBadRequest, "bad_request", "channel is not a claudecode channel")
+			return
+		}
+
+		plaintext, err := crypto.Decrypt(encKey, ch.APIKeyEncrypted)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to decrypt credentials")
+			return
+		}
+
+		var creds proxy.ClaudeCodeCredentials
+		if err := json.Unmarshal(plaintext, &creds); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to parse credentials")
+			return
+		}
+
+		if creds.RefreshToken == "" {
+			writeError(w, http.StatusBadRequest, "bad_request", "no refresh token available, please re-authorize")
+			return
+		}
+
+		clientID := creds.ClientID
+		if clientID == "" {
+			clientID = proxy.ClaudeCodeClientID
+		}
+
+		reqBody, _ := json.Marshal(map[string]string{
+			"grant_type":    "refresh_token",
+			"client_id":     clientID,
+			"refresh_token": creds.RefreshToken,
+			"scope":         proxy.ClaudeCodeScopes,
+		})
+
+		client := &http.Client{Timeout: 15 * time.Second}
+		resp, err := client.Post(proxy.ClaudeCodeTokenURL, "application/json", bytes.NewReader(reqBody))
+		if err != nil {
+			slog.Error("claudecode manual token refresh: request failed", "channel_id", channelID, "error", err)
+			writeError(w, http.StatusBadGateway, "upstream_error", fmt.Sprintf("token refresh request failed: %v", err))
+			return
+		}
+		defer resp.Body.Close()
+
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+		if resp.StatusCode != http.StatusOK {
+			slog.Error("claudecode manual token refresh: upstream error", "channel_id", channelID, "status", resp.StatusCode, "body", string(body))
+			writeError(w, http.StatusBadGateway, "upstream_error",
+				fmt.Sprintf("token refresh returned %d: %s", resp.StatusCode, string(body)))
+			return
+		}
+
+		var tokenResp struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			ExpiresIn    int64  `json:"expires_in"`
+		}
+		if err := json.Unmarshal(body, &tokenResp); err != nil {
+			slog.Error("claudecode manual token refresh: parse error", "channel_id", channelID, "error", err)
+			writeError(w, http.StatusInternalServerError, "internal", "failed to parse token response")
+			return
+		}
+
+		newCreds := proxy.ClaudeCodeCredentials{
+			AccessToken:  tokenResp.AccessToken,
+			RefreshToken: tokenResp.RefreshToken,
+			ExpiresAt:    time.Now().Unix() + tokenResp.ExpiresIn,
+			ClientID:     clientID,
+		}
+
+		credsJSON, err := json.Marshal(newCreds)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to marshal credentials")
+			return
+		}
+
+		encrypted, err := crypto.Encrypt(encKey, credsJSON)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to encrypt credentials")
+			return
+		}
+
+		if err := st.UpdateChannel(channelID, map[string]interface{}{
+			"api_key_encrypted": encrypted,
+		}); err != nil {
+			slog.Error("claudecode manual token refresh: db update failed", "channel_id", channelID, "error", err)
+			writeError(w, http.StatusInternalServerError, "internal", "failed to persist refreshed credentials")
+			return
+		}
+
+		slog.Info("claudecode token manually refreshed", "channel_id", channelID, "expires_at", newCreds.ExpiresAt)
+
+		writeData(w, http.StatusOK, map[string]interface{}{
+			"expires_at":        newCreds.ExpiresAt,
+			"has_refresh_token": newCreds.RefreshToken != "",
+		})
 	}
 }

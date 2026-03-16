@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef } from "react";
-import { useChannels, useCreateChannel, useUpdateChannel, useDeleteChannel, useChannelStats, useTestChannel, useClaudeCodeOAuthStart, useClaudeCodeOAuthExchange } from "@/api/channels";
+import { useChannels, useCreateChannel, useUpdateChannel, useDeleteChannel, useChannelStats, useTestChannel, useClaudeCodeOAuthStart, useClaudeCodeOAuthExchange, useClaudeCodeTokenStatus, useClaudeCodeTokenRefresh } from "@/api/channels";
 import { usePlans } from "@/api/plans";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
@@ -29,7 +29,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { Channel, ChannelUsageSummary } from "@/api/types";
-import { Plus, MoreHorizontal, Zap, Loader2, Pencil, X, CheckCircle2 } from "lucide-react";
+import { Plus, MoreHorizontal, Zap, Loader2, Pencil, X, CheckCircle2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 export function ChannelsPage() {
@@ -46,7 +46,10 @@ export function ChannelsPage() {
   const testChannel = useTestChannel();
   const oauthStart = useClaudeCodeOAuthStart();
   const oauthExchange = useClaudeCodeOAuthExchange();
+  const tokenRefresh = useClaudeCodeTokenRefresh();
 
+  const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
+  const tokenStatus = useClaudeCodeTokenStatus(editingChannelId);
   const [showCreate, setShowCreate] = useState(false);
   const [oauthDone, setOauthDone] = useState(false);
   const [oauthWaiting, setOauthWaiting] = useState(false);
@@ -181,6 +184,7 @@ export function ChannelsPage() {
       test_model: c.test_model ?? "",
     });
     setOauthDone(c.provider === "claudecode");
+    setEditingChannelId(c.provider === "claudecode" ? c.id : null);
     setEditingChannel(c);
   }
 
@@ -627,7 +631,7 @@ export function ChannelsPage() {
       </Dialog>
 
       {/* Edit Channel Dialog */}
-      <Dialog open={!!editingChannel} onOpenChange={(open) => { if (!open) setEditingChannel(null); }}>
+      <Dialog open={!!editingChannel} onOpenChange={(open) => { if (!open) { setEditingChannel(null); setEditingChannelId(null); } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Edit Channel</DialogTitle>
@@ -726,6 +730,61 @@ export function ChannelsPage() {
                 </Button>
               )}
             </div>
+            {form.provider === "claudecode" && editingChannel && (
+              <div className="rounded-md border p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium">Token Status</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={tokenRefresh.isPending}
+                    onClick={async () => {
+                      try {
+                        const res = await tokenRefresh.mutateAsync(editingChannel.id);
+                        const expiresAt = res.data.expires_at;
+                        toast.success(`Token refreshed, expires at ${new Date(expiresAt * 1000).toLocaleString()}`);
+                      } catch (e: unknown) {
+                        const msg = e instanceof Error ? e.message : "refresh failed";
+                        toast.error(`Token refresh failed: ${msg}`);
+                      }
+                    }}
+                  >
+                    {tokenRefresh.isPending ? (
+                      <><Loader2 className="mr-1 h-3 w-3 animate-spin" />Refreshing...</>
+                    ) : (
+                      <><RefreshCw className="mr-1 h-3 w-3" />Refresh Token</>
+                    )}
+                  </Button>
+                </div>
+                {tokenStatus.isLoading ? (
+                  <p className="text-xs text-muted-foreground">Loading token status...</p>
+                ) : tokenStatus.data?.data ? (() => {
+                  const expiresAt = tokenStatus.data.data.expires_at;
+                  const now = Math.floor(Date.now() / 1000);
+                  const expired = now > expiresAt;
+                  const diffSec = Math.abs(expiresAt - now);
+                  const hours = Math.floor(diffSec / 3600);
+                  const minutes = Math.floor((diffSec % 3600) / 60);
+                  const timeStr = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+                  return (
+                    <div className="space-y-1">
+                      <p className={`text-xs ${expired ? "text-destructive" : "text-muted-foreground"}`}>
+                        {expired
+                          ? `Token expired ${timeStr} ago`
+                          : `Token expires in ${timeStr}`}
+                        {" "}({new Date(expiresAt * 1000).toLocaleString()})
+                      </p>
+                      {!tokenStatus.data.data.has_refresh_token && (
+                        <p className="text-xs text-destructive">No refresh token available. Please re-authorize.</p>
+                      )}
+                    </div>
+                  );
+                })() : tokenStatus.isError ? (
+                  <p className="text-xs text-destructive">Failed to load token status</p>
+                ) : null}
+              </div>
+            )}
             <div className="space-y-2">
               <Label>Supported Models (comma-separated)</Label>
               <Input

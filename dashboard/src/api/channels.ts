@@ -97,6 +97,30 @@ export function useClaudeCodeOAuthExchange() {
   });
 }
 
+export function useClaudeCodeTokenStatus(channelId: string | null) {
+  return useQuery({
+    queryKey: ["admin", "channels", channelId, "oauth-status"],
+    queryFn: () =>
+      api.get<DataResponse<{ expires_at: number; has_refresh_token: boolean }>>(
+        `/api/v1/channels/${channelId}/oauth/status`,
+      ),
+    enabled: !!channelId,
+  });
+}
+
+export function useClaudeCodeTokenRefresh() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (channelId: string) =>
+      api.post<DataResponse<{ expires_at: number; has_refresh_token: boolean }>>(
+        `/api/v1/channels/${channelId}/oauth/refresh`,
+      ),
+    onSuccess: (_data, channelId) => {
+      qc.invalidateQueries({ queryKey: ["admin", "channels", channelId, "oauth-status"] });
+    },
+  });
+}
+
 // --- Channel Routes ---
 
 export function useChannelRoutes() {
