@@ -19,9 +19,9 @@ type UsageSummary struct {
 
 // DailyUsage holds usage data for a single day.
 type DailyUsage struct {
-	Date         string `json:"date"`
-	RequestCount int64  `json:"request_count"`
-	TotalTokens  int64  `json:"total_tokens"`
+	Date         time.Time `json:"date"`
+	RequestCount int64     `json:"request_count"`
+	TotalTokens  int64     `json:"total_tokens"`
 }
 
 // ChannelUsageSummary holds aggregated usage data per channel.
