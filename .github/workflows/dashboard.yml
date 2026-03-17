@@ -33,11 +33,10 @@ jobs:
           VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
         run: pnpm build
 
-      - name: Upload to COS via S3 protocol
+      - name: Configure COS
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: ${{ vars.COS_REGION }}
           COS_BUCKET: ${{ vars.COS_BUCKET }}
           COS_REGION: ${{ vars.COS_REGION }}
         run: |
@@ -47,8 +46,26 @@ jobs:
             -s "$AWS_SECRET_ACCESS_KEY" \
             -b "$COS_BUCKET" \
             -r "$COS_REGION"
-          coscmd upload -rsf --delete dashboard/dist/ /
 
+      # Step 1: Upload hashed assets (JS/CSS/images) first.
+      # New chunks coexist safely with old ones — no naming conflict.
+      - name: Upload hashed assets
+        run: coscmd upload -rs dashboard/dist/assets/ /assets/
+
+      # Step 2: Upload index.html AFTER assets are live.
+      # This is the atomic switch — the moment index.html lands,
+      # all referenced assets are already available.
+      - name: Upload index.html
+        run: coscmd upload dashboard/dist/index.html /index.html
+
+      # Step 3: Sync remaining root files (favicon, robots.txt, etc.)
+      # and delete stale files from COS.
+      - name: Sync remaining files and clean up
+        run: coscmd upload -rsf --delete dashboard/dist/ /
+
+      # Step 4: Purge all CDN cache so SPA routes (/projects, /admin, etc.)
+      # pick up the new index.html. Hashed assets will be re-fetched from
+      # COS on first access — acceptable because this only happens at deploy.
       - name: Purge CDN cache
         env:
           TENCENT_SECRET_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -60,4 +77,4 @@ jobs:
           tccli configure set secretId "$TENCENT_SECRET_ID"
           tccli configure set secretKey "$TENCENT_SECRET_KEY"
           tccli configure set region "$COS_REGION"
-          tccli cdn PurgePathCache --Paths "[\"$CDN_DOMAIN/\"]" --FlushType flush
+          tccli cdn PurgePathCache --Paths "[\"${CDN_DOMAIN}/\"]" --FlushType flush
