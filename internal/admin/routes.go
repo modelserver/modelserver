@@ -171,6 +171,44 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 					r.Delete("/", handleDeleteRoute(st))
 				})
 			})
+
+			// Upstreams (superadmin only).
+			r.Route("/upstreams", func(r chi.Router) {
+				r.Use(RequireSuperadmin)
+				r.Get("/", handleListUpstreams(st, encKey))
+				r.Post("/", handleCreateUpstream(st, encKey))
+				r.Route("/{upstreamID}", func(r chi.Router) {
+					r.Get("/", handleGetUpstream(st))
+					r.Put("/", handleUpdateUpstream(st, encKey))
+					r.Delete("/", handleDeleteUpstream(st))
+				})
+			})
+
+			// Upstream Groups (superadmin only).
+			r.Route("/upstream-groups", func(r chi.Router) {
+				r.Use(RequireSuperadmin)
+				r.Get("/", handleListUpstreamGroups(st))
+				r.Post("/", handleCreateUpstreamGroup(st))
+				r.Route("/{groupID}", func(r chi.Router) {
+					r.Get("/", handleGetUpstreamGroup(st))
+					r.Put("/", handleUpdateUpstreamGroup(st))
+					r.Delete("/", handleDeleteUpstreamGroup(st))
+					r.Get("/members", handleListGroupMembers(st))
+					r.Post("/members", handleAddGroupMember(st))
+					r.Delete("/members/{upstreamID}", handleRemoveGroupMember(st))
+				})
+			})
+
+			// Routing routes (superadmin only).
+			r.Route("/routing", func(r chi.Router) {
+				r.Use(RequireSuperadmin)
+				r.Get("/routes", handleListRoutingRoutes(st))
+				r.Post("/routes", handleCreateRoutingRoute(st))
+				r.Put("/routes/{routeID}", handleUpdateRoutingRoute(st))
+				r.Delete("/routes/{routeID}", handleDeleteRoutingRoute(st))
+				// TODO: Wire HealthProvider once the Router is integrated.
+				// r.Get("/health", handleRoutingHealth(hp))
+			})
 		})
 	})
 }
