@@ -297,3 +297,99 @@ export interface Trace {
   created_at: string;
   updated_at: string;
 }
+
+// --- Upstream (new routing system) ---
+export interface Upstream {
+  id: string;
+  provider: "anthropic" | "openai" | "gemini" | "bedrock" | "claudecode";
+  name: string;
+  base_url: string;
+  supported_models: string[];
+  model_map?: Record<string, string>;
+  weight: number;
+  max_concurrent: number;
+  dial_timeout?: string;
+  read_timeout?: string;
+  test_model?: string;
+  health_check?: HealthCheckConfig;
+  status: "active" | "draining" | "disabled";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HealthCheckConfig {
+  enabled: boolean;
+  interval?: string;
+  timeout?: string;
+}
+
+// --- Upstream Group ---
+export interface UpstreamGroup {
+  id: string;
+  name: string;
+  lb_policy: "weighted_random" | "round_robin" | "least_conn";
+  retry_policy?: RetryPolicy;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RetryPolicy {
+  max_retries: number;
+  retry_on: string[];
+  retry_delay?: string;
+}
+
+export interface UpstreamGroupMember {
+  upstream_group_id: string;
+  upstream_id: string;
+  weight?: number;
+  is_backup: boolean;
+}
+
+export interface UpstreamGroupWithMembers extends UpstreamGroup {
+  members: UpstreamGroupMemberDetail[];
+}
+
+export interface UpstreamGroupMemberDetail extends UpstreamGroupMember {
+  upstream?: Upstream;
+}
+
+// --- Route (new routing system) ---
+export interface RoutingRoute {
+  id: string;
+  project_id?: string;
+  model_pattern: string;
+  upstream_group_id: string;
+  match_priority: number;
+  conditions?: Record<string, string>;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// --- Routing Health ---
+export interface RoutingHealthResponse {
+  upstreams: UpstreamHealth[];
+  groups: GroupHealth[];
+}
+
+export interface UpstreamHealth {
+  id: string;
+  name: string;
+  provider: string;
+  circuit_state: "closed" | "open" | "half_open";
+  health_status: "unknown" | "ok" | "degraded" | "down";
+  active_connections: number;
+  recent_errors: number;
+  last_check_at?: string;
+  last_error_at?: string;
+}
+
+export interface GroupHealth {
+  id: string;
+  name: string;
+  lb_policy: string;
+  healthy_members: number;
+  total_members: number;
+}

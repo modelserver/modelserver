@@ -50,6 +50,11 @@ import { RoutesPage } from "@/pages/admin/RoutesPage";
 // Admin Requests
 import { AdminRequestsPage } from "@/pages/admin/RequestsPage";
 
+// Admin Upstreams & Routing
+import { UpstreamsPage } from "@/pages/admin/UpstreamsPage";
+import { UpstreamGroupsPage } from "@/pages/admin/UpstreamGroupsPage";
+import { RoutingHealthPage } from "@/pages/admin/RoutingHealthPage";
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -91,6 +96,9 @@ export function App() {
                 <Route path="admin/channels" element={<ChannelsPage />} />
                 <Route path="admin/requests" element={<AdminRequestsPage />} />
                 <Route path="admin/routes" element={<RoutesPage />} />
+                <Route path="admin/upstreams" element={<UpstreamsPage />} />
+                <Route path="admin/upstream-groups" element={<UpstreamGroupsPage />} />
+                <Route path="admin/routing-health" element={<RoutingHealthPage />} />
               </Route>
             </Routes>
           </BrowserRouter>
