@@ -201,16 +201,17 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 				)
 
 				req := types.Request{
-					ProjectID: project.ID,
-					APIKeyID:  apiKey.ID,
-					ChannelID: channel.ID,
-					TraceID:   traceID,
-					Provider:  channel.Provider,
-					Model:     model,
-					Streaming: isStreaming,
-					Status:    status,
-					LatencyMs: duration,
-					ClientIP:  clientIP,
+					ProjectID:    project.ID,
+					APIKeyID:     apiKey.ID,
+					ChannelID:    channel.ID,
+					TraceID:      traceID,
+					Provider:     channel.Provider,
+					Model:        model,
+					Streaming:    isStreaming,
+					Status:       status,
+					LatencyMs:    duration,
+					ErrorMessage: string(errBody),
+					ClientIP:     clientIP,
 				}
 				if pendingReq.ID != "" {
 					go func() {

@@ -15,6 +15,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import type { Request } from "@/api/types";
 
 function formatTokens(n: number): string {
@@ -39,6 +45,7 @@ export function AdminRequestsPage() {
   const [status, setStatus] = useState("");
   const [since, setSince] = useState(defaultSince);
   const [until, setUntil] = useState(defaultUntil);
+  const [selected, setSelected] = useState<Request | null>(null);
 
   const { data: channelsData } = useChannels();
   const channels = channelsData?.data ?? [];
@@ -171,6 +178,7 @@ export function AdminRequestsPage() {
               data={requests}
               keyFn={(r) => r.id}
               emptyMessage="No requests found"
+              onRowClick={setSelected}
             />
           )}
         </CardContent>
@@ -185,6 +193,59 @@ export function AdminRequestsPage() {
           onPageChange={setPage}
         />
       )}
+
+      {/* Detail drawer */}
+      <Sheet open={!!selected} onOpenChange={() => setSelected(null)}>
+        <SheetContent className="overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>Request Details</SheetTitle>
+          </SheetHeader>
+          {selected && (
+            <div className="space-y-4 px-4 pb-4 text-sm">
+              <DetailRow label="ID" value={selected.id} />
+              <DetailRow label="Project" value={selected.project_id} />
+              {selected.msg_id && (
+                <DetailRow label="Msg ID" value={selected.msg_id} />
+              )}
+              <DetailRow label="Model" value={selected.model} />
+              <DetailRow label="Provider" value={selected.provider} />
+              <DetailRow label="Channel" value={channelName(selected.channel_id)} />
+              <DetailRow label="Status" value={selected.status} />
+              <DetailRow label="Streaming" value={selected.streaming ? "Yes" : "No"} />
+              <DetailRow label="Input Tokens" value={formatTokens(selected.input_tokens)} />
+              <DetailRow label="Output Tokens" value={formatTokens(selected.output_tokens)} />
+              <DetailRow label="Cache Creation" value={formatTokens(selected.cache_creation_tokens)} />
+              <DetailRow label="Cache Read" value={formatTokens(selected.cache_read_tokens)} />
+              <DetailRow label="Duration" value={`${selected.latency_ms}ms`} />
+              <DetailRow label="TTFT" value={selected.ttft_ms > 0 ? `${selected.ttft_ms}ms` : "-"} />
+              {selected.trace_id && (
+                <DetailRow label="Trace ID" value={selected.trace_id} />
+              )}
+              {selected.client_ip && (
+                <DetailRow label="Client IP" value={selected.client_ip} />
+              )}
+              {selected.error_message && (
+                <div className="space-y-1">
+                  <span className="text-muted-foreground">Error</span>
+                  <pre className="whitespace-pre-wrap break-all rounded bg-destructive/10 p-3 text-xs text-destructive">
+                    {selected.error_message}
+                  </pre>
+                </div>
+              )}
+              <DetailRow label="Time" value={new Date(selected.created_at).toLocaleString()} />
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
+    </div>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between border-b pb-2">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-mono text-right break-all max-w-[60%]">{value}</span>
     </div>
   );
 }

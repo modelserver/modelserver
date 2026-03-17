@@ -257,7 +257,12 @@ export function RequestsPage() {
                 <DetailRow label="Client IP" value={selected.client_ip} />
               )}
               {selected.error_message && (
-                <DetailRow label="Error" value={selected.error_message} />
+                <div className="space-y-1">
+                  <span className="text-muted-foreground">Error</span>
+                  <pre className="whitespace-pre-wrap break-all rounded bg-destructive/10 p-3 text-xs text-destructive">
+                    {selected.error_message}
+                  </pre>
+                </div>
               )}
               <DetailRow label="Time" value={new Date(selected.created_at).toLocaleString()} />
             </div>
