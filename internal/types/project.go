@@ -9,6 +9,7 @@ import (
 const (
 	ProjectStatusActive    = "active"
 	ProjectStatusSuspended = "suspended"
+	ProjectStatusArchived  = "archived"
 )
 
 // Project represents a logical grouping of API keys, channels, and policies.

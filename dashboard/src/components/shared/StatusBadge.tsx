@@ -8,6 +8,7 @@ const statusStyles: Record<string, string> = {
   error: "bg-red-500/10 text-red-500 border-red-500/20",
   rate_limited: "bg-orange-500/10 text-orange-500 border-orange-500/20",
   suspended: "bg-red-500/10 text-red-500 border-red-500/20",
+  archived: "bg-gray-500/10 text-gray-500 border-gray-500/20",
   pending: "bg-blue-500/10 text-blue-500 border-blue-500/20",
   paid: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
   expired: "bg-gray-500/10 text-gray-500 border-gray-500/20",

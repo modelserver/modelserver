@@ -104,7 +104,7 @@ func handleUpdateProject(st *store.Store) http.HandlerFunc {
 		}
 
 		updates := make(map[string]interface{})
-		for _, field := range []string{"name", "description", "status", "settings", "billing_tags"} {
+		for _, field := range []string{"name", "description", "settings", "billing_tags"} {
 			if v, ok := body[field]; ok {
 				updates[field] = v
 			}
@@ -124,17 +124,42 @@ func handleUpdateProject(st *store.Store) http.HandlerFunc {
 	}
 }
 
-func handleDeleteProject(st *store.Store) http.HandlerFunc {
+func handleArchiveProject(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !requireRole(w, r, types.RoleOwner) {
 			return
 		}
 		projectID := chi.URLParam(r, "projectID")
-		if err := st.DeleteProject(projectID); err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "failed to delete project")
+		if err := st.UpdateProject(projectID, map[string]interface{}{"status": types.ProjectStatusArchived}); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to archive project")
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
+		project, _ := st.GetProjectByID(projectID)
+		writeData(w, http.StatusOK, project)
+	}
+}
+
+func handleUnarchiveProject(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireRole(w, r, types.RoleOwner) {
+			return
+		}
+		projectID := chi.URLParam(r, "projectID")
+		project, err := st.GetProjectByID(projectID)
+		if err != nil || project == nil {
+			writeError(w, http.StatusNotFound, "not_found", "project not found")
+			return
+		}
+		if project.Status != types.ProjectStatusArchived {
+			writeError(w, http.StatusBadRequest, "bad_request", "project is not archived")
+			return
+		}
+		if err := st.UpdateProject(projectID, map[string]interface{}{"status": types.ProjectStatusActive}); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to unarchive project")
+			return
+		}
+		project, _ = st.GetProjectByID(projectID)
+		writeData(w, http.StatusOK, project)
 	}
 }
 

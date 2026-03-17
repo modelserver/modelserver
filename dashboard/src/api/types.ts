@@ -53,7 +53,7 @@ export interface Project {
   name: string;
   description?: string;
   created_by: string;
-  status: "active" | "suspended";
+  status: "active" | "suspended" | "archived";
   settings?: Record<string, unknown>;
   billing_tags?: string[];
   created_at: string;

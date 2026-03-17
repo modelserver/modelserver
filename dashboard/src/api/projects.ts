@@ -44,10 +44,24 @@ export function useUpdateProject(projectId: string) {
   });
 }
 
-export function useDeleteProject(projectId: string) {
+export function useArchiveProject(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api.delete(`/api/v1/projects/${projectId}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["projects"] }),
+    mutationFn: () => api.post<DataResponse<Project>>(`/api/v1/projects/${projectId}/archive`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["project", projectId] });
+    },
+  });
+}
+
+export function useUnarchiveProject(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<DataResponse<Project>>(`/api/v1/projects/${projectId}/unarchive`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["project", projectId] });
+    },
   });
 }

@@ -70,14 +70,14 @@ func (s *Store) GetProjectByID(id string) (*types.Project, error) {
 	return p, nil
 }
 
-// ListUserProjects returns projects the user is a member of.
+// ListUserProjects returns projects the user is a member of (excludes archived by default).
 func (s *Store) ListUserProjects(userID string, p types.PaginationParams) ([]types.Project, int, error) {
 	ctx := context.Background()
 	var total int
 	if err := s.pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM projects
 		JOIN project_members ON projects.id = project_members.project_id
-		WHERE project_members.user_id = $1`, userID,
+		WHERE project_members.user_id = $1 AND projects.status != 'archived'`, userID,
 	).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count projects: %w", err)
 	}
@@ -86,7 +86,7 @@ func (s *Store) ListUserProjects(userID string, p types.PaginationParams) ([]typ
 		SELECT p.id, p.name, COALESCE(p.description, ''), p.created_by, p.status, p.settings, p.billing_tags, p.created_at, p.updated_at
 		FROM projects p
 		JOIN project_members pm ON p.id = pm.project_id
-		WHERE pm.user_id = $1
+		WHERE pm.user_id = $1 AND p.status != 'archived'
 		ORDER BY p.%s %s LIMIT $2 OFFSET $3`,
 		sanitizeSort(p.Sort, "created_at"), sanitizeOrder(p.Order)),
 		userID, p.Limit(), p.Offset(),
@@ -152,11 +152,6 @@ func (s *Store) UpdateProject(id string, updates map[string]interface{}) error {
 	return err
 }
 
-// DeleteProject deletes a project by ID.
-func (s *Store) DeleteProject(id string) error {
-	_, err := s.pool.Exec(context.Background(), "DELETE FROM projects WHERE id = $1", id)
-	return err
-}
 
 // --- Project Members ---
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { useCurrentProject } from "@/hooks/useCurrentProject";
-import { useProject, useUpdateProject, useDeleteProject } from "@/api/projects";
+import { useProject, useUpdateProject, useArchiveProject, useUnarchiveProject } from "@/api/projects";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,12 +22,15 @@ export function ProjectSettingsPage() {
   const navigate = useNavigate();
   const { data } = useProject(projectId);
   const updateProject = useUpdateProject(projectId);
-  const deleteProject = useDeleteProject(projectId);
-  const [showDelete, setShowDelete] = useState(false);
+  const archiveProject = useArchiveProject(projectId);
+  const unarchiveProject = useUnarchiveProject(projectId);
+  const [showArchive, setShowArchive] = useState(false);
 
   const project = data?.data;
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+
+  const isArchived = project?.status === "archived";
 
   useEffect(() => {
     if (project) {
@@ -41,9 +44,13 @@ export function ProjectSettingsPage() {
     await updateProject.mutateAsync({ name, description: description || undefined });
   }
 
-  async function handleDelete() {
-    await deleteProject.mutateAsync();
+  async function handleArchive() {
+    await archiveProject.mutateAsync();
     navigate("/projects");
+  }
+
+  async function handleUnarchive() {
+    await unarchiveProject.mutateAsync();
   }
 
   if (!project) {
@@ -86,38 +93,54 @@ export function ProjectSettingsPage() {
 
       <Separator />
 
-      <Card className="border-destructive/50">
-        <CardHeader>
-          <CardTitle className="text-base text-destructive-foreground">Danger Zone</CardTitle>
-          <CardDescription>
-            Permanently delete this project and all associated data.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button variant="destructive" onClick={() => setShowDelete(true)}>
-            Delete Project
-          </Button>
-        </CardContent>
-      </Card>
+      {isArchived ? (
+        <Card className="border-blue-500/50">
+          <CardHeader>
+            <CardTitle className="text-base">Archived</CardTitle>
+            <CardDescription>
+              This project is archived. API requests are disabled. Unarchive to restore full access.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button onClick={handleUnarchive} disabled={unarchiveProject.isPending}>
+              {unarchiveProject.isPending ? "Unarchiving..." : "Unarchive Project"}
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card className="border-destructive/50">
+          <CardHeader>
+            <CardTitle className="text-base text-destructive-foreground">Danger Zone</CardTitle>
+            <CardDescription>
+              Archive this project to disable all API access. You can unarchive it later.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="destructive" onClick={() => setShowArchive(true)}>
+              Archive Project
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
-      <Dialog open={showDelete} onOpenChange={setShowDelete}>
+      <Dialog open={showArchive} onOpenChange={setShowArchive}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete Project</DialogTitle>
+            <DialogTitle>Archive Project</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete &quot;{project.name}&quot;? This action cannot be undone.
+              Are you sure you want to archive &quot;{project.name}&quot;? All API requests will be disabled. You can unarchive it later.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDelete(false)}>
+            <Button variant="outline" onClick={() => setShowArchive(false)}>
               Cancel
             </Button>
             <Button
               variant="destructive"
-              onClick={handleDelete}
-              disabled={deleteProject.isPending}
+              onClick={handleArchive}
+              disabled={archiveProject.isPending}
             >
-              {deleteProject.isPending ? "Deleting..." : "Delete"}
+              {archiveProject.isPending ? "Archiving..." : "Archive"}
             </Button>
           </DialogFooter>
         </DialogContent>

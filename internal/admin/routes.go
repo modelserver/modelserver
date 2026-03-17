@@ -89,7 +89,8 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 					r.Use(projectAccessMiddleware(st))
 					r.Get("/", handleGetProject(st))
 					r.Put("/", handleUpdateProject(st))
-					r.Delete("/", handleDeleteProject(st))
+					r.Post("/archive", handleArchiveProject(st))
+					r.Post("/unarchive", handleUnarchiveProject(st))
 
 					// Project members.
 					r.Get("/members", handleListMembers(st))
