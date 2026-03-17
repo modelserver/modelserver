@@ -1,7 +1,7 @@
 import { useAuthConfig } from "@/api/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Loader2 } from "lucide-react";
+import { Loader2, Github } from "lucide-react";
 
 const DEFAULT_OAUTH_LABELS: Record<string, string> = {
   github: "GitHub",
@@ -17,6 +17,8 @@ export function LoginPage() {
   const oauthProviders = authConfig?.oauth_providers ?? [];
   const oauthLabels = { ...DEFAULT_OAUTH_LABELS, ...authConfig?.oauth_labels };
   const description = authConfig?.login_description || DEFAULT_DESCRIPTION;
+  const footerHTML = authConfig?.login_footer_html;
+  const githubURL = authConfig?.github_url;
 
   function handleOAuth(provider: string) {
     const apiBase = import.meta.env.VITE_API_BASE_URL || "";
@@ -32,7 +34,7 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-4">
+    <div className="flex min-h-screen flex-col items-center justify-center p-4">
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">Sign In</CardTitle>
@@ -59,6 +61,24 @@ export function LoginPage() {
           )}
         </CardContent>
       </Card>
+      {(githubURL || footerHTML) && (
+        <footer className="mt-6 flex flex-col items-center gap-2 text-sm text-muted-foreground">
+          {githubURL && (
+            <a
+              href={githubURL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 transition-colors hover:text-foreground"
+            >
+              <Github className="h-4 w-4" />
+              GitHub
+            </a>
+          )}
+          {footerHTML && (
+            <div dangerouslySetInnerHTML={{ __html: footerHTML }} />
+          )}
+        </footer>
+      )}
     </div>
   );
 }

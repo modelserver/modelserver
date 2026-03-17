@@ -337,6 +337,12 @@ func handleAuthConfig(cfg *config.Config) http.HandlerFunc {
 		if len(oauthLabels) > 0 {
 			resp["oauth_labels"] = oauthLabels
 		}
+		if cfg.Auth.LoginFooterHTML != "" {
+			resp["login_footer_html"] = cfg.Auth.LoginFooterHTML
+		}
+		if cfg.Auth.GitHubURL != "" {
+			resp["github_url"] = cfg.Auth.GitHubURL
+		}
 		writeJSON(w, http.StatusOK, resp)
 	}
 }

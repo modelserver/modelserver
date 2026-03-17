@@ -41,6 +41,8 @@ type AuthConfig struct {
 	RefreshTokenTTL  time.Duration `yaml:"refresh_token_ttl"   mapstructure:"refresh_token_ttl"`
 	OAuth            OAuthConfig   `yaml:"oauth"               mapstructure:"oauth"`
 	LoginDescription string        `yaml:"login_description"   mapstructure:"login_description"`
+	LoginFooterHTML  string        `yaml:"login_footer_html"   mapstructure:"login_footer_html"`
+	GitHubURL        string        `yaml:"github_url"          mapstructure:"github_url"`
 }
 
 // OAuthConfig holds OAuth provider configurations.
@@ -140,6 +142,8 @@ func setDefaults(v *viper.Viper) {
 	_ = v.BindEnv("auth.oauth.oidc.redirect_uri", "MODELSERVER_AUTH_OIDC_REDIRECT_URI")
 	_ = v.BindEnv("auth.oauth.oidc.display_name", "MODELSERVER_AUTH_OIDC_DISPLAY_NAME")
 	_ = v.BindEnv("auth.login_description")
+	_ = v.BindEnv("auth.login_footer_html")
+	_ = v.BindEnv("auth.github_url")
 
 	// Encryption
 	_ = v.BindEnv("encryption.key")

@@ -5,6 +5,8 @@ export interface AuthConfig {
   oauth_providers: string[];
   login_description?: string;
   oauth_labels?: Record<string, string>;
+  login_footer_html?: string;
+  github_url?: string;
 }
 
 export function useAuthConfig() {
