@@ -25,7 +25,7 @@ function initials(name?: string): string {
   );
 }
 
-function UsageBar({ label, percentage }: { label: string; percentage: number }) {
+function UsageBar({ percentage }: { percentage: number }) {
   const clamped = Math.min(percentage, 100);
   const barColor =
     percentage > 95
@@ -34,17 +34,14 @@ function UsageBar({ label, percentage }: { label: string; percentage: number }) 
         ? "bg-yellow-500"
         : "bg-primary";
   return (
-    <div className="space-y-0.5">
-      <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-        <span>{label}</span>
-        <span>{percentage.toFixed(0)}%</span>
-      </div>
-      <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+    <div className="flex items-center gap-2 w-24">
+      <div className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${barColor}`}
           style={{ width: `${clamped}%` }}
         />
       </div>
+      <span className="text-[10px] text-muted-foreground w-8 text-right">{percentage.toFixed(0)}%</span>
     </div>
   );
 }
@@ -152,17 +149,19 @@ export function AdminProjectsPage() {
       },
     },
     {
-      header: "Usage",
+      header: "5h Usage",
       accessor: (p) => {
-        const statuses = projectUsageMap.get(p.id);
-        if (!statuses) return <span className="text-muted-foreground">—</span>;
-        return (
-          <div className="w-28 space-y-1">
-            {statuses.map((s) => (
-              <UsageBar key={s.window} label={s.window} percentage={s.percentage} />
-            ))}
-          </div>
-        );
+        const s = projectUsageMap.get(p.id)?.find((s) => s.window === "5h");
+        if (!s) return <span className="text-muted-foreground">—</span>;
+        return <UsageBar percentage={s.percentage} />;
+      },
+    },
+    {
+      header: "7d Usage",
+      accessor: (p) => {
+        const s = projectUsageMap.get(p.id)?.find((s) => s.window === "7d");
+        if (!s) return <span className="text-muted-foreground">—</span>;
+        return <UsageBar percentage={s.percentage} />;
       },
     },
     {
