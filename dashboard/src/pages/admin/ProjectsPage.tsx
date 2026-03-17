@@ -12,6 +12,7 @@ import { useNavigate } from "react-router";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type { DataResponse, Subscription } from "@/api/types";
+import type { CreditWindowStatus } from "@/api/subscriptions";
 
 function initials(name?: string): string {
   return (
@@ -21,6 +22,30 @@ function initials(name?: string): string {
       .join("")
       .toUpperCase()
       .slice(0, 2) ?? "?"
+  );
+}
+
+function UsageBar({ label, percentage }: { label: string; percentage: number }) {
+  const clamped = Math.min(percentage, 100);
+  const barColor =
+    percentage > 95
+      ? "bg-red-500"
+      : percentage > 80
+        ? "bg-yellow-500"
+        : "bg-primary";
+  return (
+    <div className="space-y-0.5">
+      <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+        <span>{label}</span>
+        <span>{percentage.toFixed(0)}%</span>
+      </div>
+      <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all ${barColor}`}
+          style={{ width: `${clamped}%` }}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -49,6 +74,18 @@ export function AdminProjectsPage() {
     })),
   });
 
+  // Fetch usage for each project in parallel.
+  const usageQueries = useQueries({
+    queries: projects.map((p) => ({
+      queryKey: ["subscription-usage", p.id],
+      queryFn: () =>
+        api.get<DataResponse<CreditWindowStatus[]>>(
+          `/api/v1/projects/${p.id}/subscription/usage`,
+        ),
+      enabled: projects.length > 0,
+    })),
+  });
+
   // Map project ID -> active subscription's plan name.
   const projectPlanMap = new Map<string, string>();
   for (let i = 0; i < projects.length; i++) {
@@ -57,6 +94,15 @@ export function AdminProjectsPage() {
     if (active) {
       const plan = active.plan_id ? planMap.get(active.plan_id) : undefined;
       projectPlanMap.set(projects[i]!.id, plan?.display_name || active.plan_name);
+    }
+  }
+
+  // Map project ID -> usage statuses.
+  const projectUsageMap = new Map<string, CreditWindowStatus[]>();
+  for (let i = 0; i < projects.length; i++) {
+    const statuses = usageQueries[i]?.data?.data;
+    if (statuses && statuses.length > 0) {
+      projectUsageMap.set(projects[i]!.id, statuses);
     }
   }
 
@@ -102,6 +148,20 @@ export function AdminProjectsPage() {
           <Badge variant="outline">{planName}</Badge>
         ) : (
           <span className="text-muted-foreground">—</span>
+        );
+      },
+    },
+    {
+      header: "Usage",
+      accessor: (p) => {
+        const statuses = projectUsageMap.get(p.id);
+        if (!statuses) return <span className="text-muted-foreground">—</span>;
+        return (
+          <div className="w-28 space-y-1">
+            {statuses.map((s) => (
+              <UsageBar key={s.window} label={s.window} percentage={s.percentage} />
+            ))}
+          </div>
         );
       },
     },
