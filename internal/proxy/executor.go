@@ -71,6 +71,7 @@ func NewExecutor(
 			// No timeout here; streaming responses can be long-lived.
 			// Per-upstream timeouts are applied via request context.
 			Transport: &http.Transport{
+				Proxy:               http.ProxyFromEnvironment,
 				MaxIdleConnsPerHost: 100,
 				IdleConnTimeout:     90 * time.Second,
 				// DisableCompression so we control Accept-Encoding ourselves
