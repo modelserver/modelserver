@@ -100,6 +100,24 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 	// 2. Get ordered list of upstream candidates (primary + retry fallbacks).
 	candidates := e.router.SelectWithRetry(r.Context(), group, reqCtx.SessionID)
 
+	if len(candidates) == 0 {
+		e.logger.Warn("SelectWithRetry returned no candidates",
+			"model", reqCtx.Model,
+			"group_members", len(group.members))
+		// Log why each member was skipped.
+		for _, m := range group.members {
+			uid := m.upstream.ID
+			e.logger.Warn("upstream skipped",
+				"upstream_id", uid,
+				"upstream_name", m.upstream.Name,
+				"status", m.upstream.Status,
+				"health", e.router.healthChecker.Status(uid).String(),
+				"circuit_open", !e.router.circuitBreaker.CanPass(uid),
+				"concurrent", e.router.connTracker.Count(uid),
+				"max_concurrent", m.upstream.MaxConcurrent)
+		}
+	}
+
 	// 2b. Filter by allowed providers if the handler specified a constraint.
 	// This ensures /v1/messages only goes to Anthropic/Bedrock/ClaudeCode and
 	// /v1/responses only goes to OpenAI upstreams.
