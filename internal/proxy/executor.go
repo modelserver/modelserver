@@ -843,7 +843,6 @@ func sanitizeUpstreamHeaders(h http.Header) http.Header {
 		canon := http.CanonicalHeaderKey(key)
 		switch {
 		case canon == "Content-Type",
-			canon == "Accept",
 			canon == "User-Agent",
 			canon == "X-App",
 			canon == "Anthropic-Beta",
