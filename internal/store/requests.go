@@ -9,31 +9,46 @@ import (
 )
 
 // CreateRequest inserts a new request log.
+// ChannelID and UpstreamID may be empty at creation time (set later via CompleteRequest).
 func (s *Store) CreateRequest(r *types.Request) error {
 	return s.pool.QueryRow(context.Background(), `
-		INSERT INTO requests (project_id, api_key_id, channel_id, trace_id, msg_id, provider, model, streaming,
+		INSERT INTO requests (project_id, api_key_id, channel_id, upstream_id, trace_id, msg_id, provider, model, streaming,
 			status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 			credits_consumed, latency_ms, ttft_ms, error_message, client_ip)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 		RETURNING id, created_at`,
-		r.ProjectID, r.APIKeyID, r.ChannelID, nullString(r.TraceID), nullString(r.MsgID),
-		r.Provider, r.Model, r.Streaming, r.Status,
+		r.ProjectID, r.APIKeyID, nullString(r.ChannelID), nullString(r.UpstreamID),
+		nullString(r.TraceID), nullString(r.MsgID),
+		nullString(r.Provider), r.Model, r.Streaming, r.Status,
 		r.InputTokens, r.OutputTokens, r.CacheCreationTokens, r.CacheReadTokens,
 		r.CreditsConsumed, r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP,
 	).Scan(&r.ID, &r.CreatedAt)
 }
 
-// CompleteRequest updates a pending request row with final data.
+// CompleteRequest updates a pending request row with final data, including
+// the upstream/provider/routing fields that are unknown at creation time.
 func (s *Store) CompleteRequest(id string, r *types.Request) error {
 	_, err := s.pool.Exec(context.Background(), `
 		UPDATE requests
 		SET status = $1, msg_id = $2, input_tokens = $3, output_tokens = $4,
 			cache_creation_tokens = $5, cache_read_tokens = $6, credits_consumed = $7,
-			latency_ms = $8, ttft_ms = $9, error_message = $10, client_ip = $11
-		WHERE id = $12`,
+			latency_ms = $8, ttft_ms = $9, error_message = $10, client_ip = $11,
+			upstream_id = COALESCE($12, upstream_id),
+			channel_id = COALESCE($12, channel_id),
+			provider = COALESCE(NULLIF($13, ''), provider),
+			route_id = $14,
+			upstream_group_id = $15,
+			attempt = $16,
+			retry_reason = $17,
+			selection_ms = $18
+		WHERE id = $19`,
 		r.Status, nullString(r.MsgID), r.InputTokens, r.OutputTokens,
 		r.CacheCreationTokens, r.CacheReadTokens, r.CreditsConsumed,
-		r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP, id,
+		r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP,
+		nullString(r.UpstreamID), r.Provider,
+		nullString(r.RouteID), nullString(r.GroupID),
+		r.Attempt, nullString(r.RetryReason), r.SelectionMs,
+		id,
 	)
 	return err
 }
@@ -48,13 +63,14 @@ func (s *Store) BatchCreateRequests(requests []types.Request) error {
 	for i := range requests {
 		r := &requests[i]
 		err := tx.QueryRow(ctx, `
-			INSERT INTO requests (project_id, api_key_id, channel_id, trace_id, msg_id, provider, model, streaming,
+			INSERT INTO requests (project_id, api_key_id, channel_id, upstream_id, trace_id, msg_id, provider, model, streaming,
 				status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 				credits_consumed, latency_ms, ttft_ms, error_message, client_ip)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 			RETURNING id, created_at`,
-			r.ProjectID, r.APIKeyID, r.ChannelID, nullString(r.TraceID), nullString(r.MsgID),
-			r.Provider, r.Model, r.Streaming, r.Status,
+			r.ProjectID, r.APIKeyID, nullString(r.ChannelID), nullString(r.UpstreamID),
+			nullString(r.TraceID), nullString(r.MsgID),
+			nullString(r.Provider), r.Model, r.Streaming, r.Status,
 			r.InputTokens, r.OutputTokens, r.CacheCreationTokens, r.CacheReadTokens,
 			r.CreditsConsumed, r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP,
 		).Scan(&r.ID, &r.CreatedAt)

@@ -41,7 +41,14 @@ type Request struct {
 	TTFTMs              int64     `json:"ttft_ms"`
 	ClientIP            string    `json:"client_ip,omitempty"`
 	ErrorMessage        string    `json:"error_message,omitempty"`
-	CreatedAt           time.Time `json:"created_at"`
+	// Routing observability fields (populated by the new routing pipeline).
+	UpstreamID  string  `json:"upstream_id,omitempty"`
+	RouteID     string  `json:"route_id,omitempty"`
+	GroupID     string  `json:"group_id,omitempty"`
+	Attempt     int     `json:"attempt,omitempty"`
+	RetryReason string  `json:"retry_reason,omitempty"`
+	SelectionMs float64 `json:"selection_ms,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Trace groups related requests under a shared trace identifier.

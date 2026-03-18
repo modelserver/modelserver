@@ -40,7 +40,7 @@ func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 	if len(apiKey.AllowedModels) > 0 {
 		models = apiKey.AllowedModels
 	} else {
-		models = h.channelRouter.ActiveModels()
+		models = h.router.ActiveModels()
 	}
 
 	w.Header().Set("Content-Type", "application/json")

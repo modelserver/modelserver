@@ -2,22 +2,15 @@ package types
 
 import "time"
 
-// Provider name constants.
+// Deprecated: Use UpstreamStatus* constants instead.
+// These aliases are kept for backward compatibility with existing code.
 const (
-	ProviderAnthropic = "anthropic"
-	ProviderOpenAI    = "openai"
-	ProviderGemini    = "gemini"
-	ProviderBedrock   = "bedrock"
-	ProviderClaudeCode = "claudecode"
+	ChannelStatusActive   = UpstreamStatusActive
+	ChannelStatusDisabled = UpstreamStatusDisabled
 )
 
-// Channel status constants.
-const (
-	ChannelStatusActive   = "active"
-	ChannelStatusDisabled = "disabled"
-)
-
-// Channel represents an upstream AI provider endpoint that the proxy routes requests to.
+// Deprecated: Channel is superseded by Upstream.
+// This type is kept for backward compatibility; new code should use Upstream.
 type Channel struct {
 	ID                string            `json:"id"`
 	Provider          string            `json:"provider"`
@@ -38,6 +31,8 @@ type Channel struct {
 // ResolveModel returns the upstream model name for the given request model.
 // If a mapping exists in ModelMap, the mapped value is returned; otherwise
 // the original model name is returned unchanged.
+//
+// Deprecated: Use Upstream.ResolveModel instead.
 func (c *Channel) ResolveModel(requestModel string) string {
 	if c.ModelMap != nil {
 		if mapped, ok := c.ModelMap[requestModel]; ok {
@@ -47,7 +42,8 @@ func (c *Channel) ResolveModel(requestModel string) string {
 	return requestModel
 }
 
-// ChannelRoute maps a model name pattern to specific channels.
+// Deprecated: ChannelRoute is superseded by Route.
+// This type is kept for backward compatibility; new code should use Route.
 type ChannelRoute struct {
 	ID            string    `json:"id"`
 	ProjectID     string    `json:"project_id,omitempty"`

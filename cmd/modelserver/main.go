@@ -93,37 +93,49 @@ func main() {
 	coll.Start()
 	defer coll.Stop()
 
-	// Load channels and routes for channel router.
-	channels, err := st.ListChannels()
+	// Load upstreams, groups, and routes for the new routing engine.
+	upstreams, err := st.ListUpstreams()
 	if err != nil {
-		log.Fatalf("failed to load channels: %v", err)
+		log.Fatalf("failed to load upstreams: %v", err)
 	}
-	if len(channels) > 0 && len(encryptionKey) == 0 {
-		logger.Warn("encryption key not configured but channels exist — channel API keys will not be decrypted, proxy requests will fail")
+	if len(upstreams) > 0 && len(encryptionKey) == 0 {
+		logger.Warn("encryption key not configured but upstreams exist — upstream API keys will not be decrypted")
 	}
-	routes, err := st.ListChannelRoutes()
+	groups, err := st.ListUpstreamGroupsWithMembers()
 	if err != nil {
-		log.Fatalf("failed to load channel routes: %v", err)
+		log.Fatalf("failed to load upstream groups: %v", err)
 	}
-	channelRouter := proxy.NewChannelRouter(channels, routes, encryptionKey, logger, cfg.Trace.SessionChannelTTL, st)
-	channelRouter.StartSessionCleanup(10 * time.Minute)
+	routingRoutes, err := st.ListRoutes()
+	if err != nil {
+		log.Fatalf("failed to load routes: %v", err)
+	}
 
-	// Periodically reload channels and routes from the database.
+	router := proxy.NewRouter(upstreams, groups, routingRoutes, encryptionKey, logger, cfg.Trace.SessionChannelTTL, st)
+	router.StartSessionCleanup(10 * time.Minute)
+	// Start health checker.
+	router.HealthChecker().Start(context.Background())
+
+	// Periodically reload routing configuration.
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
-			ch, err := st.ListChannels()
+			u, err := st.ListUpstreams()
 			if err != nil {
-				logger.Error("failed to reload channels", "error", err)
+				logger.Error("failed to reload upstreams", "error", err)
 				continue
 			}
-			rt, err := st.ListChannelRoutes()
+			g, err := st.ListUpstreamGroupsWithMembers()
 			if err != nil {
-				logger.Error("failed to reload channel routes", "error", err)
+				logger.Error("failed to reload upstream groups", "error", err)
 				continue
 			}
-			channelRouter.Reload(ch, rt, encryptionKey, logger)
+			rt, err := st.ListRoutes()
+			if err != nil {
+				logger.Error("failed to reload routes", "error", err)
+				continue
+			}
+			router.Reload(u, g, rt, encryptionKey)
 		}
 	}()
 
@@ -143,7 +155,8 @@ func main() {
 	// Initialize rate limiter.
 	rateLimiter := ratelimit.NewCompositeRateLimiter(st, logger)
 
-	proxyHandler := proxy.NewHandler(st, coll, channelRouter, rateLimiter, encryptionKey, logger, cfg.Server)
+	executor := proxy.NewExecutor(router, st, coll, rateLimiter, logger, cfg.Server.MaxRequestBody)
+	proxyHandler := proxy.NewHandler(executor, router, st, coll, logger, cfg.Server.MaxRequestBody)
 
 	// --- Proxy server ---
 	proxyRouter := chi.NewRouter()
@@ -216,6 +229,7 @@ func main() {
 		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 		sig := <-sigCh
 		logger.Info("received signal, shutting down", "signal", sig.String())
+		router.HealthChecker().Stop()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		proxyServer.Shutdown(ctx)

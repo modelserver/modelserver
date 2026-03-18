@@ -106,7 +106,11 @@ func (si *streamInterceptor) parseLine(line []byte) {
 
 func (si *streamInterceptor) finish() {
 	si.once.Do(func() {
-		if si.onComplete != nil && si.model != "" {
+		if si.onComplete != nil {
+			// Always call onComplete, even if model is empty (stream interrupted
+			// before message_start). Callers rely on onComplete to release
+			// resources (ConnTracker, context cancel). They fall back to the
+			// request-level model when metrics.Model is empty.
 			si.onComplete(si.model, si.msgID, si.usage, si.ttft)
 		}
 	})

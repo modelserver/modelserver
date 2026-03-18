@@ -18,6 +18,9 @@ import {
   FolderOpen,
   LogOut,
   Route,
+  Server,
+  Network,
+  Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -140,6 +143,15 @@ export function Sidebar() {
             </SidebarLink>
             <SidebarLink to="/admin/routes" icon={Route}>
               Routes
+            </SidebarLink>
+            <SidebarLink to="/admin/upstreams" icon={Server}>
+              Upstreams
+            </SidebarLink>
+            <SidebarLink to="/admin/upstream-groups" icon={Network}>
+              Groups
+            </SidebarLink>
+            <SidebarLink to="/admin/routing-health" icon={Activity}>
+              Health
             </SidebarLink>
           </>
         )}
