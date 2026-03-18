@@ -223,6 +223,13 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			continue
 		}
 
+		// Debug: log outgoing request details.
+		logger.Info("outgoing upstream request",
+			"method", outReq.Method,
+			"url", outReq.URL.String(),
+			"host", outReq.Host,
+			"headers", fmt.Sprintf("%v", outReq.Header))
+
 		// 6e. Track the connection. Placed AFTER SetUpstream so that a failed
 		// SetUpstream doesn't leave the counter incremented (connection leak).
 		e.router.ConnTracker().Acquire(upstream.ID)
