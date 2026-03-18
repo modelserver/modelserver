@@ -28,7 +28,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { Channel, ChannelUsageSummary } from "@/api/types";
+import type { Channel, UpstreamUsageSummary } from "@/api/types";
 import { Plus, MoreHorizontal, Zap, Loader2, Pencil, X, CheckCircle2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
@@ -71,22 +71,22 @@ export function ChannelsPage() {
 
   const channels = data?.data ?? [];
   const statsMap = useMemo(() => {
-    const m = new Map<string, ChannelUsageSummary>();
+    const m = new Map<string, UpstreamUsageSummary>();
     for (const s of statsData?.data ?? []) {
-      m.set(s.channel_id, s);
+      m.set(s.upstream_id, s);
     }
     return m;
   }, [statsData]);
 
   const stats5hMap = useMemo(() => {
-    const m = new Map<string, ChannelUsageSummary>();
-    for (const s of stats5hData?.data ?? []) m.set(s.channel_id, s);
+    const m = new Map<string, UpstreamUsageSummary>();
+    for (const s of stats5hData?.data ?? []) m.set(s.upstream_id, s);
     return m;
   }, [stats5hData]);
 
   const stats7dMap = useMemo(() => {
-    const m = new Map<string, ChannelUsageSummary>();
-    for (const s of stats7dData?.data ?? []) m.set(s.channel_id, s);
+    const m = new Map<string, UpstreamUsageSummary>();
+    for (const s of stats7dData?.data ?? []) m.set(s.upstream_id, s);
     return m;
   }, [stats7dData]);
 

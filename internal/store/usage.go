@@ -24,40 +24,40 @@ type DailyUsage struct {
 	TotalTokens  int64     `json:"total_tokens"`
 }
 
-// ChannelUsageSummary holds aggregated usage data per channel.
-type ChannelUsageSummary struct {
-	ChannelID     string  `json:"channel_id"`
-	RequestCount  int64   `json:"request_count"`
-	InputTokens   int64   `json:"input_tokens"`
-	OutputTokens  int64   `json:"output_tokens"`
-	TotalCredits  float64 `json:"total_credits"`
-	AvgLatencyMs  float64 `json:"avg_latency_ms"`
-	SuccessCount  int64   `json:"success_count"`
-	ErrorCount    int64   `json:"error_count"`
+// UpstreamUsageSummary holds aggregated usage data per upstream.
+type UpstreamUsageSummary struct {
+	UpstreamID   string  `json:"upstream_id"`
+	RequestCount int64   `json:"request_count"`
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	TotalCredits float64 `json:"total_credits"`
+	AvgLatencyMs float64 `json:"avg_latency_ms"`
+	SuccessCount int64   `json:"success_count"`
+	ErrorCount   int64   `json:"error_count"`
 }
 
-// GetUsageByChannel returns usage aggregated by channel across all projects.
-func (s *Store) GetUsageByChannel(since, until time.Time) ([]ChannelUsageSummary, error) {
+// GetUsageByUpstream returns usage aggregated by upstream across all projects.
+func (s *Store) GetUsageByUpstream(since, until time.Time) ([]UpstreamUsageSummary, error) {
 	rows, err := s.pool.Query(context.Background(), `
-		SELECT channel_id, COUNT(*) as request_count,
+		SELECT upstream_id, COUNT(*) as request_count,
 			COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
 			COALESCE(SUM(credits_consumed), 0), COALESCE(AVG(latency_ms), 0),
 			COUNT(*) FILTER (WHERE status = 'success'),
 			COUNT(*) FILTER (WHERE status != 'success')
 		FROM requests
-		WHERE channel_id IS NOT NULL AND created_at >= $1 AND created_at <= $2
-		GROUP BY channel_id
+		WHERE upstream_id IS NOT NULL AND created_at >= $1 AND created_at <= $2
+		GROUP BY upstream_id
 		ORDER BY request_count DESC`,
 		since, until)
 	if err != nil {
-		return nil, fmt.Errorf("usage by channel: %w", err)
+		return nil, fmt.Errorf("usage by upstream: %w", err)
 	}
 	defer rows.Close()
 
-	var summaries []ChannelUsageSummary
+	var summaries []UpstreamUsageSummary
 	for rows.Next() {
-		var u ChannelUsageSummary
-		if err := rows.Scan(&u.ChannelID, &u.RequestCount,
+		var u UpstreamUsageSummary
+		if err := rows.Scan(&u.UpstreamID, &u.RequestCount,
 			&u.InputTokens, &u.OutputTokens,
 			&u.TotalCredits, &u.AvgLatencyMs,
 			&u.SuccessCount, &u.ErrorCount); err != nil {

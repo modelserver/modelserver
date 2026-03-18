@@ -160,13 +160,13 @@ func handleChannelStats(st *store.Store) http.HandlerFunc {
 			}
 		}
 
-		stats, err := st.GetUsageByChannel(since, until)
+		stats, err := st.GetUsageByUpstream(since, until)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "failed to get channel stats")
+			writeError(w, http.StatusInternalServerError, "internal", "failed to get upstream stats")
 			return
 		}
 		if stats == nil {
-			stats = []store.ChannelUsageSummary{}
+			stats = []store.UpstreamUsageSummary{}
 		}
 		writeData(w, http.StatusOK, stats)
 	}

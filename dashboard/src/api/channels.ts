@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
-import type { ListResponse, DataResponse, Channel, ChannelRoute, ChannelUsageSummary, ChannelTestResult } from "./types";
+import type { ListResponse, DataResponse, Channel, ChannelRoute, UpstreamUsageSummary, ChannelTestResult } from "./types";
 
 export function useChannels() {
   return useQuery({
@@ -13,7 +13,7 @@ export function useChannelStats(since?: string) {
   const params = since ? `?since=${encodeURIComponent(since)}` : "";
   return useQuery({
     queryKey: ["admin", "channels", "stats", since ?? "default"],
-    queryFn: () => api.get<DataResponse<ChannelUsageSummary[]>>(`/api/v1/channels/stats${params}`),
+    queryFn: () => api.get<DataResponse<UpstreamUsageSummary[]>>(`/api/v1/channels/stats${params}`),
   });
 }
 
