@@ -206,16 +206,17 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			bodyCache[cacheKey] = transformedBody
 		}
 
-		// 6c. Clone the original request for this attempt.
-		outReq := r.Clone(r.Context())
-		outReq.Body = io.NopCloser(bytes.NewReader(transformedBody))
+		// 6c. Build a clean outgoing request (avoid r.Clone which copies
+		//     hidden fields like TLS, TransferEncoding, Trailer, etc.).
+		outReq, err := http.NewRequestWithContext(r.Context(), r.Method, r.URL.String(), io.NopCloser(bytes.NewReader(transformedBody)))
+		if err != nil {
+			logger.Error("failed to create outgoing request", "error", err)
+			continue
+		}
 		outReq.ContentLength = int64(len(transformedBody))
-		outReq.RequestURI = "" // Required for http.Client.Do()
 
-		// 6c2. Whitelist headers: only forward headers relevant to upstream
-		// providers. Strip proxy headers (X-Forwarded-*, X-Real-Ip, etc.)
-		// to avoid leaking client IP or confusing upstream validation.
-		outReq.Header = sanitizeUpstreamHeaders(outReq.Header)
+		// Copy only whitelisted headers from the original request.
+		outReq.Header = sanitizeUpstreamHeaders(r.Header)
 
 		// For Bedrock, inject the resolved model and streaming flag into the
 		// request context so SetUpstream can construct the correct URL path.
