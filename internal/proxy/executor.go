@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/modelserver/modelserver/internal/collector"
@@ -210,6 +211,11 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 		outReq.Body = io.NopCloser(bytes.NewReader(transformedBody))
 		outReq.ContentLength = int64(len(transformedBody))
 		outReq.RequestURI = "" // Required for http.Client.Do()
+
+		// 6c2. Whitelist headers: only forward headers relevant to upstream
+		// providers. Strip proxy headers (X-Forwarded-*, X-Real-Ip, etc.)
+		// to avoid leaking client IP or confusing upstream validation.
+		outReq.Header = sanitizeUpstreamHeaders(outReq.Header)
 
 		// For Bedrock, inject the resolved model and streaming flag into the
 		// request context so SetUpstream can construct the correct URL path.
@@ -816,4 +822,31 @@ func errorAs(err error, target interface{}) bool {
 		}
 	}
 	return false
+}
+
+// sanitizeUpstreamHeaders returns a new header map containing only headers
+// that are safe and relevant to forward to upstream AI providers.
+func sanitizeUpstreamHeaders(h http.Header) http.Header {
+	allowed := make(http.Header, len(h))
+	for key, vals := range h {
+		canon := http.CanonicalHeaderKey(key)
+		switch {
+		case canon == "Content-Type",
+			canon == "Content-Length",
+			canon == "Accept",
+			canon == "User-Agent",
+			canon == "X-App",
+			canon == "Anthropic-Beta",
+			canon == "Anthropic-Dangerous-Direct-Browser-Access",
+			canon == "Anthropic-Version",
+			canon == "X-Api-Key",
+			canon == "Authorization":
+			allowed[canon] = vals
+		default:
+			if strings.HasPrefix(canon, "X-Stainless-") {
+				allowed[canon] = vals
+			}
+		}
+	}
+	return allowed
 }
