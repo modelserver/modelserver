@@ -230,11 +230,17 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 		}
 
 		// Debug: log outgoing request details.
+		bodyPreview := string(transformedBody)
+		if len(bodyPreview) > 300 {
+			bodyPreview = bodyPreview[:300] + "..."
+		}
 		logger.Info("outgoing upstream request",
 			"method", outReq.Method,
 			"url", outReq.URL.String(),
 			"host", outReq.Host,
-			"headers", fmt.Sprintf("%v", outReq.Header))
+			"headers", fmt.Sprintf("%v", outReq.Header),
+			"body_len", len(transformedBody),
+			"body_preview", bodyPreview)
 
 		// 6e. Track the connection. Placed AFTER SetUpstream so that a failed
 		// SetUpstream doesn't leave the counter incremented (connection leak).
