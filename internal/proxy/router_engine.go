@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -13,6 +14,31 @@ import (
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
+
+// sessionBinding tracks which upstream a session (trace) is pinned to.
+type sessionBinding struct {
+	channelID string // upstream ID (named channelID for backward compat with session map)
+	usedAt    time.Time
+}
+
+// matchModel checks if a model name matches a glob pattern.
+func matchModel(pattern, model string) bool {
+	if pattern == "*" {
+		return true
+	}
+	matched, _ := filepath.Match(pattern, model)
+	return matched
+}
+
+// modelSupported checks if a model is in the supported list.
+func modelSupported(supported []string, model string) bool {
+	for _, s := range supported {
+		if s == model {
+			return true
+		}
+	}
+	return false
+}
 
 // Router is the central routing engine (nginx: the config evaluator).
 // It replaces the core logic of ChannelRouter for the new upstream-based routing model.

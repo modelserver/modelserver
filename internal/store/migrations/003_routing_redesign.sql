@@ -53,7 +53,38 @@ ALTER TABLE routes ADD COLUMN conditions JSONB NOT NULL DEFAULT '{}';
 CREATE VIEW channel_routes AS SELECT * FROM routes;
 
 -- ============================================================
--- 5. Add routing observability columns to requests
+-- 5. Data migration: convert existing routes with channel_ids into upstream_groups
+-- ============================================================
+-- For each existing route that has channel_ids, create an upstream_group and
+-- populate its members. This preserves the existing routing behavior.
+DO $$
+DECLARE
+    r RECORD;
+    new_group_id UUID;
+    cid UUID;
+BEGIN
+    FOR r IN SELECT id, model_pattern, channel_ids FROM routes WHERE channel_ids IS NOT NULL AND array_length(channel_ids, 1) > 0 LOOP
+        -- Create an upstream_group for this route.
+        INSERT INTO upstream_groups (name, lb_policy, retry_policy, status)
+        VALUES ('auto-' || r.model_pattern, 'weighted_random', '{}', 'active')
+        RETURNING id INTO new_group_id;
+
+        -- Add each channel_id as a group member.
+        FOREACH cid IN ARRAY r.channel_ids LOOP
+            -- Only add if the upstream actually exists (skip orphaned references).
+            IF EXISTS (SELECT 1 FROM upstreams WHERE id = cid) THEN
+                INSERT INTO upstream_group_members (upstream_group_id, upstream_id, weight, is_backup)
+                VALUES (new_group_id, cid, NULL, FALSE);
+            END IF;
+        END LOOP;
+
+        -- Link the route to its new upstream_group.
+        UPDATE routes SET upstream_group_id = new_group_id WHERE id = r.id;
+    END LOOP;
+END $$;
+
+-- ============================================================
+-- 6. Add routing observability columns to requests
 -- ============================================================
 ALTER TABLE requests ADD COLUMN upstream_id UUID;
 -- Backfill upstream_id from existing channel_id.
