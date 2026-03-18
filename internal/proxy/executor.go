@@ -208,11 +208,7 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 
 		// 6c. Build a clean outgoing request (avoid r.Clone which copies
 		//     hidden fields like TLS, TransferEncoding, Trailer, etc.).
-		//     Use the original URL path (without query string) as the base;
-		//     SetUpstream will rewrite scheme, host, and path as needed.
-		cleanURL := *r.URL
-		cleanURL.RawQuery = ""
-		outReq, err := http.NewRequestWithContext(r.Context(), r.Method, cleanURL.String(), io.NopCloser(bytes.NewReader(transformedBody)))
+		outReq, err := http.NewRequestWithContext(r.Context(), r.Method, r.URL.String(), io.NopCloser(bytes.NewReader(transformedBody)))
 		if err != nil {
 			logger.Error("failed to create outgoing request", "error", err)
 			continue
