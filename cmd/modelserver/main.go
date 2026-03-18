@@ -229,6 +229,7 @@ func main() {
 		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 		sig := <-sigCh
 		logger.Info("received signal, shutting down", "signal", sig.String())
+		router.HealthChecker().Stop()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		proxyServer.Shutdown(ctx)

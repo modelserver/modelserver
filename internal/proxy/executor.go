@@ -20,19 +20,20 @@ import (
 // RequestContext carries all request-scoped data through the Executor pipeline.
 // It is populated by the handler before calling Execute.
 type RequestContext struct {
-	ProjectID   string
-	APIKeyID    string
-	Model       string      // Original model name from the client request
-	ActualModel string      // After ModelMap resolution (set per-attempt by Executor)
-	IsStream    bool
-	TraceID     string
-	TraceSource string
-	SessionID   string
-	ClientIP    string
-	Policy      *types.RateLimitPolicy
-	APIKey      *types.APIKey
-	Project     *types.Project
-	RequestID   string // DB request ID (pending record)
+	ProjectID        string
+	APIKeyID         string
+	Model            string   // Original model name from the client request
+	ActualModel      string   // After ModelMap resolution (set per-attempt by Executor)
+	IsStream         bool
+	AllowedProviders []string // If non-empty, only route to upstreams with these providers
+	TraceID          string
+	TraceSource      string
+	SessionID        string
+	ClientIP         string
+	Policy           *types.RateLimitPolicy
+	APIKey           *types.APIKey
+	Project          *types.Project
+	RequestID        string // DB request ID (pending record)
 }
 
 // proxyResult classifies the outcome of a single upstream attempt.
@@ -98,6 +99,24 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 
 	// 2. Get ordered list of upstream candidates (primary + retry fallbacks).
 	candidates := e.router.SelectWithRetry(r.Context(), group, reqCtx.SessionID)
+
+	// 2b. Filter by allowed providers if the handler specified a constraint.
+	// This ensures /v1/messages only goes to Anthropic/Bedrock/ClaudeCode and
+	// /v1/responses only goes to OpenAI upstreams.
+	if len(reqCtx.AllowedProviders) > 0 {
+		allowed := make(map[string]bool, len(reqCtx.AllowedProviders))
+		for _, p := range reqCtx.AllowedProviders {
+			allowed[p] = true
+		}
+		filtered := candidates[:0]
+		for _, c := range candidates {
+			if allowed[c.Upstream.Provider] {
+				filtered = append(filtered, c)
+			}
+		}
+		candidates = filtered
+	}
+
 	if len(candidates) == 0 {
 		writeProxyError(w, http.StatusServiceUnavailable, "no upstreams available")
 		return

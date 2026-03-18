@@ -39,18 +39,26 @@ func NewHandler(executor *Executor, router *Router, st *store.Store, coll *colle
 }
 
 // HandleMessages proxies Anthropic /v1/messages requests.
+// Only routes to Anthropic, Bedrock, and ClaudeCode providers.
 func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
-	h.handleProxyRequest(w, r)
+	h.handleProxyRequest(w, r, []string{
+		types.ProviderAnthropic,
+		types.ProviderBedrock,
+		types.ProviderClaudeCode,
+	})
 }
 
 // HandleResponses proxies OpenAI /v1/responses requests.
+// Only routes to OpenAI providers.
 func (h *Handler) HandleResponses(w http.ResponseWriter, r *http.Request) {
-	h.handleProxyRequest(w, r)
+	h.handleProxyRequest(w, r, []string{
+		types.ProviderOpenAI,
+	})
 }
 
 // handleProxyRequest is the shared implementation for HandleMessages and HandleResponses.
-// The Executor handles provider detection automatically through the Router.
-func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request) {
+// allowedProviders constrains which provider types can serve this request.
+func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, allowedProviders []string) {
 	apiKey := APIKeyFromContext(r.Context())
 	project := ProjectFromContext(r.Context())
 	if apiKey == nil || project == nil {
@@ -103,18 +111,19 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reqCtx := &RequestContext{
-		ProjectID:   project.ID,
-		APIKeyID:    apiKey.ID,
-		Model:       reqShape.Model,
-		IsStream:    reqShape.Stream,
-		TraceID:     traceID,
-		TraceSource: TraceSourceFromContext(r.Context()),
-		SessionID:   traceID, // Use trace ID for session stickiness
-		ClientIP:    r.RemoteAddr,
-		Policy:      policy,
-		APIKey:      apiKey,
-		Project:     project,
-		RequestID:   pendingReq.ID,
+		ProjectID:        project.ID,
+		APIKeyID:         apiKey.ID,
+		Model:            reqShape.Model,
+		IsStream:         reqShape.Stream,
+		AllowedProviders: allowedProviders,
+		TraceID:          traceID,
+		TraceSource:      TraceSourceFromContext(r.Context()),
+		SessionID:        traceID, // Use trace ID for session stickiness
+		ClientIP:         r.RemoteAddr,
+		Policy:           policy,
+		APIKey:           apiKey,
+		Project:          project,
+		RequestID:        pendingReq.ID,
 	}
 
 	h.executor.Execute(w, r, reqCtx)
