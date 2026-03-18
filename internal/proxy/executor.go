@@ -209,6 +209,7 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 		outReq := r.Clone(r.Context())
 		outReq.Body = io.NopCloser(bytes.NewReader(transformedBody))
 		outReq.ContentLength = int64(len(transformedBody))
+		outReq.RequestURI = "" // Required for http.Client.Do()
 
 		// For Bedrock, inject the resolved model and streaming flag into the
 		// request context so SetUpstream can construct the correct URL path.
