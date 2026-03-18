@@ -289,6 +289,15 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 		} else {
 			e.router.CircuitBreaker().RecordFailure(upstream.ID)
 			e.router.Metrics().RecordError(upstream.ID)
+			if doErr != nil {
+				logger.Warn("upstream request failed",
+					"error", doErr.Error(),
+					"duration_ms", time.Since(attemptStart).Milliseconds())
+			} else if resp != nil {
+				logger.Warn("upstream returned error",
+					"status", resp.StatusCode,
+					"duration_ms", time.Since(attemptStart).Milliseconds())
+			}
 		}
 
 		// Bind the session to this upstream for stickiness (only on success).
