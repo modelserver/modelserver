@@ -39,7 +39,7 @@ func (s HealthStatus) String() string {
 
 const (
 	defaultHealthInterval = 30 * time.Second
-	defaultHealthTimeout  = 5 * time.Second
+	defaultHealthTimeout  = 30 * time.Second
 	baselineWindowSize    = 10 // Number of recent successful probe latencies to average
 )
 
