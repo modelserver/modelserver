@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useUpstreams, useCreateUpstream, useUpdateUpstream, useDeleteUpstream } from "@/api/upstreams";
+import { useUpstreams, useCreateUpstream, useUpdateUpstream, useDeleteUpstream, useTestUpstream } from "@/api/upstreams";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { StatusBadge } from "@/components/shared/StatusBadge";
@@ -29,7 +29,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { Upstream } from "@/api/types";
-import { Plus, MoreHorizontal, Pencil, Trash2, Loader2 } from "lucide-react";
+import { Plus, MoreHorizontal, Pencil, Trash2, Loader2, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 export function UpstreamsPage() {
@@ -37,6 +37,7 @@ export function UpstreamsPage() {
   const createUpstream = useCreateUpstream();
   const updateUpstream = useUpdateUpstream();
   const deleteUpstream = useDeleteUpstream();
+  const testUpstream = useTestUpstream();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -139,6 +140,20 @@ export function UpstreamsPage() {
     setDeleteTarget(null);
   }
 
+  async function handleTest(upstreamId: string, upstreamName: string) {
+    try {
+      const res = await testUpstream.mutateAsync(upstreamId);
+      const r = res.data;
+      if (r.success) {
+        toast.success(`${upstreamName}: OK (${r.latency_ms}ms, model: ${r.model})`);
+      } else {
+        toast.error(`${upstreamName}: ${r.error ?? "test failed"}${r.latency_ms ? ` (${r.latency_ms}ms)` : ""}`);
+      }
+    } catch {
+      toast.error(`${upstreamName}: connection test failed`);
+    }
+  }
+
   const isSaving = createUpstream.isPending || updateUpstream.isPending;
 
   const columns: Column<Upstream>[] = [
@@ -182,6 +197,13 @@ export function UpstreamsPage() {
             <DropdownMenuItem onClick={() => openEdit(u)}>
               <Pencil className="mr-2 h-4 w-4" />
               Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => handleTest(u.id, u.name)}
+              disabled={testUpstream.isPending}
+            >
+              <Zap className="mr-2 h-4 w-4" />
+              Test Connection
             </DropdownMenuItem>
             {u.status === "active" ? (
               <DropdownMenuItem

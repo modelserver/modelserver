@@ -181,6 +181,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 					r.Get("/", handleGetUpstream(st))
 					r.Put("/", handleUpdateUpstream(st, encKey))
 					r.Delete("/", handleDeleteUpstream(st))
+					r.Post("/test", handleTestUpstream(st, encKey))
 				})
 			})
 

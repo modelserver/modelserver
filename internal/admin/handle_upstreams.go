@@ -1,6 +1,10 @@
 package admin
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -144,5 +148,135 @@ func handleDeleteUpstream(st *store.Store) http.HandlerFunc {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		u, err := st.GetUpstreamByID(chi.URLParam(r, "upstreamID"))
+		if err != nil || u == nil {
+			writeError(w, http.StatusNotFound, "not_found", "upstream not found")
+			return
+		}
+
+		apiKey, err := crypto.Decrypt(encKey, u.APIKeyEncrypted)
+		if err != nil {
+			writeData(w, http.StatusOK, map[string]interface{}{
+				"success": false,
+				"error":   "failed to decrypt API key",
+			})
+			return
+		}
+
+		testModel := u.TestModel
+		if testModel == "" && len(u.SupportedModels) > 0 {
+			testModel = u.SupportedModels[0]
+		}
+		if testModel == "" {
+			testModel = "claude-haiku-4-5"
+		}
+		upstreamTestModel := u.ResolveModel(testModel)
+
+		baseURL := u.BaseURL
+		if baseURL == "" {
+			baseURL = "https://api.anthropic.com"
+		}
+
+		var reqBody []byte
+		var endpoint string
+		switch u.Provider {
+		case types.ProviderOpenAI:
+			endpoint = baseURL + "/v1/chat/completions"
+			reqBody, _ = json.Marshal(map[string]interface{}{
+				"model":      upstreamTestModel,
+				"max_tokens": 10,
+				"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
+			})
+		case types.ProviderBedrock:
+			endpoint = baseURL + "/model/" + upstreamTestModel + "/invoke"
+			reqBody, _ = json.Marshal(map[string]interface{}{
+				"anthropic_version": "bedrock-2023-05-31",
+				"max_tokens":        10,
+				"messages":          []map[string]string{{"role": "user", "content": "Hi"}},
+			})
+		case types.ProviderClaudeCode:
+			endpoint = baseURL + "/v1/messages?beta=true"
+			reqBody, _ = json.Marshal(map[string]interface{}{
+				"model":      upstreamTestModel,
+				"max_tokens": 10,
+				"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
+			})
+		default:
+			endpoint = baseURL + "/v1/messages"
+			reqBody, _ = json.Marshal(map[string]interface{}{
+				"model":      upstreamTestModel,
+				"max_tokens": 10,
+				"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
+			})
+		}
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		req, err := http.NewRequest("POST", endpoint, bytes.NewReader(reqBody))
+		if err != nil {
+			writeData(w, http.StatusOK, map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("failed to create request: %v", err),
+			})
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		switch u.Provider {
+		case types.ProviderOpenAI:
+			req.Header.Set("Authorization", "Bearer "+string(apiKey))
+		case types.ProviderBedrock:
+			req.Header.Set("Authorization", "Bearer "+string(apiKey))
+		case types.ProviderClaudeCode:
+			var creds struct {
+				AccessToken string `json:"access_token"`
+			}
+			if err := json.Unmarshal(apiKey, &creds); err != nil || creds.AccessToken == "" {
+				writeData(w, http.StatusOK, map[string]interface{}{
+					"success": false,
+					"error":   "failed to parse claudecode credentials",
+				})
+				return
+			}
+			req.Header.Set("Authorization", "Bearer "+creds.AccessToken)
+			req.Header.Set("Anthropic-Version", "2023-06-01")
+			req.Header.Set("Anthropic-Beta", "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14")
+			req.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
+		default:
+			req.Header.Set("x-api-key", string(apiKey))
+			req.Header.Set("anthropic-version", "2023-06-01")
+		}
+
+		start := time.Now()
+		resp, err := client.Do(req)
+		latency := time.Since(start).Milliseconds()
+
+		if err != nil {
+			writeData(w, http.StatusOK, map[string]interface{}{
+				"success":    false,
+				"latency_ms": latency,
+				"model":      testModel,
+				"error":      fmt.Sprintf("request failed: %v", err),
+			})
+			return
+		}
+		defer resp.Body.Close()
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+
+		success := resp.StatusCode >= 200 && resp.StatusCode < 300
+		result := map[string]interface{}{
+			"success":     success,
+			"status_code": resp.StatusCode,
+			"latency_ms":  latency,
+			"model":       testModel,
+		}
+		if !success {
+			result["error"] = fmt.Sprintf("upstream returned %d: %s", resp.StatusCode, string(respBody))
+		}
+		writeData(w, http.StatusOK, result)
 	}
 }
