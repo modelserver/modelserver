@@ -218,6 +218,12 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 		outReq.ContentLength = int64(len(transformedBody))
 		outReq.Header.Set("Content-Type", "application/json")
 
+		// Forward Anthropic-Beta from the client so beta features
+		// (thinking, context_management, etc.) work end-to-end.
+		if beta := r.Header.Get("Anthropic-Beta"); beta != "" {
+			outReq.Header.Set("Anthropic-Beta", beta)
+		}
+
 		// For Bedrock, inject the resolved model and streaming flag into the
 		// request context so SetUpstream can construct the correct URL path.
 		if upstream.Provider == types.ProviderBedrock {
