@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useAdminRequests, type AdminRequestFilters } from "@/api/adminRequests";
-import { useChannels } from "@/api/channels";
+import { useUpstreams } from "@/api/upstreams";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { Pagination } from "@/components/shared/Pagination";
@@ -47,8 +47,8 @@ export function AdminRequestsPage() {
   const [until, setUntil] = useState(defaultUntil);
   const [selected, setSelected] = useState<Request | null>(null);
 
-  const { data: channelsData } = useChannels();
-  const channels = channelsData?.data ?? [];
+  const { data: upstreamsData } = useUpstreams();
+  const upstreams = upstreamsData?.data ?? [];
 
   const filters: AdminRequestFilters = {
     page,
@@ -63,9 +63,10 @@ export function AdminRequestsPage() {
   const requests = data?.data ?? [];
   const meta = data?.meta;
 
-  function channelName(id: string) {
-    const ch = channels.find((c) => c.id === id);
-    return ch ? ch.name : id.slice(0, 8);
+  function upstreamName(id?: string) {
+    if (!id) return "-";
+    const u = upstreams.find((u) => u.id === id);
+    return u ? u.name : id.slice(0, 8);
   }
 
   const columns: Column<Request>[] = [
@@ -81,8 +82,8 @@ export function AdminRequestsPage() {
       accessor: (r) => <StatusBadge status={r.status} />,
     },
     {
-      header: "Channel",
-      accessor: (r) => channelName(r.channel_id),
+      header: "Upstream",
+      accessor: (r) => upstreamName(r.upstream_id),
     },
     {
       header: "Stream",
@@ -209,7 +210,7 @@ export function AdminRequestsPage() {
               )}
               <DetailRow label="Model" value={selected.model} />
               <DetailRow label="Provider" value={selected.provider} />
-              <DetailRow label="Channel" value={channelName(selected.channel_id)} />
+              <DetailRow label="Upstream" value={upstreamName(selected.upstream_id)} />
               <DetailRow label="Status" value={selected.status} />
               <DetailRow label="Streaming" value={selected.streaming ? "Yes" : "No"} />
               <DetailRow label="Input Tokens" value={formatTokens(selected.input_tokens)} />

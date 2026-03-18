@@ -1,11 +1,10 @@
 import { useState, useMemo } from "react";
 import {
-  useChannels,
-  useChannelRoutes,
-  useCreateChannelRoute,
-  useUpdateChannelRoute,
-  useDeleteChannelRoute,
-} from "@/api/channels";
+  useRoutingRoutes,
+  useCreateRoutingRoute,
+  useDeleteRoutingRoute,
+  useUpstreamGroups,
+} from "@/api/upstreams";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { Button } from "@/components/ui/button";
@@ -34,65 +33,46 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { ChannelRoute, Channel } from "@/api/types";
-import { Plus, MoreHorizontal, Pencil, Trash2, Loader2 } from "lucide-react";
+import type { RoutingRoute, UpstreamGroupWithMembers } from "@/api/types";
+import { Plus, MoreHorizontal, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 export function RoutesPage() {
-  const { data: routesData, isLoading } = useChannelRoutes();
-  const { data: channelsData } = useChannels();
-  const createRoute = useCreateChannelRoute();
-  const updateRoute = useUpdateChannelRoute();
-  const deleteRoute = useDeleteChannelRoute();
+  const { data: routesData, isLoading } = useRoutingRoutes();
+  const { data: groupsData } = useUpstreamGroups();
+  const createRoute = useCreateRoutingRoute();
+  const deleteRoute = useDeleteRoutingRoute();
 
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<ChannelRoute | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<RoutingRoute | null>(null);
   const [form, setForm] = useState({
     model_pattern: "",
-    channel_ids: [] as string[],
+    upstream_group_id: "",
     match_priority: 0,
     status: "active",
   });
 
   const routes = routesData?.data ?? [];
-  const channels = channelsData?.data ?? [];
+  const groups = groupsData?.data ?? [];
 
-  const channelMap = useMemo(() => {
-    const m = new Map<string, Channel>();
-    for (const c of channels) m.set(c.id, c);
+  const groupMap = useMemo(() => {
+    const m = new Map<string, UpstreamGroupWithMembers>();
+    for (const g of groups) m.set(g.id, g);
     return m;
-  }, [channels]);
+  }, [groups]);
 
   function openCreate() {
-    setEditingId(null);
-    setForm({ model_pattern: "", channel_ids: [], match_priority: 0, status: "active" });
+    setForm({ model_pattern: "", upstream_group_id: "", match_priority: 0, status: "active" });
     setDialogOpen(true);
   }
 
-  function openEdit(r: ChannelRoute) {
-    setEditingId(r.id);
-    setForm({
-      model_pattern: r.model_pattern,
-      channel_ids: r.channel_ids,
-      match_priority: r.match_priority,
-      status: r.status,
-    });
-    setDialogOpen(true);
-  }
-
-  async function handleSave() {
+  async function handleCreate() {
     try {
-      if (editingId) {
-        await updateRoute.mutateAsync({ routeId: editingId, ...form });
-        toast.success("Route updated");
-      } else {
-        await createRoute.mutateAsync(form);
-        toast.success("Route created");
-      }
+      await createRoute.mutateAsync(form);
+      toast.success("Route created");
       setDialogOpen(false);
     } catch {
-      toast.error("Failed to save route");
+      toast.error("Failed to create route");
     }
   }
 
@@ -107,28 +87,9 @@ export function RoutesPage() {
     setDeleteTarget(null);
   }
 
-  async function toggleEnabled(r: ChannelRoute) {
-    try {
-      const newStatus = r.status === "active" ? "disabled" : "active";
-      await updateRoute.mutateAsync({ routeId: r.id, status: newStatus });
-      toast.success(newStatus === "active" ? "Route enabled" : "Route disabled");
-    } catch {
-      toast.error("Failed to update route");
-    }
-  }
+  const isSaving = createRoute.isPending;
 
-  function toggleChannel(channelId: string) {
-    setForm((prev) => ({
-      ...prev,
-      channel_ids: prev.channel_ids.includes(channelId)
-        ? prev.channel_ids.filter((id) => id !== channelId)
-        : [...prev.channel_ids, channelId],
-    }));
-  }
-
-  const isSaving = createRoute.isPending || updateRoute.isPending;
-
-  const columns: Column<ChannelRoute>[] = [
+  const columns: Column<RoutingRoute>[] = [
     {
       header: "ID",
       accessor: (r) => (
@@ -141,19 +102,15 @@ export function RoutesPage() {
       accessor: (r) => <code className="text-sm">{r.model_pattern}</code>,
     },
     {
-      header: "Channels",
-      accessor: (r) => (
-        <div className="flex flex-wrap gap-1">
-          {r.channel_ids.map((id) => {
-            const ch = channelMap.get(id);
-            return (
-              <Badge key={id} variant="outline" className="text-xs">
-                {ch?.name ?? id.slice(0, 8)}
-              </Badge>
-            );
-          })}
-        </div>
-      ),
+      header: "Upstream Group",
+      accessor: (r) => {
+        const group = groupMap.get(r.upstream_group_id);
+        return (
+          <Badge variant="outline" className="text-xs">
+            {group?.name ?? r.upstream_group_id.slice(0, 8)}
+          </Badge>
+        );
+      },
     },
     {
       header: "Priority",
@@ -188,13 +145,6 @@ export function RoutesPage() {
             <MoreHorizontal className="h-4 w-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => openEdit(r)}>
-              <Pencil className="mr-2 h-4 w-4" />
-              Edit
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => toggleEnabled(r)}>
-              {r.status === "active" ? "Disable" : "Enable"}
-            </DropdownMenuItem>
             <DropdownMenuItem
               className="text-destructive-foreground"
               onClick={() => setDeleteTarget(r)}
@@ -212,8 +162,8 @@ export function RoutesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Channel Routes"
-        description="Route model requests to specific channels based on pattern matching (superadmin only)"
+        title="Routes"
+        description="Route model requests to upstream groups based on pattern matching (superadmin only)"
         actions={
           <Button onClick={openCreate}>
             <Plus className="mr-2 h-4 w-4" />
@@ -234,17 +184,17 @@ export function RoutesPage() {
               columns={columns}
               data={routes}
               keyFn={(r) => r.id}
-              emptyMessage="No routes configured — requests will fall back to all matching channels"
+              emptyMessage="No routes configured — requests will fall back to default upstream group selection"
             />
           )}
         </CardContent>
       </Card>
 
-      {/* Create / Edit Dialog */}
+      {/* Create Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editingId ? "Edit Route" : "Create Route"}</DialogTitle>
+            <DialogTitle>Create Route</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
@@ -287,27 +237,25 @@ export function RoutesPage() {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Channels</Label>
-              {channels.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No channels available</p>
+              <Label>Upstream Group</Label>
+              {groups.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No upstream groups available</p>
               ) : (
-                <div className="space-y-1 max-h-48 overflow-y-auto rounded border p-2">
-                  {channels.map((ch) => (
-                    <label
-                      key={ch.id}
-                      className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-accent cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={form.channel_ids.includes(ch.id)}
-                        onChange={() => toggleChannel(ch.id)}
-                        className="rounded"
-                      />
-                      <span className="text-sm">{ch.name}</span>
-                      <span className="text-xs text-muted-foreground ml-auto">{ch.provider}</span>
-                    </label>
-                  ))}
-                </div>
+                <Select
+                  value={form.upstream_group_id}
+                  onValueChange={(v) => setForm((p) => ({ ...p, upstream_group_id: v ?? "" }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select an upstream group" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {groups.map((g) => (
+                      <SelectItem key={g.id} value={g.id}>
+                        {g.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               )}
             </div>
           </div>
@@ -316,10 +264,10 @@ export function RoutesPage() {
               Cancel
             </Button>
             <Button
-              onClick={handleSave}
-              disabled={!form.model_pattern || form.channel_ids.length === 0 || isSaving}
+              onClick={handleCreate}
+              disabled={!form.model_pattern || !form.upstream_group_id || isSaving}
             >
-              {isSaving ? "Saving..." : editingId ? "Update" : "Create"}
+              {isSaving ? "Saving..." : "Create"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -332,7 +280,7 @@ export function RoutesPage() {
             <DialogTitle>Delete Route</DialogTitle>
             <DialogDescription>
               Delete the route for pattern "{deleteTarget?.model_pattern}"?
-              Requests will fall back to the default channel selection.
+              Requests will fall back to default upstream group selection.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

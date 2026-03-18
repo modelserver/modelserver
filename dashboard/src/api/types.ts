@@ -117,8 +117,8 @@ export interface Channel {
   updated_at: string;
 }
 
-export interface ChannelUsageSummary {
-  channel_id: string;
+export interface UpstreamUsageSummary {
+  upstream_id: string;
   request_count: number;
   input_tokens: number;
   output_tokens: number;
@@ -153,7 +153,7 @@ export interface Request {
   id: string;
   project_id: string;
   api_key_id: string;
-  channel_id: string;
+  upstream_id?: string;
   trace_id?: string;
   msg_id?: string;
   provider: string;
