@@ -218,10 +218,23 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 		outReq.ContentLength = int64(len(transformedBody))
 		outReq.Header.Set("Content-Type", "application/json")
 
-		// Forward Anthropic-Beta from the client so beta features
-		// (thinking, context_management, etc.) work end-to-end.
-		if beta := r.Header.Get("Anthropic-Beta"); beta != "" {
-			outReq.Header.Set("Anthropic-Beta", beta)
+		// Forward select client headers that upstream providers need.
+		for _, h := range []string{
+			"Anthropic-Beta",
+			"Anthropic-Dangerous-Direct-Browser-Access",
+			"Anthropic-Version",
+			"User-Agent",
+			"X-App",
+		} {
+			if v := r.Header.Get(h); v != "" {
+				outReq.Header.Set(h, v)
+			}
+		}
+		// Forward X-Stainless-* headers.
+		for key, vals := range r.Header {
+			if strings.HasPrefix(http.CanonicalHeaderKey(key), "X-Stainless-") {
+				outReq.Header[http.CanonicalHeaderKey(key)] = vals
+			}
 		}
 
 		// For Bedrock, inject the resolved model and streaming flag into the
