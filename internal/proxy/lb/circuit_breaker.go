@@ -121,7 +121,19 @@ func (cb *CircuitBreaker) RecordSuccess(upstreamID string) {
 			entry.lastTransition = time.Now()
 		}
 	case CircuitOpen:
-		// no-op
+		// Health check probes bypass CanPass, so they can report success
+		// while the circuit is still open. If openDuration has elapsed,
+		// transition to half-open and count this success toward recovery.
+		if time.Since(entry.lastTransition) >= cb.openDuration {
+			entry.state = CircuitHalfOpen
+			entry.successes = 1
+			entry.lastTransition = time.Now()
+			if entry.successes >= cb.successThreshold {
+				entry.state = CircuitClosed
+				entry.failures = 0
+				entry.successes = 0
+			}
+		}
 	}
 }
 

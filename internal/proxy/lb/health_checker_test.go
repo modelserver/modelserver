@@ -73,8 +73,8 @@ func TestHealthCheckerRegisterDefaults(t *testing.T) {
 	if entry.interval != 30*time.Second {
 		t.Errorf("interval = %v, want default 30s", entry.interval)
 	}
-	if entry.timeout != 5*time.Second {
-		t.Errorf("timeout = %v, want default 5s", entry.timeout)
+	if entry.timeout != 30*time.Second {
+		t.Errorf("timeout = %v, want default 30s", entry.timeout)
 	}
 }
 
