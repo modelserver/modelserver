@@ -185,7 +185,8 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			continue
 		}
 
-		// 6e. Track the connection.
+		// 6e. Track the connection. Placed AFTER SetUpstream so that a failed
+		// SetUpstream doesn't leave the counter incremented (connection leak).
 		e.router.ConnTracker().Acquire(upstream.ID)
 
 		// 6f. Apply per-upstream timeout via request context.
@@ -361,8 +362,13 @@ func (e *Executor) commitResponse(
 		return
 	}
 
-	// Copy response headers.
+	// Copy response headers, stripping hop-by-hop headers that must not be
+	// forwarded by proxies (RFC 7230 §6.1). httputil.ReverseProxy does this
+	// automatically; since we use http.Client directly, we must do it ourselves.
 	for key, values := range resp.Header {
+		if isHopByHopHeader(key) {
+			continue
+		}
 		for _, v := range values {
 			w.Header().Add(key, v)
 		}
@@ -428,8 +434,11 @@ func (e *Executor) commitErrorResponse(
 		e.collector.Record(req)
 	}
 
-	// Forward the error response to the client.
+	// Forward the error response to the client (stripping hop-by-hop headers).
 	for key, values := range resp.Header {
+		if isHopByHopHeader(key) {
+			continue
+		}
 		for _, v := range values {
 			w.Header().Add(key, v)
 		}
@@ -718,6 +727,22 @@ func isTimeoutError(err error) bool {
 		return netErr.Timeout()
 	}
 	return false
+}
+
+// hopByHopHeaders are headers that must not be forwarded by proxies (RFC 7230 §6.1).
+var hopByHopHeaders = map[string]bool{
+	"Connection":          true,
+	"Keep-Alive":          true,
+	"Proxy-Authenticate":  true,
+	"Proxy-Authorization": true,
+	"Te":                  true,
+	"Trailers":            true,
+	"Transfer-Encoding":   true,
+	"Upgrade":             true,
+}
+
+func isHopByHopHeader(key string) bool {
+	return hopByHopHeaders[http.CanonicalHeaderKey(key)]
 }
 
 // errorAs is a thin wrapper around errors.As to avoid a top-level import cycle

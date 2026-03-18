@@ -52,6 +52,7 @@ type HealthChecker struct {
 	logger         *slog.Logger
 	httpClient     *http.Client
 	stop           chan struct{}
+	stopOnce       sync.Once // guards close(stop) against double-close panic
 	wg             sync.WaitGroup
 }
 
@@ -143,8 +144,9 @@ func (hc *HealthChecker) Start(ctx context.Context) {
 }
 
 // Stop terminates all health check goroutines and waits for them to finish.
+// Safe to call multiple times.
 func (hc *HealthChecker) Stop() {
-	close(hc.stop)
+	hc.stopOnce.Do(func() { close(hc.stop) })
 	hc.wg.Wait()
 	hc.logger.Info("health checker stopped")
 }

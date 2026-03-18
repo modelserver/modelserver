@@ -21,8 +21,18 @@ func (ct *ConnectionTracker) Acquire(upstreamID string) {
 }
 
 // Release decrements the active connection count for the given upstream.
+// Guards against going negative (which would corrupt least_conn selection).
 func (ct *ConnectionTracker) Release(upstreamID string) {
-	ct.getOrCreate(upstreamID).Add(-1)
+	c := ct.getOrCreate(upstreamID)
+	for {
+		cur := c.Load()
+		if cur <= 0 {
+			return // already at zero or below; don't decrement further
+		}
+		if c.CompareAndSwap(cur, cur-1) {
+			return
+		}
+	}
 }
 
 // Count returns the current active connection count for the given upstream.
