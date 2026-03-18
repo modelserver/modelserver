@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/modelserver/modelserver/internal/collector"
@@ -228,6 +229,9 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			logger.Error("set upstream failed", "error", err)
 			continue
 		}
+
+		// 6d2. Defensive whitelist: strip any header not explicitly allowed.
+		outReq.Header = sanitizeOutboundHeaders(outReq.Header)
 
 		// Debug: log outgoing request details.
 		bodyPreview := string(transformedBody)
@@ -828,4 +832,30 @@ func errorAs(err error, target interface{}) bool {
 		}
 	}
 	return false
+}
+
+// sanitizeOutboundHeaders returns a new header map containing only headers
+// that are safe to send to upstream AI providers. Applied as a defensive
+// layer after each provider's SetUpstream has configured its headers.
+func sanitizeOutboundHeaders(h http.Header) http.Header {
+	allowed := make(http.Header, len(h))
+	for key, vals := range h {
+		canon := http.CanonicalHeaderKey(key)
+		switch {
+		case canon == "Content-Type",
+			canon == "User-Agent",
+			canon == "X-App",
+			canon == "Anthropic-Beta",
+			canon == "Anthropic-Dangerous-Direct-Browser-Access",
+			canon == "Anthropic-Version",
+			canon == "X-Api-Key",
+			canon == "Authorization":
+			allowed[canon] = vals
+		default:
+			if strings.HasPrefix(canon, "X-Stainless-") {
+				allowed[canon] = vals
+			}
+		}
+	}
+	return allowed
 }
