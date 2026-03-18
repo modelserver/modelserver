@@ -19,7 +19,7 @@ func (s *Store) CreateRequest(r *types.Request) error {
 		RETURNING id, created_at`,
 		r.ProjectID, r.APIKeyID, nullString(r.UpstreamID),
 		nullString(r.TraceID), nullString(r.MsgID),
-		nullString(r.Provider), r.Model, r.Streaming, r.Status,
+		r.Provider, r.Model, r.Streaming, r.Status,
 		r.InputTokens, r.OutputTokens, r.CacheCreationTokens, r.CacheReadTokens,
 		r.CreditsConsumed, r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP,
 	).Scan(&r.ID, &r.CreatedAt)
@@ -69,7 +69,7 @@ func (s *Store) BatchCreateRequests(requests []types.Request) error {
 			RETURNING id, created_at`,
 			r.ProjectID, r.APIKeyID, nullString(r.UpstreamID),
 			nullString(r.TraceID), nullString(r.MsgID),
-			nullString(r.Provider), r.Model, r.Streaming, r.Status,
+			r.Provider, r.Model, r.Streaming, r.Status,
 			r.InputTokens, r.OutputTokens, r.CacheCreationTokens, r.CacheReadTokens,
 			r.CreditsConsumed, r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP,
 		).Scan(&r.ID, &r.CreatedAt)
