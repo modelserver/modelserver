@@ -214,15 +214,9 @@ func directorSetUpstream(req *http.Request, baseURL, apiKey string) {
 	}
 	req.Host = req.URL.Host
 
-	// Remove user credentials so they are never forwarded to the upstream provider.
-	req.Header.Del("Authorization")
-	req.Header.Del("x-api-key")
-
-	// Set the channel's own API key for the upstream request.
+	// Set all required headers from scratch — do not inherit from client.
 	req.Header.Set("x-api-key", apiKey)
-	if req.Header.Get("anthropic-version") == "" {
-		req.Header.Set("anthropic-version", "2023-06-01")
-	}
+	req.Header.Set("anthropic-version", "2023-06-01")
 }
 
 func modelInList(list []string, model string) bool {

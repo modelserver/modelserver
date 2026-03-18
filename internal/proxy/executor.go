@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/modelserver/modelserver/internal/collector"
@@ -206,17 +205,16 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			bodyCache[cacheKey] = transformedBody
 		}
 
-		// 6c. Build a clean outgoing request (avoid r.Clone which copies
-		//     hidden fields like TLS, TransferEncoding, Trailer, etc.).
+		// 6c. Build a clean outgoing request with NO headers from the original
+		//     request. Each provider's SetUpstream is responsible for setting
+		//     all necessary headers from scratch.
 		outReq, err := http.NewRequestWithContext(r.Context(), r.Method, r.URL.String(), io.NopCloser(bytes.NewReader(transformedBody)))
 		if err != nil {
 			logger.Error("failed to create outgoing request", "error", err)
 			continue
 		}
 		outReq.ContentLength = int64(len(transformedBody))
-
-		// Deep-copy only whitelisted headers from the original request.
-		outReq.Header = sanitizeUpstreamHeaders(r.Header.Clone())
+		outReq.Header.Set("Content-Type", "application/json")
 
 		// For Bedrock, inject the resolved model and streaming flag into the
 		// request context so SetUpstream can construct the correct URL path.
@@ -829,29 +827,4 @@ func errorAs(err error, target interface{}) bool {
 		}
 	}
 	return false
-}
-
-// sanitizeUpstreamHeaders returns a new header map containing only headers
-// that are safe and relevant to forward to upstream AI providers.
-func sanitizeUpstreamHeaders(h http.Header) http.Header {
-	allowed := make(http.Header, len(h))
-	for key, vals := range h {
-		canon := http.CanonicalHeaderKey(key)
-		switch {
-		case canon == "Content-Type",
-			canon == "User-Agent",
-			canon == "X-App",
-			canon == "Anthropic-Beta",
-			canon == "Anthropic-Dangerous-Direct-Browser-Access",
-			canon == "Anthropic-Version",
-			canon == "X-Api-Key",
-			canon == "Authorization":
-			allowed[canon] = vals
-		default:
-			if strings.HasPrefix(canon, "X-Stainless-") {
-				allowed[canon] = vals
-			}
-		}
-	}
-	return allowed
 }

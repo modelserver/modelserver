@@ -27,18 +27,8 @@ func directorSetClaudeCodeUpstream(req *http.Request, baseURL, accessToken strin
 	q.Set("beta", "true")
 	req.URL.RawQuery = q.Encode()
 
-	// Remove user credentials so they are never forwarded upstream.
-	req.Header.Del("x-api-key")
-	req.Header.Del("Authorization")
-	req.Header.Del("Accept-Encoding")
-
-	// Suppress X-Forwarded-For.
-	req.Header["X-Forwarded-For"] = nil
-
-	// Set OAuth Bearer auth.
+	// Set all required headers from scratch — do not inherit from client.
 	req.Header.Set("Authorization", "Bearer "+accessToken)
-
-	// Claude Code specific headers — aligned with CLI v2.1.76.
 	req.Header.Set("Anthropic-Beta", "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27")
 	req.Header.Set("Anthropic-Version", "2023-06-01")
 	req.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
@@ -50,5 +40,4 @@ func directorSetClaudeCodeUpstream(req *http.Request, baseURL, accessToken strin
 	req.Header.Set("X-Stainless-Runtime", "bun")
 	req.Header.Set("X-Stainless-Runtime-Version", "1.3.11")
 	req.Header.Set("X-Stainless-Arch", "x64")
-	req.Header.Set("Connection", "keep-alive")
 }
