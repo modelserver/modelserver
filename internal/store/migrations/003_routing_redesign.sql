@@ -8,7 +8,9 @@ BEGIN;
 -- ============================================================
 ALTER TABLE channels RENAME TO upstreams;
 ALTER TABLE upstreams DROP COLUMN IF EXISTS selection_priority;
-ALTER TABLE upstreams ADD COLUMN IF NOT EXISTS health_check JSONB NOT NULL DEFAULT '{"enabled": true, "interval": "30s", "timeout": "5s"}';
+-- health_check stores HealthCheckConfig as JSONB. Duration fields use nanosecond integers
+-- to match Go's time.Duration JSON serialization (e.g. 30s = 30000000000).
+ALTER TABLE upstreams ADD COLUMN IF NOT EXISTS health_check JSONB NOT NULL DEFAULT '{"enabled": true, "interval": 30000000000, "timeout": 5000000000}';
 ALTER TABLE upstreams ADD COLUMN IF NOT EXISTS dial_timeout INTERVAL;
 ALTER TABLE upstreams ADD COLUMN IF NOT EXISTS read_timeout INTERVAL;
 
@@ -47,8 +49,8 @@ ALTER TABLE channel_routes RENAME TO routes;
 ALTER TABLE routes ADD COLUMN upstream_group_id UUID REFERENCES upstream_groups(id) ON DELETE SET NULL;
 ALTER TABLE routes ADD COLUMN conditions JSONB NOT NULL DEFAULT '{}';
 
--- Backward-compat view.
-CREATE VIEW channel_routes AS SELECT *, channel_ids AS channel_ids FROM routes;
+-- Backward-compat view (SELECT only; old code can still read "channel_routes").
+CREATE VIEW channel_routes AS SELECT * FROM routes;
 
 -- ============================================================
 -- 5. Add routing observability columns to requests

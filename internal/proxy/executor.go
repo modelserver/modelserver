@@ -114,9 +114,11 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 		return
 	}
 
-	// 4. Cache transformed bodies per provider to avoid redundant transforms
-	//    when retrying across upstreams with the same provider.
-	bodyCache := make(map[string][]byte) // provider -> transformed body
+	// 4. Cache transformed bodies per (provider, resolvedModel) pair to avoid
+	//    redundant transforms when retrying across upstreams with the same
+	//    provider AND the same model resolution. Different ModelMap entries
+	//    on upstreams of the same provider produce different bodies.
+	bodyCache := make(map[string][]byte) // "provider:resolvedModel" -> transformed body
 
 	// 5. Get retry policy from the group.
 	var retryPolicy *types.RetryPolicy
@@ -144,8 +146,11 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 		actualModel := upstream.ResolveModel(reqCtx.Model)
 		reqCtx.ActualModel = actualModel
 
-		// 6b. Get or compute transformed body for this provider.
-		transformedBody, ok := bodyCache[upstream.Provider]
+		// 6b. Get or compute transformed body for this (provider, resolvedModel) pair.
+		//     Different upstreams of the same provider may resolve to different model
+		//     names via ModelMap, producing different request bodies.
+		cacheKey := upstream.Provider + ":" + actualModel
+		transformedBody, ok := bodyCache[cacheKey]
 		if !ok {
 			// Start with original body. If the model was remapped and this is
 			// not Bedrock (which strips the model field), rewrite it in the body.
@@ -160,7 +165,7 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 				// Transform failure is not retryable; skip this upstream.
 				continue
 			}
-			bodyCache[upstream.Provider] = transformedBody
+			bodyCache[cacheKey] = transformedBody
 		}
 
 		// 6c. Clone the original request for this attempt.
@@ -237,11 +242,19 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 		}
 
 		// 6i. Commit: this is the final response (success or non-retryable error).
-		e.router.CircuitBreaker().RecordSuccess(upstream.ID)
-		e.router.Metrics().RecordSuccess(upstream.ID)
+		//     Only record success in CB/metrics if we got a non-5xx response.
+		//     Connection errors (resp==nil) or 5xx responses that weren't retried
+		//     (because no retry policy) should still count as failures.
+		if resp != nil && resp.StatusCode < 500 {
+			e.router.CircuitBreaker().RecordSuccess(upstream.ID)
+			e.router.Metrics().RecordSuccess(upstream.ID)
+		} else {
+			e.router.CircuitBreaker().RecordFailure(upstream.ID)
+			e.router.Metrics().RecordError(upstream.ID)
+		}
 
-		// Bind the session to this upstream for stickiness.
-		if reqCtx.SessionID != "" {
+		// Bind the session to this upstream for stickiness (only on success).
+		if reqCtx.SessionID != "" && resp != nil && resp.StatusCode < 500 {
 			e.router.BindSession(reqCtx.SessionID, upstream.ID)
 		}
 

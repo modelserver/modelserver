@@ -18,7 +18,7 @@ func (s *Store) CreateUpstream(u *types.Upstream) error {
 	}
 	healthCheckJSON, _ := json.Marshal(u.HealthCheck)
 	if u.HealthCheck == nil {
-		healthCheckJSON = []byte(`{"enabled": true, "interval": "30s", "timeout": "5s"}`)
+		healthCheckJSON = []byte(`{"enabled": true, "interval": 30000000000, "timeout": 5000000000}`)
 	}
 	return s.pool.QueryRow(context.Background(), `
 		INSERT INTO upstreams (provider, name, base_url, api_key_encrypted, supported_models, model_map,
