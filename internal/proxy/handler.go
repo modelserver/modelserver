@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -10,12 +9,8 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"path"
-	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/modelserver/modelserver/internal/collector"
-	"github.com/modelserver/modelserver/internal/config"
-	"github.com/modelserver/modelserver/internal/ratelimit"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 	"github.com/tidwall/sjson"
@@ -23,38 +18,45 @@ import (
 
 // Handler handles proxied LLM API requests.
 type Handler struct {
-	store         *store.Store
-	collector     *collector.Collector
-	channelRouter *ChannelRouter
-	rateLimiter   ratelimit.RateLimiter
-	encryptionKey []byte
-	logger        *slog.Logger
-	maxBodySize   int64
+	executor    *Executor
+	router      *Router
+	store       *store.Store
+	collector   *collector.Collector
+	logger      *slog.Logger
+	maxBodySize int64
 }
 
 // NewHandler creates a new proxy handler.
-func NewHandler(st *store.Store, coll *collector.Collector, router *ChannelRouter, limiter ratelimit.RateLimiter, encKey []byte, logger *slog.Logger, cfg config.ServerConfig) *Handler {
+func NewHandler(executor *Executor, router *Router, st *store.Store, coll *collector.Collector, logger *slog.Logger, maxBodySize int64) *Handler {
 	return &Handler{
-		store:         st,
-		collector:     coll,
-		channelRouter: router,
-		rateLimiter:   limiter,
-		encryptionKey: encKey,
-		logger:        logger,
-		maxBodySize:   cfg.MaxRequestBody,
+		executor:    executor,
+		router:      router,
+		store:       st,
+		collector:   coll,
+		logger:      logger,
+		maxBodySize: maxBodySize,
 	}
 }
 
 // HandleMessages proxies Anthropic /v1/messages requests.
 func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
+	h.handleProxyRequest(w, r)
+}
+
+// HandleResponses proxies OpenAI /v1/responses requests.
+func (h *Handler) HandleResponses(w http.ResponseWriter, r *http.Request) {
+	h.handleProxyRequest(w, r)
+}
+
+// handleProxyRequest is the shared implementation for HandleMessages and HandleResponses.
+// The Executor handles provider detection automatically through the Router.
+func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request) {
 	apiKey := APIKeyFromContext(r.Context())
 	project := ProjectFromContext(r.Context())
 	if apiKey == nil || project == nil {
 		writeProxyError(w, http.StatusInternalServerError, "missing auth context")
 		return
 	}
-
-	clientIP := r.RemoteAddr
 
 	bodyBytes, err := io.ReadAll(http.MaxBytesReader(w, r.Body, h.maxBodySize))
 	if err != nil {
@@ -68,83 +70,20 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		Model  string `json:"model"`
 	}
 	json.Unmarshal(bodyBytes, &reqShape)
-	isStreaming := reqShape.Stream
-	model := reqShape.Model
 
-	if len(apiKey.AllowedModels) > 0 && !modelInList(apiKey.AllowedModels, model) {
+	if len(apiKey.AllowedModels) > 0 && !modelInList(apiKey.AllowedModels, reqShape.Model) {
 		writeProxyError(w, http.StatusForbidden, "model not allowed for this API key")
 		return
-	}
-
-	candidates := h.channelRouter.MatchChannels(project.ID, model)
-	if len(candidates) == 0 {
-		writeProxyError(w, http.StatusServiceUnavailable, "no channels available for model "+model)
-		return
-	}
-
-	channel := h.channelRouter.SelectChannelForSession(candidates, TraceIDFromContext(r.Context()))
-	if channel == nil {
-		writeProxyError(w, http.StatusServiceUnavailable, "no channels available")
-		return
-	}
-
-	channelAPIKey := h.channelRouter.GetChannelKey(channel.ID)
-	if channelAPIKey == "" {
-		h.logger.Error("no decrypted key for channel", "channel_id", channel.ID)
-		writeProxyError(w, http.StatusInternalServerError, "channel configuration error")
-		return
-	}
-
-	// Resolve model name via channel's model_map (e.g. for Bedrock naming).
-	actualModel := channel.ResolveModel(model)
-
-	// If the upstream model name differs and this is not Bedrock (which strips the
-	// model field entirely), rewrite the model in the request body.
-	if actualModel != model && channel.Provider != types.ProviderBedrock {
-		bodyBytes, _ = sjson.SetBytes(bodyBytes, "model", actualModel)
-		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		r.ContentLength = int64(len(bodyBytes))
-	}
-
-	// Transform request body for Bedrock provider.
-	if channel.Provider == types.ProviderBedrock {
-		allBetas := splitBetaHeaders(r.Header.Values("anthropic-beta"))
-		betas, dropped := filterBedrockBetas(allBetas)
-		if len(dropped) > 0 {
-			h.logger.Info("dropped unsupported bedrock beta flags",
-				"dropped", dropped,
-				"forwarded", betas,
-				"channel_id", channel.ID,
-				"model", model,
-			)
-		}
-		bodyBytes, err = transformBedrockBody(bodyBytes, betas)
-		if err != nil {
-			writeProxyError(w, http.StatusInternalServerError, "failed to transform request for bedrock")
-			return
-		}
-		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		r.ContentLength = int64(len(bodyBytes))
 	}
 
 	policy := PolicyFromContext(r.Context())
 	traceID := TraceIDFromContext(r.Context())
 
-	logger := h.logger.With(
-		"project_id", project.ID,
-		"api_key_id", apiKey.ID,
-		"channel_id", channel.ID,
-		"model", model,
-		"trace_id", traceID,
-		"streaming", isStreaming,
-	)
-
-	// Register the trace in the database before creating the request record,
-	// since requests.trace_id has a foreign key constraint on traces.id.
+	// Register the trace in the database.
 	if traceID != "" {
 		source := TraceSourceFromContext(r.Context())
 		if err := h.store.EnsureTrace(project.ID, traceID, source); err != nil {
-			logger.Warn("failed to ensure trace", "error", err)
+			h.logger.Warn("failed to ensure trace", "error", err)
 		}
 	}
 
@@ -152,254 +91,33 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	pendingReq := &types.Request{
 		ProjectID: project.ID,
 		APIKeyID:  apiKey.ID,
-		ChannelID: channel.ID,
 		TraceID:   traceID,
-		Provider:  channel.Provider,
-		Model:     model,
-		Streaming: isStreaming,
+		Model:     reqShape.Model,
+		Streaming: reqShape.Stream,
 		Status:    types.RequestStatusProcessing,
-		ClientIP:  clientIP,
+		ClientIP:  r.RemoteAddr,
 	}
 	if err := h.store.CreateRequest(pendingReq); err != nil {
-		logger.Warn("failed to insert pending request", "error", err)
-		pendingReq.ID = "" // signal fallback to collector
+		h.logger.Warn("failed to insert pending request", "error", err)
+		pendingReq.ID = ""
 	}
 
-	startTime := time.Now()
-
-	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			switch channel.Provider {
-			case types.ProviderBedrock:
-				directorSetBedrockUpstream(req, channel.BaseURL, channelAPIKey, actualModel, isStreaming)
-			case types.ProviderClaudeCode:
-				accessToken, err := h.channelRouter.GetClaudeCodeAccessToken(channel.ID)
-				if err != nil {
-					logger.Error("claudecode token error", "error", err)
-					accessToken = ParseClaudeCodeAccessToken(channelAPIKey)
-				}
-				directorSetClaudeCodeUpstream(req, channel.BaseURL, accessToken)
-			default:
-				directorSetUpstream(req, channel.BaseURL, channelAPIKey)
-			}
-		},
-		ModifyResponse: func(resp *http.Response) error {
-			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-				duration := time.Since(startTime).Milliseconds()
-				status := types.RequestStatusError
-				if resp.StatusCode == http.StatusTooManyRequests {
-					status = types.RequestStatusRateLimited
-				}
-
-				// Read and log the upstream error body for debugging.
-				errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-				resp.Body.Close()
-				resp.Body = io.NopCloser(bytes.NewReader(errBody))
-				logger.Warn("upstream error response",
-					"status", resp.StatusCode,
-					"body", string(errBody),
-				)
-
-				req := types.Request{
-					ProjectID:    project.ID,
-					APIKeyID:     apiKey.ID,
-					ChannelID:    channel.ID,
-					TraceID:      traceID,
-					Provider:     channel.Provider,
-					Model:        model,
-					Streaming:    isStreaming,
-					Status:       status,
-					LatencyMs:    duration,
-					ErrorMessage: string(errBody),
-					ClientIP:     clientIP,
-				}
-				if pendingReq.ID != "" {
-					go func() {
-						if err := h.store.CompleteRequest(pendingReq.ID, &req); err != nil {
-							logger.Error("failed to complete request", "request_id", pendingReq.ID, "error", err)
-						}
-					}()
-				} else {
-					h.collector.Record(req)
-				}
-				return nil
-			}
-
-			if isStreaming {
-				if channel.Provider == types.ProviderBedrock {
-					resp.Body = newBedrockStreamAdapter(resp.Body)
-					resp.Header.Set("Content-Type", "text/event-stream")
-				}
-				return h.interceptStreaming(resp, pendingReq.ID, project, apiKey, channel, model, traceID, policy, clientIP, startTime, logger)
-			}
-			return h.interceptNonStreaming(resp, pendingReq.ID, project, apiKey, channel, model, traceID, policy, clientIP, startTime, logger)
-		},
-		FlushInterval: -1,
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			logger.Error("proxy error", "error", err)
-			if pendingReq.ID != "" {
-				duration := time.Since(startTime).Milliseconds()
-				req := types.Request{
-					Status:       types.RequestStatusError,
-					LatencyMs:    duration,
-					ErrorMessage: err.Error(),
-					ClientIP:     clientIP,
-				}
-				go func() {
-					if err := h.store.CompleteRequest(pendingReq.ID, &req); err != nil {
-						logger.Error("failed to complete request", "request_id", pendingReq.ID, "error", err)
-					}
-				}()
-			}
-			writeProxyError(w, http.StatusBadGateway, "upstream error")
-		},
+	reqCtx := &RequestContext{
+		ProjectID:   project.ID,
+		APIKeyID:    apiKey.ID,
+		Model:       reqShape.Model,
+		IsStream:    reqShape.Stream,
+		TraceID:     traceID,
+		TraceSource: TraceSourceFromContext(r.Context()),
+		SessionID:   traceID, // Use trace ID for session stickiness
+		ClientIP:    r.RemoteAddr,
+		Policy:      policy,
+		APIKey:      apiKey,
+		Project:     project,
+		RequestID:   pendingReq.ID,
 	}
 
-	proxy.ServeHTTP(w, r)
-}
-
-func (h *Handler) interceptNonStreaming(resp *http.Response, requestID string, project *types.Project, apiKey *types.APIKey, channel *types.Channel, model, traceID string, policy *types.RateLimitPolicy, clientIP string, startTime time.Time, logger *slog.Logger) error {
-	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		logger.Error("failed to read response body", "error", err)
-		resp.Body = io.NopCloser(bytes.NewReader(nil))
-		return nil
-	}
-	resp.Body = io.NopCloser(bytes.NewReader(body))
-
-	parsedModel, msgID, usage, err := ParseNonStreamingResponse(body)
-	if err != nil {
-		logger.Warn("failed to parse response", "error", err)
-		return nil
-	}
-	if parsedModel != "" {
-		model = parsedModel
-	}
-
-	duration := time.Since(startTime).Milliseconds()
-
-	var credits float64
-	if policy != nil {
-		credits = policy.ComputeCredits(model, usage.InputTokens, usage.OutputTokens, usage.CacheCreationInputTokens, usage.CacheReadInputTokens)
-	}
-
-	req := types.Request{
-		ProjectID:           project.ID,
-		APIKeyID:            apiKey.ID,
-		ChannelID:           channel.ID,
-		TraceID:             traceID,
-		MsgID:               msgID,
-		Provider:            channel.Provider,
-		Model:               model,
-		Streaming:           false,
-		Status:              types.RequestStatusSuccess,
-		InputTokens:         usage.InputTokens,
-		OutputTokens:        usage.OutputTokens,
-		CacheCreationTokens: usage.CacheCreationInputTokens,
-		CacheReadTokens:     usage.CacheReadInputTokens,
-		CreditsConsumed:     credits,
-		LatencyMs:           duration,
-		ClientIP:            clientIP,
-	}
-	if requestID != "" {
-		go func() {
-			if err := h.store.CompleteRequest(requestID, &req); err != nil {
-				logger.Error("failed to complete request", "request_id", requestID, "error", err)
-			}
-		}()
-	} else {
-		h.collector.Record(req)
-	}
-
-	logger.Info("request completed",
-		"msg_id", msgID,
-		"status", types.RequestStatusSuccess,
-		"streaming", false,
-		"input_tokens", usage.InputTokens,
-		"output_tokens", usage.OutputTokens,
-		"cache_creation_tokens", usage.CacheCreationInputTokens,
-		"cache_read_tokens", usage.CacheReadInputTokens,
-		"credits", credits,
-		"duration_ms", duration,
-	)
-
-	if h.rateLimiter != nil {
-		h.rateLimiter.PostRecord(context.Background(), project.ID, apiKey.ID, model, types.TokenUsage{
-			InputTokens:         usage.InputTokens,
-			OutputTokens:        usage.OutputTokens,
-			CacheCreationTokens: usage.CacheCreationInputTokens,
-			CacheReadTokens:     usage.CacheReadInputTokens,
-		})
-	}
-
-	return nil
-}
-
-func (h *Handler) interceptStreaming(resp *http.Response, requestID string, project *types.Project, apiKey *types.APIKey, channel *types.Channel, model, traceID string, policy *types.RateLimitPolicy, clientIP string, startTime time.Time, logger *slog.Logger) error {
-	resp.Body = newStreamInterceptor(resp.Body, startTime, func(parsedModel, msgID string, usage anthropic.Usage, ttft int64) {
-		if parsedModel != "" {
-			model = parsedModel
-		}
-		duration := time.Since(startTime).Milliseconds()
-
-		var credits float64
-		if policy != nil {
-			credits = policy.ComputeCredits(model, usage.InputTokens, usage.OutputTokens, usage.CacheCreationInputTokens, usage.CacheReadInputTokens)
-		}
-
-		req := types.Request{
-			ProjectID:           project.ID,
-			APIKeyID:            apiKey.ID,
-			ChannelID:           channel.ID,
-			TraceID:             traceID,
-			MsgID:               msgID,
-			Provider:            channel.Provider,
-			Model:               model,
-			Streaming:           true,
-			Status:              types.RequestStatusSuccess,
-			InputTokens:         usage.InputTokens,
-			OutputTokens:        usage.OutputTokens,
-			CacheCreationTokens: usage.CacheCreationInputTokens,
-			CacheReadTokens:     usage.CacheReadInputTokens,
-			CreditsConsumed:     credits,
-			LatencyMs:           duration,
-			TTFTMs:              ttft,
-			ClientIP:            clientIP,
-		}
-		if requestID != "" {
-			go func() {
-				if err := h.store.CompleteRequest(requestID, &req); err != nil {
-					logger.Error("failed to complete request", "request_id", requestID, "error", err)
-				}
-			}()
-		} else {
-			h.collector.Record(req)
-		}
-
-		logger.Info("request completed",
-			"msg_id", msgID,
-			"status", types.RequestStatusSuccess,
-			"streaming", true,
-			"input_tokens", usage.InputTokens,
-			"output_tokens", usage.OutputTokens,
-			"cache_creation_tokens", usage.CacheCreationInputTokens,
-			"cache_read_tokens", usage.CacheReadInputTokens,
-			"credits", credits,
-			"duration_ms", duration,
-			"ttft_ms", ttft,
-		)
-
-		if h.rateLimiter != nil {
-			h.rateLimiter.PostRecord(context.Background(), project.ID, apiKey.ID, model, types.TokenUsage{
-				InputTokens:         usage.InputTokens,
-				OutputTokens:        usage.OutputTokens,
-				CacheCreationTokens: usage.CacheCreationInputTokens,
-				CacheReadTokens:     usage.CacheReadInputTokens,
-			})
-		}
-	})
-	return nil
+	h.executor.Execute(w, r, reqCtx)
 }
 
 // HandleCountTokens proxies Anthropic /v1/messages/count_tokens requests.
@@ -422,42 +140,36 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 		Model string `json:"model"`
 	}
 	json.Unmarshal(bodyBytes, &reqShape)
-	model := reqShape.Model
 
-	if len(apiKey.AllowedModels) > 0 && !modelInList(apiKey.AllowedModels, model) {
+	if len(apiKey.AllowedModels) > 0 && !modelInList(apiKey.AllowedModels, reqShape.Model) {
 		writeProxyError(w, http.StatusForbidden, "model not allowed for this API key")
 		return
 	}
 
-	candidates := h.channelRouter.MatchChannels(project.ID, model)
-	// count_tokens is only supported by the Anthropic API (including Claude Code).
-	filtered := candidates[:0]
+	// Use router to find an upstream for count_tokens (Anthropic/ClaudeCode only).
+	group, err := h.router.Match(project.ID, reqShape.Model)
+	if err != nil {
+		writeProxyError(w, http.StatusServiceUnavailable, "no upstreams available for model "+reqShape.Model)
+		return
+	}
+	candidates := h.router.SelectWithRetry(r.Context(), group, "")
+
+	// Filter to Anthropic/ClaudeCode only (count_tokens isn't supported by other providers).
+	var selected *SelectedUpstream
 	for _, c := range candidates {
-		if c.Provider == types.ProviderAnthropic || c.Provider == types.ProviderClaudeCode {
-			filtered = append(filtered, c)
+		if c.Upstream.Provider == types.ProviderAnthropic || c.Upstream.Provider == types.ProviderClaudeCode {
+			selected = c
+			break
 		}
 	}
-	if len(filtered) == 0 {
-		writeProxyError(w, http.StatusServiceUnavailable, "no Anthropic channels available for model "+model)
+	if selected == nil {
+		writeProxyError(w, http.StatusServiceUnavailable, "no Anthropic upstreams available for model "+reqShape.Model)
 		return
 	}
 
-	channel := SelectChannel(filtered)
-	if channel == nil {
-		writeProxyError(w, http.StatusServiceUnavailable, "no channels available")
-		return
-	}
-
-	channelAPIKey := h.channelRouter.GetChannelKey(channel.ID)
-	if channelAPIKey == "" {
-		h.logger.Error("no decrypted key for channel", "channel_id", channel.ID)
-		writeProxyError(w, http.StatusInternalServerError, "channel configuration error")
-		return
-	}
-
-	// Resolve model name via channel's model_map.
-	actualModel := channel.ResolveModel(model)
-	if actualModel != model {
+	// Resolve model name.
+	actualModel := selected.Upstream.ResolveModel(reqShape.Model)
+	if actualModel != reqShape.Model {
 		bodyBytes, _ = sjson.SetBytes(bodyBytes, "model", actualModel)
 		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		r.ContentLength = int64(len(bodyBytes))
@@ -465,23 +177,18 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 
 	proxy := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
-			if channel.Provider == types.ProviderClaudeCode {
-				accessToken, err := h.channelRouter.GetClaudeCodeAccessToken(channel.ID)
-				if err != nil {
-					h.logger.Error("claudecode token error for count_tokens", "error", err)
-					accessToken = ParseClaudeCodeAccessToken(channelAPIKey)
-				}
-				directorSetClaudeCodeUpstream(req, channel.BaseURL, accessToken)
+			if selected.Upstream.Provider == types.ProviderClaudeCode {
+				accessToken := ParseClaudeCodeAccessToken(selected.APIKey)
+				directorSetClaudeCodeUpstream(req, selected.Upstream.BaseURL, accessToken)
 			} else {
-				directorSetUpstream(req, channel.BaseURL, channelAPIKey)
+				directorSetUpstream(req, selected.Upstream.BaseURL, selected.APIKey)
 			}
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			h.logger.Error("count_tokens proxy error", "error", err, "project_id", project.ID, "model", model)
+			h.logger.Error("count_tokens proxy error", "error", err)
 			writeProxyError(w, http.StatusBadGateway, "upstream error")
 		},
 	}
-
 	proxy.ServeHTTP(w, r)
 }
 
@@ -520,7 +227,6 @@ func directorSetUpstream(req *http.Request, baseURL, apiKey string) {
 		req.Header.Set("anthropic-version", "2023-06-01")
 	}
 }
-
 
 func modelInList(list []string, model string) bool {
 	for _, m := range list {
