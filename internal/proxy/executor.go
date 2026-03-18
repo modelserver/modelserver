@@ -208,15 +208,19 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 
 		// 6c. Build a clean outgoing request (avoid r.Clone which copies
 		//     hidden fields like TLS, TransferEncoding, Trailer, etc.).
-		outReq, err := http.NewRequestWithContext(r.Context(), r.Method, r.URL.String(), io.NopCloser(bytes.NewReader(transformedBody)))
+		//     Use the original URL path (without query string) as the base;
+		//     SetUpstream will rewrite scheme, host, and path as needed.
+		cleanURL := *r.URL
+		cleanURL.RawQuery = ""
+		outReq, err := http.NewRequestWithContext(r.Context(), r.Method, cleanURL.String(), io.NopCloser(bytes.NewReader(transformedBody)))
 		if err != nil {
 			logger.Error("failed to create outgoing request", "error", err)
 			continue
 		}
 		outReq.ContentLength = int64(len(transformedBody))
 
-		// Copy only whitelisted headers from the original request.
-		outReq.Header = sanitizeUpstreamHeaders(r.Header)
+		// Deep-copy only whitelisted headers from the original request.
+		outReq.Header = sanitizeUpstreamHeaders(r.Header.Clone())
 
 		// For Bedrock, inject the resolved model and streaming flag into the
 		// request context so SetUpstream can construct the correct URL path.
@@ -839,7 +843,6 @@ func sanitizeUpstreamHeaders(h http.Header) http.Header {
 		canon := http.CanonicalHeaderKey(key)
 		switch {
 		case canon == "Content-Type",
-			canon == "Content-Length",
 			canon == "Accept",
 			canon == "User-Agent",
 			canon == "X-App",
