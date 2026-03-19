@@ -68,3 +68,10 @@ func GetProviderTransformer(provider string) ProviderTransformer {
 	}
 	return providerTransformers[types.ProviderAnthropic]
 }
+
+// RegisterVertexTransformer registers the Vertex AI transformer with the given
+// token manager. Called during server initialization after the token manager
+// is created (cannot use init() since the transformer needs runtime state).
+func RegisterVertexTransformer(tm *VertexTokenManager) {
+	providerTransformers[types.ProviderVertex] = &VertexTransformer{tokenManager: tm}
+}
