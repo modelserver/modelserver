@@ -43,6 +43,10 @@ const (
 	baselineWindowSize    = 10 // Number of recent successful probe latencies to average
 )
 
+// TokenFetcher retrieves a valid access token for the given upstream.
+// Used by health checker for providers that require dynamic token refresh (e.g., Vertex AI).
+type TokenFetcher func(upstreamID string) (string, error)
+
 // HealthChecker performs periodic active health probes against upstreams.
 type HealthChecker struct {
 	mu             sync.RWMutex
@@ -54,6 +58,7 @@ type HealthChecker struct {
 	stop           chan struct{}
 	stopOnce       sync.Once // guards close(stop) against double-close panic
 	wg             sync.WaitGroup
+	tokenFetcher   TokenFetcher           // Optional: for Vertex AI token refresh
 }
 
 type healthEntry struct {
@@ -73,7 +78,7 @@ type healthEntry struct {
 }
 
 // NewHealthChecker creates a HealthChecker that shares state with the given CircuitBreaker.
-func NewHealthChecker(cb *CircuitBreaker, metrics *UpstreamMetrics, logger *slog.Logger) *HealthChecker {
+func NewHealthChecker(cb *CircuitBreaker, metrics *UpstreamMetrics, logger *slog.Logger, tokenFetcher TokenFetcher) *HealthChecker {
 	return &HealthChecker{
 		upstreams:      make(map[string]*healthEntry),
 		circuitBreaker: cb,
@@ -82,7 +87,8 @@ func NewHealthChecker(cb *CircuitBreaker, metrics *UpstreamMetrics, logger *slog
 		httpClient: &http.Client{
 			Timeout: defaultHealthTimeout,
 		},
-		stop: make(chan struct{}),
+		stop:         make(chan struct{}),
+		tokenFetcher: tokenFetcher,
 	}
 }
 
@@ -249,6 +255,8 @@ func (hc *HealthChecker) buildProbeRequest(entry *healthEntry) (*http.Request, e
 		return hc.buildClaudeCodeProbe(entry)
 	case "bedrock":
 		return hc.buildBedrockProbe(entry)
+	case "vertex":
+		return hc.buildVertexProbe(entry)
 	default:
 		return hc.buildOpenAIProbe(entry)
 	}
@@ -343,6 +351,44 @@ func (hc *HealthChecker) buildBedrockProbe(entry *healthEntry) (*http.Request, e
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	return req, nil
+}
+
+func (hc *HealthChecker) buildVertexProbe(entry *healthEntry) (*http.Request, error) {
+	body := map[string]interface{}{
+		"anthropic_version": "vertex-2023-10-16",
+		"max_tokens":        1,
+		"messages": []map[string]string{
+			{"role": "user", "content": "hi"},
+		},
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal probe body: %w", err)
+	}
+
+	// Construct the rawPredict URL: baseURL/{testModel}:rawPredict
+	base := entry.baseURL
+	if len(base) > 0 && base[len(base)-1] == '/' {
+		base = base[:len(base)-1]
+	}
+	url := fmt.Sprintf("%s/%s:rawPredict", base, entry.testModel)
+
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Get access token via the token fetcher callback.
+	if hc.tokenFetcher != nil {
+		token, err := hc.tokenFetcher(entry.upstreamID)
+		if err != nil {
+			return nil, fmt.Errorf("get vertex token: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
 	return req, nil
 }
 

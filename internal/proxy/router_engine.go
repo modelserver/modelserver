@@ -98,7 +98,7 @@ func NewRouter(
 	r.connTracker = lb.NewConnectionTracker()
 	r.metrics = lb.NewUpstreamMetrics()
 	r.circuitBreaker = lb.NewCircuitBreaker(5, 2, 30*time.Second)
-	r.healthChecker = lb.NewHealthChecker(r.circuitBreaker, r.metrics, logger)
+	r.healthChecker = lb.NewHealthChecker(r.circuitBreaker, r.metrics, logger, nil)
 
 	// Build all maps from the configuration.
 	r.buildMaps(upstreams, groups, routes, encKey)
