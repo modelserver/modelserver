@@ -43,6 +43,61 @@ export function useTestUpstream() {
   });
 }
 
+// --- Claude Code OAuth ---
+export function useClaudeCodeOAuthStart() {
+  return useMutation({
+    mutationFn: (body?: { redirect_uri?: string }) =>
+      api.post<DataResponse<{
+        auth_url: string;
+        state: string;
+        code_verifier: string;
+        redirect_uri: string;
+      }>>("/api/v1/upstreams/claudecode/oauth/start", body ?? {}),
+  });
+}
+
+export function useClaudeCodeOAuthExchange() {
+  return useMutation({
+    mutationFn: (body: {
+      callback_url: string;
+      code_verifier: string;
+      state: string;
+      redirect_uri: string;
+    }) =>
+      api.post<DataResponse<{
+        access_token: string;
+        refresh_token: string;
+        expires_at: number;
+        client_id: string;
+      }>>("/api/v1/upstreams/claudecode/oauth/exchange", body),
+  });
+}
+
+export function useUpstreamOAuthStatus(upstreamId: string | undefined) {
+  return useQuery({
+    queryKey: ["admin", "upstreams", upstreamId, "oauth-status"],
+    queryFn: () =>
+      api.get<DataResponse<{ expires_at: number; has_refresh_token: boolean }>>(
+        `/api/v1/upstreams/${upstreamId}/oauth/status`,
+      ),
+    enabled: !!upstreamId,
+    refetchInterval: 60_000,
+  });
+}
+
+export function useUpstreamOAuthRefresh() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (upstreamId: string) =>
+      api.post<DataResponse<{ expires_at: number; has_refresh_token: boolean }>>(
+        `/api/v1/upstreams/${upstreamId}/oauth/refresh`,
+      ),
+    onSuccess: (_, upstreamId) => {
+      qc.invalidateQueries({ queryKey: ["admin", "upstreams", upstreamId, "oauth-status"] });
+    },
+  });
+}
+
 // --- Upstream Groups ---
 export function useUpstreamGroups() {
   return useQuery({
