@@ -92,8 +92,8 @@ func TestVertexTransformer_TransformBody(t *testing.T) {
 	if contains(s, `"model"`) {
 		t.Errorf("model should be removed: %s", s)
 	}
-	if contains(s, `"stream"`) {
-		t.Errorf("stream should be removed: %s", s)
+	if !contains(s, `"stream":true`) {
+		t.Errorf("stream should be preserved: %s", s)
 	}
 	if !contains(s, `"anthropic_version"`) {
 		t.Errorf("anthropic_version should be set: %s", s)

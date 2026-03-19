@@ -13,7 +13,7 @@ func TestTransformVertexBody(t *testing.T) {
 		wantCheck func(t *testing.T, result string)
 	}{
 		{
-			name: "sets anthropic_version and strips model/stream",
+			name: "sets anthropic_version, strips model, preserves stream",
 			body: `{"model":"claude-sonnet-4-20250514","stream":true,"max_tokens":1024,"messages":[{"role":"user","content":"Hi"}]}`,
 			wantCheck: func(t *testing.T, result string) {
 				if !strings.Contains(result, `"anthropic_version":"vertex-2023-10-16"`) {
@@ -22,8 +22,8 @@ func TestTransformVertexBody(t *testing.T) {
 				if strings.Contains(result, `"model"`) {
 					t.Errorf("model should be removed, got %s", result)
 				}
-				if strings.Contains(result, `"stream"`) {
-					t.Errorf("stream should be removed, got %s", result)
+				if !strings.Contains(result, `"stream":true`) {
+					t.Errorf("stream should be preserved, got %s", result)
 				}
 				if !strings.Contains(result, `"max_tokens"`) {
 					t.Errorf("max_tokens should remain, got %s", result)

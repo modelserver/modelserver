@@ -42,7 +42,11 @@ func filterVertexBetas(betas []string) (supported, dropped []string) {
 // transformVertexBody modifies the request body for Vertex AI format:
 //   - Sets anthropic_version to "vertex-2023-10-16" if not present
 //   - Moves anthropic-beta header values into body as anthropic_beta array
-//   - Removes model and stream fields (encoded in the URL)
+//   - Removes model field (encoded in the URL)
+//
+// NOTE: Unlike Bedrock, the stream field is NOT removed. Vertex AI requires
+// "stream": true in the request body in addition to using the streamRawPredict
+// endpoint. Without it, Vertex returns a non-streaming JSON response.
 func transformVertexBody(body []byte, betas []string) ([]byte, error) {
 	var err error
 
@@ -61,7 +65,6 @@ func transformVertexBody(body []byte, betas []string) ([]byte, error) {
 	}
 
 	body, _ = sjson.DeleteBytes(body, "model")
-	body, _ = sjson.DeleteBytes(body, "stream")
 
 	return body, nil
 }
