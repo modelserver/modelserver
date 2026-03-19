@@ -58,6 +58,7 @@ func init() {
 	providerTransformers[types.ProviderBedrock] = &BedrockTransformer{}
 	providerTransformers[types.ProviderOpenAI] = &OpenAITransformer{}
 	providerTransformers[types.ProviderClaudeCode] = &ClaudeCodeTransformer{}
+	providerTransformers[types.ProviderVertex] = &VertexTransformer{} // tokenManager set by Router init via SetTokenManager
 }
 
 // GetProviderTransformer returns the transformer for the given provider name.
@@ -69,9 +70,11 @@ func GetProviderTransformer(provider string) ProviderTransformer {
 	return providerTransformers[types.ProviderAnthropic]
 }
 
-// RegisterVertexTransformer registers the Vertex AI transformer with the given
-// token manager. Called during server initialization after the token manager
-// is created (cannot use init() since the transformer needs runtime state).
-func RegisterVertexTransformer(tm *VertexTokenManager) {
-	providerTransformers[types.ProviderVertex] = &VertexTransformer{tokenManager: tm}
+// SetVertexTokenManager sets the token manager on the already-registered
+// VertexTransformer. Called by Router init after creating the token manager.
+// This avoids mutating the global providerTransformers map at runtime.
+func SetVertexTokenManager(tm *VertexTokenManager) {
+	if vt, ok := providerTransformers[types.ProviderVertex].(*VertexTransformer); ok {
+		vt.SetTokenManager(tm)
+	}
 }

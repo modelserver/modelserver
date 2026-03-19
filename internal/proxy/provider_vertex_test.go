@@ -15,7 +15,8 @@ func TestVertexTransformer_SetUpstream(t *testing.T) {
 	}
 	tm.registerWithSource("u1", mock)
 
-	transformer := &VertexTransformer{tokenManager: tm}
+	transformer := &VertexTransformer{}
+	transformer.SetTokenManager(tm)
 
 	req := mustNewRequest(t, "POST", "http://localhost/v1/messages", nil)
 	req = withVertexParams(req, "claude-sonnet-4-20250514", true)
@@ -41,7 +42,8 @@ func TestVertexTransformer_SetUpstream(t *testing.T) {
 
 func TestVertexTransformer_SetUpstream_TokenError(t *testing.T) {
 	tm := NewVertexTokenManager()
-	transformer := &VertexTransformer{tokenManager: tm}
+	transformer := &VertexTransformer{}
+	transformer.SetTokenManager(tm)
 
 	req := mustNewRequest(t, "POST", "http://localhost/v1/messages", nil)
 	req = withVertexParams(req, "claude-sonnet-4-20250514", false)
@@ -54,6 +56,23 @@ func TestVertexTransformer_SetUpstream_TokenError(t *testing.T) {
 	err := transformer.SetUpstream(req, upstream, "")
 	if err == nil {
 		t.Fatal("expected error for unregistered upstream, got nil")
+	}
+}
+
+func TestVertexTransformer_SetUpstream_NilTokenManager(t *testing.T) {
+	transformer := &VertexTransformer{} // no SetTokenManager called
+
+	req := mustNewRequest(t, "POST", "http://localhost/v1/messages", nil)
+	req = withVertexParams(req, "claude-sonnet-4-20250514", false)
+
+	upstream := &types.Upstream{
+		ID:      "u1",
+		BaseURL: "https://example.com/v1/projects/p/locations/r/publishers/anthropic/models",
+	}
+
+	err := transformer.SetUpstream(req, upstream, "")
+	if err == nil {
+		t.Fatal("expected error for nil token manager, got nil")
 	}
 }
 

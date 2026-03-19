@@ -99,8 +99,8 @@ func NewRouter(
 	// Create the Vertex AI token manager.
 	r.vertexTokenManager = NewVertexTokenManager()
 
-	// Register the Vertex transformer (needs token manager).
-	RegisterVertexTransformer(r.vertexTokenManager)
+	// Wire the token manager into the already-registered VertexTransformer.
+	SetVertexTokenManager(r.vertexTokenManager)
 
 	// Build shared infrastructure components.
 	r.connTracker = lb.NewConnectionTracker()

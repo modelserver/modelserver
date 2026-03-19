@@ -2,8 +2,10 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -32,8 +34,10 @@ func withVertexParams(r *http.Request, model string, isStream bool) *http.Reques
 }
 
 // VertexTransformer handles Google Vertex AI request/response transformations.
+// The tokenManager is stored as an atomic pointer so it can be set after init()
+// without mutating the global providerTransformers map.
 type VertexTransformer struct {
-	tokenManager *VertexTokenManager
+	tokenManager atomic.Pointer[VertexTokenManager]
 }
 
 var _ ProviderTransformer = (*VertexTransformer)(nil)
@@ -45,11 +49,20 @@ func (t *VertexTransformer) TransformBody(body []byte, _ string, _ bool, headers
 	return transformVertexBody(body, betas)
 }
 
+// SetTokenManager atomically sets the token manager. Called by Router init.
+func (t *VertexTransformer) SetTokenManager(tm *VertexTokenManager) {
+	t.tokenManager.Store(tm)
+}
+
 // SetUpstream configures the outbound request for a Vertex AI upstream.
 func (t *VertexTransformer) SetUpstream(r *http.Request, upstream *types.Upstream, _ string) error {
 	params, _ := r.Context().Value(vertexContextKey{}).(vertexParams)
 
-	accessToken, err := t.tokenManager.GetToken(upstream.ID)
+	tm := t.tokenManager.Load()
+	if tm == nil {
+		return fmt.Errorf("vertex token manager not initialized")
+	}
+	accessToken, err := tm.GetToken(upstream.ID)
 	if err != nil {
 		return err
 	}
