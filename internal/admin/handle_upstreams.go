@@ -12,6 +12,7 @@ import (
 	"github.com/modelserver/modelserver/internal/crypto"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
+	"golang.org/x/oauth2/google"
 )
 
 func handleListUpstreams(st *store.Store, _ []byte) http.HandlerFunc {
@@ -206,6 +207,17 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 				"max_tokens": 10,
 				"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
 			})
+		case types.ProviderVertex:
+			base := baseURL
+			if len(base) > 0 && base[len(base)-1] == '/' {
+				base = base[:len(base)-1]
+			}
+			endpoint = fmt.Sprintf("%s/%s:rawPredict", base, upstreamTestModel)
+			reqBody, _ = json.Marshal(map[string]interface{}{
+				"anthropic_version": "vertex-2023-10-16",
+				"max_tokens":        10,
+				"messages":          []map[string]string{{"role": "user", "content": "Hi"}},
+			})
 		default:
 			endpoint = baseURL + "/v1/messages"
 			reqBody, _ = json.Marshal(map[string]interface{}{
@@ -246,6 +258,24 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 			req.Header.Set("Anthropic-Version", "2023-06-01")
 			req.Header.Set("Anthropic-Beta", "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14")
 			req.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
+		case types.ProviderVertex:
+			creds, err := google.CredentialsFromJSON(r.Context(), apiKey, "https://www.googleapis.com/auth/cloud-platform")
+			if err != nil {
+				writeData(w, http.StatusOK, map[string]interface{}{
+					"success": false,
+					"error":   fmt.Sprintf("failed to parse service account JSON: %v", err),
+				})
+				return
+			}
+			tok, err := creds.TokenSource.Token()
+			if err != nil {
+				writeData(w, http.StatusOK, map[string]interface{}{
+					"success": false,
+					"error":   fmt.Sprintf("failed to get access token: %v", err),
+				})
+				return
+			}
+			req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
 		default:
 			req.Header.Set("x-api-key", string(apiKey))
 			req.Header.Set("anthropic-version", "2023-06-01")
