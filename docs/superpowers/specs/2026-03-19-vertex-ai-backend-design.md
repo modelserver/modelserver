@@ -246,15 +246,40 @@ func withVertexParams(r *http.Request, model string, isStream bool) *http.Reques
 - `internal/store/` — no schema changes; Vertex upstreams use existing columns
 - `internal/proxy/stream.go` — existing `streamInterceptor` reused as-is
 - `internal/proxy/parser.go` — existing `ParseNonStreamingResponse` reused as-is
-- Dashboard — admin can create `provider=vertex` upstreams via existing CRUD UI
+- Dashboard — see Dashboard Changes section below
 - `internal/ratelimit/` — rate limiting unchanged
 - `internal/config/` — no new config fields
+
+## Dashboard Changes
+
+Both `UpstreamsPage.tsx` and `ChannelsPage.tsx` need:
+
+1. **Provider dropdown**: Add `<SelectItem value="vertex">Google Vertex AI</SelectItem>` to all provider `<Select>` components (create and edit dialogs).
+
+2. **API Key input**: When `provider === "vertex"`, replace the single-line `<Input type="password">` with a multi-line `<textarea>` for pasting the service account JSON. This follows the same conditional rendering pattern already used for `claudecode` (which shows an OAuth flow instead of a text input). Example:
+   ```tsx
+   {form.provider === "vertex" ? (
+     <Textarea
+       value={form.api_key}
+       onChange={(e) => updateForm("api_key", e.target.value)}
+       placeholder='Paste service account JSON key here...'
+       rows={6}
+       className="font-mono text-xs"
+     />
+   ) : (
+     <Input type="password" ... />
+   )}
+   ```
+
+3. **Base URL placeholder**: When `provider === "vertex"`, update the placeholder to guide the user:
+   ```
+   https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/REGION/publishers/anthropic/models
+   ```
 
 ## Notes
 
 - **Error response format**: Vertex AI error responses may use Google-style error envelopes (`{"error": {"code": 400, "message": "...", "status": "INVALID_ARGUMENT"}}`) rather than Anthropic's format. The proxy's `commitErrorResponse` reads and forwards the raw body to the client, so this is transparent. No special error handling needed.
 - **Proxy support for token refresh**: The `oauth2` HTTP client used for token refresh does not automatically use `HTTP_PROXY`/`HTTPS_PROXY` environment variables. If the deployment requires a proxy to reach `oauth2.googleapis.com`, pass a custom `http.Client` with proxy support via `option.WithHTTPClient()` when constructing credentials. This is an edge case — most deployments have direct internet access for the token endpoint.
-- **Dashboard**: If the dashboard frontend has a hardcoded provider dropdown, it needs `"vertex"` added. Otherwise, the existing free-text provider field works as-is.
 
 ## Testing Strategy
 
