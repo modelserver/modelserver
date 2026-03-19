@@ -57,8 +57,8 @@ type VertexTokenManager struct {
 }
 
 type vertexToken struct {
-    source oauth2.TokenSource  // from google.CredentialsFromJSON
-    mu     sync.Mutex          // per-token refresh lock (prevents thundering herd)
+    source oauth2.TokenSource  // oauth2.ReuseTokenSource wrapping google.CredentialsFromJSON
+    // No per-token mutex needed: oauth2.ReuseTokenSource serializes refresh internally.
 }
 ```
 
@@ -68,7 +68,9 @@ type vertexToken struct {
 
 - **`Register(upstreamID string, serviceAccountJSON []byte) error`** — parses the service account JSON, creates a `google.CredentialsFromJSON` with scope `https://www.googleapis.com/auth/cloud-platform`, wraps it in `oauth2.ReuseTokenSource` for automatic caching/refresh, stores in map. Called during Router's `buildMaps()` for each Vertex upstream.
 
-- **`GetToken(upstreamID string) (string, error)`** — returns a valid access token. The underlying `oauth2.ReuseTokenSource` handles caching and automatic refresh when the token is within its expiry window. Per-upstream mutex prevents concurrent refresh storms.
+- **`GetToken(upstreamID string) (string, error)`** — returns a valid access token. The underlying `oauth2.ReuseTokenSource` handles caching, automatic refresh, and internal serialization (no external mutex needed).
+
+- **`Clear()`** — removes all entries from the map under write lock. Called by `Router.Reload()` before rebuilding maps.
 
 - **`Deregister(upstreamID string)`** — removes from map. Called when an upstream is deleted or disabled.
 
@@ -101,7 +103,7 @@ type VertexTransformer struct {
 Similar to Bedrock:
 - Strips `model` field (encoded in URL path)
 - Strips `stream` field (determined by endpoint: rawPredict vs streamRawPredict)
-- Sets `anthropic_version: "vertex-2023-10-16"` if not already present
+- Sets `anthropic_version: "vertex-2023-10-16"` if not already present (verify against current Google Vertex AI Claude documentation at implementation time — version string may have been updated)
 - Moves supported `anthropic-beta` header values into the body (same filter as Bedrock)
 
 ### SetUpstream
@@ -156,6 +158,12 @@ func withVertexParams(r *http.Request, model string, isStream bool) *http.Reques
       outReq = withVertexParams(outReq, actualModel, reqCtx.IsStream)
   }
   ```
+- **Model-rewrite guard**: The existing code at line ~197 skips model-field rewriting for Bedrock (since Bedrock strips it). Vertex also strips the model field, so add `ProviderVertex` to the exclusion:
+  ```go
+  if actualModel != reqCtx.Model && upstream.Provider != types.ProviderBedrock && upstream.Provider != types.ProviderVertex {
+      bodyForTransform, _ = sjson.SetBytes(...)
+  }
+  ```
 
 ### `internal/proxy/handler.go`
 - Add `types.ProviderVertex` to `HandleMessages` allowed providers:
@@ -171,16 +179,23 @@ func withVertexParams(r *http.Request, model string, isStream bool) *http.Reques
   ```
 
 ### `internal/proxy/lb/health_checker.go`
-- Add `case "vertex":` in `buildProbeRequest()`:
-  - Uses `rawPredict` endpoint with access token from token manager
-  - Health checker needs a reference to `VertexTokenManager` (add to `HealthChecker` struct or pass via closure)
+- Add `case "vertex":` in `buildProbeRequest()`
+- **Import cycle solution**: `HealthChecker` (in `lb` package) cannot import `proxy.VertexTokenManager` directly (would create `proxy` → `lb` → `proxy` cycle). Instead, define a `TokenFetcher` callback type in the `lb` package:
+  ```go
+  // TokenFetcher retrieves a valid access token for the given upstream.
+  // Used by health checker for providers that require dynamic token refresh.
+  type TokenFetcher func(upstreamID string) (string, error)
+  ```
+  Add an optional `TokenFetcher` field to `HealthChecker`. At construction time (in `main.go` or Router init), pass a closure that calls `tokenManager.GetToken`. The Vertex health probe uses this callback to get a fresh access token for the probe request.
+- Vertex probe: POST to `{baseURL}/{testModel}:rawPredict` with `Authorization: Bearer {token}`, same minimal body as Anthropic probe
 
 ### `internal/admin/handle_upstreams.go`
 - Add `case types.ProviderVertex:` in `handleTestUpstream`:
   - Parse service account JSON from decrypted API key
-  - Generate access token via `google.CredentialsFromJSON`
+  - Generate access token inline via `google.CredentialsFromJSON` (one-shot, not reusing `VertexTokenManager` — test handlers are independent of the proxy pipeline and run infrequently, so duplication is acceptable)
   - Build rawPredict request to `{BaseURL}/{testModel}:rawPredict`
   - Set `Authorization: Bearer {token}`
+  - Body: Anthropic format with `anthropic_version`, `max_tokens: 10`, minimal message
 
 ### `internal/admin/handle_channels.go`
 - Add `case types.ProviderVertex:` in `handleTestChannel` (same logic as above)
@@ -191,6 +206,10 @@ func withVertexParams(r *http.Request, model string, isStream bool) *http.Reques
 ### Router initialization
 - During `buildMaps()` / upstream loading, for Vertex upstreams: call `tokenManager.Register(upstreamID, decryptedKey)`
 - `VertexTokenManager` is created once and passed to both the `VertexTransformer` and the Router
+- **On `Reload()`**: Before rebuilding maps, call `tokenManager.Clear()` to remove all entries, then re-register during the new `buildMaps()` pass. This ensures key rotations take effect without a server restart. `Clear()` is a simple method that resets the internal map under the write lock.
+
+### `internal/proxy/handler.go` (count_tokens)
+- Add `types.ProviderVertex` to the `HandleCountTokens` provider filter alongside Anthropic and ClaudeCode. Vertex's `rawPredict` supports the full Anthropic API surface including count_tokens.
 
 ### `go.mod`
 - Ensure `golang.org/x/oauth2/google` is importable (likely already transitively available)
@@ -216,6 +235,9 @@ func withVertexParams(r *http.Request, model string, isStream bool) *http.Reques
 | `internal/admin/handle_upstreams.go` | Add Vertex test case |
 | `internal/admin/handle_channels.go` | Add Vertex test case |
 | `go.mod` / `go.sum` | Ensure google oauth2 dependency |
+| `dashboard/src/pages/admin/UpstreamsPage.tsx` | Add `vertex` to provider dropdown |
+| `dashboard/src/pages/admin/ChannelsPage.tsx` | Add `vertex` to provider dropdowns (create + edit) |
+| Router init (e.g. `router_engine.go`) | Pass `TokenFetcher` closure to `NewHealthChecker` |
 
 ## Unchanged Components
 
@@ -227,6 +249,12 @@ func withVertexParams(r *http.Request, model string, isStream bool) *http.Reques
 - Dashboard — admin can create `provider=vertex` upstreams via existing CRUD UI
 - `internal/ratelimit/` — rate limiting unchanged
 - `internal/config/` — no new config fields
+
+## Notes
+
+- **Error response format**: Vertex AI error responses may use Google-style error envelopes (`{"error": {"code": 400, "message": "...", "status": "INVALID_ARGUMENT"}}`) rather than Anthropic's format. The proxy's `commitErrorResponse` reads and forwards the raw body to the client, so this is transparent. No special error handling needed.
+- **Proxy support for token refresh**: The `oauth2` HTTP client used for token refresh does not automatically use `HTTP_PROXY`/`HTTPS_PROXY` environment variables. If the deployment requires a proxy to reach `oauth2.googleapis.com`, pass a custom `http.Client` with proxy support via `option.WithHTTPClient()` when constructing credentials. This is an edge case — most deployments have direct internet access for the token endpoint.
+- **Dashboard**: If the dashboard frontend has a hardcoded provider dropdown, it needs `"vertex"` added. Otherwise, the existing free-text provider field works as-is.
 
 ## Testing Strategy
 
