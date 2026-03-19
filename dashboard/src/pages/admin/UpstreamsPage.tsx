@@ -96,6 +96,7 @@ export function UpstreamsPage() {
     base_url: "",
     api_key: "",
     supported_models: "",
+    model_map: [] as { from: string; to: string }[],
     weight: "1",
     max_concurrent: "10",
     test_model: "",
@@ -127,6 +128,7 @@ export function UpstreamsPage() {
       base_url: "",
       api_key: "",
       supported_models: "",
+      model_map: [],
       weight: "1",
       max_concurrent: "10",
       test_model: "",
@@ -138,12 +140,16 @@ export function UpstreamsPage() {
 
   function openEdit(u: Upstream) {
     setEditingId(u.id);
+    const modelMapEntries = u.model_map
+      ? Object.entries(u.model_map).map(([from, to]) => ({ from, to }))
+      : [];
     setForm({
       provider: u.provider,
       name: u.name,
       base_url: u.base_url,
       api_key: "",
       supported_models: u.supported_models?.join(", ") ?? "",
+      model_map: modelMapEntries,
       weight: String(u.weight),
       max_concurrent: String(u.max_concurrent),
       test_model: u.test_model ?? "",
@@ -159,6 +165,12 @@ export function UpstreamsPage() {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
+      const modelMap: Record<string, string> = {};
+      for (const entry of form.model_map) {
+        if (entry.from && entry.to) {
+          modelMap[entry.from] = entry.to;
+        }
+      }
       if (editingId) {
         const body: Record<string, unknown> = {
           id: editingId,
@@ -166,6 +178,7 @@ export function UpstreamsPage() {
           provider: form.provider,
           base_url: form.base_url,
           supported_models: models,
+          model_map: modelMap,
           weight: Number(form.weight) || 1,
           max_concurrent: Number(form.max_concurrent) || 10,
           test_model: form.test_model || undefined,
@@ -181,6 +194,7 @@ export function UpstreamsPage() {
           base_url: form.base_url,
           api_key: form.api_key,
           supported_models: models,
+          model_map: modelMap,
           weight: Number(form.weight) || 1,
           max_concurrent: Number(form.max_concurrent) || 10,
           test_model: form.test_model || undefined,
@@ -285,6 +299,15 @@ export function UpstreamsPage() {
     {
       header: "Models",
       accessor: (u) => u.supported_models?.join(", ") || "\u2014",
+    },
+    {
+      header: "Model Map",
+      accessor: (u) => {
+        if (!u.model_map || Object.keys(u.model_map).length === 0) return "\u2014";
+        return Object.entries(u.model_map)
+          .map(([from, to]) => `${from} \u2192 ${to}`)
+          .join(", ");
+      },
     },
     {
       header: "Weight",
@@ -543,6 +566,63 @@ export function UpstreamsPage() {
                 onChange={(e) => setForm((p) => ({ ...p, supported_models: e.target.value }))}
                 placeholder="claude-opus-4, claude-sonnet-4"
               />
+            </div>
+            <div className="space-y-2">
+              <Label>Model Map</Label>
+              <p className="text-xs text-muted-foreground">
+                Map request model names to upstream model names. Routing uses the original model; the mapped name is sent to the upstream.
+              </p>
+              {form.model_map.map((entry, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <Input
+                    value={entry.from}
+                    onChange={(e) => {
+                      const updated = [...form.model_map];
+                      updated[i] = { ...entry, from: e.target.value };
+                      setForm((p) => ({ ...p, model_map: updated }));
+                    }}
+                    placeholder="request model"
+                    className="flex-1"
+                  />
+                  <span className="text-muted-foreground text-sm">&rarr;</span>
+                  <Input
+                    value={entry.to}
+                    onChange={(e) => {
+                      const updated = [...form.model_map];
+                      updated[i] = { ...entry, to: e.target.value };
+                      setForm((p) => ({ ...p, model_map: updated }));
+                    }}
+                    placeholder="upstream model"
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 flex-shrink-0"
+                    onClick={() => {
+                      const updated = form.model_map.filter((_, j) => j !== i);
+                      setForm((p) => ({ ...p, model_map: updated }));
+                    }}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setForm((p) => ({
+                    ...p,
+                    model_map: [...p.model_map, { from: "", to: "" }],
+                  }))
+                }
+              >
+                <Plus className="mr-1 h-3 w-3" />
+                Add Mapping
+              </Button>
             </div>
             <div className="space-y-2">
               <Label>Test Model (optional)</Label>
