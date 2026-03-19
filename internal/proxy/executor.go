@@ -194,7 +194,7 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			// Start with original body. If the model was remapped and this is
 			// not Bedrock (which strips the model field), rewrite it in the body.
 			bodyForTransform := originalBody
-			if actualModel != reqCtx.Model && upstream.Provider != types.ProviderBedrock {
+			if actualModel != reqCtx.Model && upstream.Provider != types.ProviderBedrock && upstream.Provider != types.ProviderVertex {
 				bodyForTransform, _ = sjson.SetBytes(append([]byte{}, originalBody...), "model", actualModel)
 			}
 
@@ -241,6 +241,12 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 		// request context so SetUpstream can construct the correct URL path.
 		if upstream.Provider == types.ProviderBedrock {
 			outReq = withBedrockParams(outReq, actualModel, reqCtx.IsStream)
+		}
+
+		// For Vertex, inject the resolved model and streaming flag into the
+		// request context so SetUpstream can construct the correct URL path.
+		if upstream.Provider == types.ProviderVertex {
+			outReq = withVertexParams(outReq, actualModel, reqCtx.IsStream)
 		}
 
 		// 6d. Configure the outbound request for this upstream.
