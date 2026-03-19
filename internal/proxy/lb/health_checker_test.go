@@ -14,7 +14,7 @@ func newTestLogger() *slog.Logger {
 func TestHealthCheckerRegister(t *testing.T) {
 	cb := NewCircuitBreaker(5, 2, 30*time.Second)
 	metrics := NewUpstreamMetrics()
-	hc := NewHealthChecker(cb, metrics, newTestLogger())
+	hc := NewHealthChecker(cb, metrics, newTestLogger(), nil)
 
 	hc.Register("u1", "openai", "https://api.openai.com", "gpt-4", "sk-test", 30*time.Second, 5*time.Second)
 
@@ -46,7 +46,7 @@ func TestHealthCheckerRegister(t *testing.T) {
 func TestHealthCheckerRegisterSkipsEmptyTestModel(t *testing.T) {
 	cb := NewCircuitBreaker(5, 2, 30*time.Second)
 	metrics := NewUpstreamMetrics()
-	hc := NewHealthChecker(cb, metrics, newTestLogger())
+	hc := NewHealthChecker(cb, metrics, newTestLogger(), nil)
 
 	hc.Register("u1", "openai", "https://api.openai.com", "", "sk-test", 30*time.Second, 5*time.Second)
 
@@ -61,7 +61,7 @@ func TestHealthCheckerRegisterSkipsEmptyTestModel(t *testing.T) {
 func TestHealthCheckerRegisterDefaults(t *testing.T) {
 	cb := NewCircuitBreaker(5, 2, 30*time.Second)
 	metrics := NewUpstreamMetrics()
-	hc := NewHealthChecker(cb, metrics, newTestLogger())
+	hc := NewHealthChecker(cb, metrics, newTestLogger(), nil)
 
 	// Zero interval/timeout should get defaults
 	hc.Register("u1", "openai", "https://api.openai.com", "gpt-4", "sk-test", 0, 0)
@@ -81,7 +81,7 @@ func TestHealthCheckerRegisterDefaults(t *testing.T) {
 func TestHealthCheckerDeregister(t *testing.T) {
 	cb := NewCircuitBreaker(5, 2, 30*time.Second)
 	metrics := NewUpstreamMetrics()
-	hc := NewHealthChecker(cb, metrics, newTestLogger())
+	hc := NewHealthChecker(cb, metrics, newTestLogger(), nil)
 
 	hc.Register("u1", "openai", "https://api.openai.com", "gpt-4", "sk-test", 30*time.Second, 5*time.Second)
 	hc.Deregister("u1")
@@ -102,7 +102,7 @@ func TestHealthCheckerDeregister(t *testing.T) {
 func TestHealthCheckerDeregisterNonExistent(t *testing.T) {
 	cb := NewCircuitBreaker(5, 2, 30*time.Second)
 	metrics := NewUpstreamMetrics()
-	hc := NewHealthChecker(cb, metrics, newTestLogger())
+	hc := NewHealthChecker(cb, metrics, newTestLogger(), nil)
 
 	// Should not panic
 	hc.Deregister("nonexistent")
@@ -111,7 +111,7 @@ func TestHealthCheckerDeregisterNonExistent(t *testing.T) {
 func TestHealthCheckerStatusUnregistered(t *testing.T) {
 	cb := NewCircuitBreaker(5, 2, 30*time.Second)
 	metrics := NewUpstreamMetrics()
-	hc := NewHealthChecker(cb, metrics, newTestLogger())
+	hc := NewHealthChecker(cb, metrics, newTestLogger(), nil)
 
 	if hc.Status("unknown-upstream") != HealthUnknown {
 		t.Errorf("unregistered upstream should have HealthUnknown status")
@@ -121,7 +121,7 @@ func TestHealthCheckerStatusUnregistered(t *testing.T) {
 func TestOnProbeResultOK(t *testing.T) {
 	cb := NewCircuitBreaker(5, 2, 30*time.Second)
 	metrics := NewUpstreamMetrics()
-	hc := NewHealthChecker(cb, metrics, newTestLogger())
+	hc := NewHealthChecker(cb, metrics, newTestLogger(), nil)
 
 	hc.Register("u1", "openai", "https://api.openai.com", "gpt-4", "sk-test", 30*time.Second, 5*time.Second)
 
@@ -149,7 +149,7 @@ func TestOnProbeResultOK(t *testing.T) {
 func TestOnProbeResultDown(t *testing.T) {
 	cb := NewCircuitBreaker(2, 1, 30*time.Second)
 	metrics := NewUpstreamMetrics()
-	hc := NewHealthChecker(cb, metrics, newTestLogger())
+	hc := NewHealthChecker(cb, metrics, newTestLogger(), nil)
 
 	hc.Register("u1", "openai", "https://api.openai.com", "gpt-4", "sk-test", 30*time.Second, 5*time.Second)
 
@@ -172,7 +172,7 @@ func TestOnProbeResultDown(t *testing.T) {
 func TestOnProbeResultDownTripsCircuitBreaker(t *testing.T) {
 	cb := NewCircuitBreaker(2, 1, 30*time.Second)
 	metrics := NewUpstreamMetrics()
-	hc := NewHealthChecker(cb, metrics, newTestLogger())
+	hc := NewHealthChecker(cb, metrics, newTestLogger(), nil)
 
 	hc.Register("u1", "openai", "https://api.openai.com", "gpt-4", "sk-test", 30*time.Second, 5*time.Second)
 
@@ -188,7 +188,7 @@ func TestOnProbeResultDownTripsCircuitBreaker(t *testing.T) {
 func TestOnProbeResultDegradedCountsAsSuccess(t *testing.T) {
 	cb := NewCircuitBreaker(2, 1, 10*time.Millisecond)
 	metrics := NewUpstreamMetrics()
-	hc := NewHealthChecker(cb, metrics, newTestLogger())
+	hc := NewHealthChecker(cb, metrics, newTestLogger(), nil)
 
 	hc.Register("u1", "openai", "https://api.openai.com", "gpt-4", "sk-test", 30*time.Second, 5*time.Second)
 
@@ -216,7 +216,7 @@ func TestOnProbeResultDegradedCountsAsSuccess(t *testing.T) {
 func TestOnProbeResultConsecutiveCounters(t *testing.T) {
 	cb := NewCircuitBreaker(100, 2, 30*time.Second) // High threshold so CB doesn't trip
 	metrics := NewUpstreamMetrics()
-	hc := NewHealthChecker(cb, metrics, newTestLogger())
+	hc := NewHealthChecker(cb, metrics, newTestLogger(), nil)
 
 	hc.Register("u1", "openai", "https://api.openai.com", "gpt-4", "sk-test", 30*time.Second, 5*time.Second)
 
@@ -257,7 +257,7 @@ func TestOnProbeResultConsecutiveCounters(t *testing.T) {
 func TestOnProbeResultUnregisteredUpstream(t *testing.T) {
 	cb := NewCircuitBreaker(5, 2, 30*time.Second)
 	metrics := NewUpstreamMetrics()
-	hc := NewHealthChecker(cb, metrics, newTestLogger())
+	hc := NewHealthChecker(cb, metrics, newTestLogger(), nil)
 
 	// Should not panic for unregistered upstream
 	hc.OnProbeResult("nonexistent", HealthOK)
@@ -271,7 +271,7 @@ func TestHealthCheckerRecoveryFlow(t *testing.T) {
 	// Integration test: upstream goes down, CB trips, probes eventually recover it
 	cb := NewCircuitBreaker(2, 2, 10*time.Millisecond)
 	metrics := NewUpstreamMetrics()
-	hc := NewHealthChecker(cb, metrics, newTestLogger())
+	hc := NewHealthChecker(cb, metrics, newTestLogger(), nil)
 
 	hc.Register("u1", "openai", "https://api.openai.com", "gpt-4", "sk-test", 30*time.Second, 5*time.Second)
 
@@ -307,7 +307,7 @@ func TestHealthCheckerRecoveryFlow(t *testing.T) {
 func TestHealthCheckerMultipleUpstreams(t *testing.T) {
 	cb := NewCircuitBreaker(2, 1, 30*time.Second)
 	metrics := NewUpstreamMetrics()
-	hc := NewHealthChecker(cb, metrics, newTestLogger())
+	hc := NewHealthChecker(cb, metrics, newTestLogger(), nil)
 
 	hc.Register("u1", "openai", "https://api.openai.com", "gpt-4", "sk-test", 30*time.Second, 5*time.Second)
 	hc.Register("u2", "anthropic", "https://api.anthropic.com", "claude-3", "sk-ant", 30*time.Second, 5*time.Second)
@@ -372,7 +372,7 @@ func TestAverageDuration(t *testing.T) {
 func TestOnProbeResultNilMetrics(t *testing.T) {
 	cb := NewCircuitBreaker(5, 2, 30*time.Second)
 	// nil metrics should not panic
-	hc := NewHealthChecker(cb, nil, newTestLogger())
+	hc := NewHealthChecker(cb, nil, newTestLogger(), nil)
 
 	hc.Register("u1", "openai", "https://api.openai.com", "gpt-4", "sk-test", 30*time.Second, 5*time.Second)
 
