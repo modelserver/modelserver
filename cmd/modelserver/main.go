@@ -110,7 +110,8 @@ func main() {
 		log.Fatalf("failed to load routes: %v", err)
 	}
 
-	router := proxy.NewRouter(upstreams, groups, routingRoutes, encryptionKey, logger, cfg.Trace.SessionTTL, st)
+	oauthMgr := proxy.NewOAuthTokenManager(st, encryptionKey, logger)
+	router := proxy.NewRouter(upstreams, groups, routingRoutes, encryptionKey, logger, cfg.Trace.SessionTTL, oauthMgr)
 	router.StartSessionCleanup(10 * time.Minute)
 	// Start health checker.
 	router.HealthChecker().Start(context.Background())

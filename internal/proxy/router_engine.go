@@ -60,7 +60,8 @@ type Router struct {
 
 	vertexTokenManager *VertexTokenManager
 
-	logger *slog.Logger
+	logger   *slog.Logger
+	oauthMgr *OAuthTokenManager
 }
 
 type resolvedGroup struct {
@@ -89,11 +90,12 @@ func NewRouter(
 	encKey []byte,
 	logger *slog.Logger,
 	sessionTTL time.Duration,
-	_ *store.Store, // reserved for future OAuthTokenManager integration
+	oauthMgr *OAuthTokenManager,
 ) *Router {
 	r := &Router{
 		sessionTTL: sessionTTL,
 		logger:     logger,
+		oauthMgr:   oauthMgr,
 	}
 
 	// Create the Vertex AI token manager.
@@ -217,6 +219,11 @@ func (r *Router) buildMaps(
 	r.routes = sortedRoutes
 	r.decryptedKeys = keys
 	r.balancers = balancers
+
+	// Load/reload OAuth credentials for claudecode upstreams.
+	if r.oauthMgr != nil {
+		r.oauthMgr.Reload(upstreams, keys)
+	}
 }
 
 // Match finds the upstream group for a request (project + model).
@@ -442,6 +449,16 @@ func (r *Router) GetUpstreamKey(upstreamID string) string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.decryptedKeys[upstreamID]
+}
+
+// GetClaudeCodeAccessToken returns a valid OAuth access token for a claudecode upstream,
+// refreshing if necessary. Returns an error if the manager is not configured or
+// the upstream has no credentials.
+func (r *Router) GetClaudeCodeAccessToken(upstreamID string) (string, error) {
+	if r.oauthMgr == nil {
+		return "", fmt.Errorf("OAuthTokenManager not configured")
+	}
+	return r.oauthMgr.GetAccessToken(upstreamID)
 }
 
 // ConnTracker returns the shared connection tracker.

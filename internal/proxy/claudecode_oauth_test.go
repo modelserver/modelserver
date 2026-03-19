@@ -201,6 +201,35 @@ func TestReload_PreservesNewerCredentials(t *testing.T) {
 	}
 }
 
+func TestRouter_GetClaudeCodeAccessToken(t *testing.T) {
+	mgr := NewOAuthTokenManager(nil, nil, nil)
+
+	mgr.mu.Lock()
+	mgr.credentials["up1"] = &ClaudeCodeCredentials{
+		AccessToken:  "valid-token",
+		RefreshToken: "rt",
+		ExpiresAt:    time.Now().Add(1 * time.Hour).Unix(),
+	}
+	mgr.mu.Unlock()
+
+	r := &Router{oauthMgr: mgr}
+	token, err := r.GetClaudeCodeAccessToken("up1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token != "valid-token" {
+		t.Errorf("token = %s, want valid-token", token)
+	}
+}
+
+func TestRouter_GetClaudeCodeAccessToken_NoManager(t *testing.T) {
+	r := &Router{}
+	_, err := r.GetClaudeCodeAccessToken("up1")
+	if err == nil {
+		t.Error("expected error when oauthMgr is nil")
+	}
+}
+
 func TestReload_UsesDBWhenNewer(t *testing.T) {
 	mgr := NewOAuthTokenManager(nil, nil, nil)
 
