@@ -1,5 +1,14 @@
 import { useState } from "react";
-import { useUpstreams, useCreateUpstream, useUpdateUpstream, useDeleteUpstream, useTestUpstream } from "@/api/upstreams";
+import {
+  useUpstreams,
+  useCreateUpstream,
+  useUpdateUpstream,
+  useDeleteUpstream,
+  useTestUpstream,
+  useClaudeCodeOAuthStart,
+  useClaudeCodeOAuthExchange,
+  useUpstreamOAuthRefresh,
+} from "@/api/upstreams";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { StatusBadge } from "@/components/shared/StatusBadge";
@@ -30,7 +39,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { Upstream } from "@/api/types";
-import { Plus, MoreHorizontal, Pencil, Trash2, Loader2, Zap } from "lucide-react";
+import { Plus, MoreHorizontal, Pencil, Trash2, Loader2, Zap, RefreshCw, ExternalLink, KeyRound } from "lucide-react";
 import { toast } from "sonner";
 
 export function UpstreamsPage() {
@@ -39,6 +48,9 @@ export function UpstreamsPage() {
   const updateUpstream = useUpdateUpstream();
   const deleteUpstream = useDeleteUpstream();
   const testUpstream = useTestUpstream();
+  const oauthStart = useClaudeCodeOAuthStart();
+  const oauthExchange = useClaudeCodeOAuthExchange();
+  const oauthRefresh = useUpstreamOAuthRefresh();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -55,7 +67,24 @@ export function UpstreamsPage() {
     status: "active",
   });
 
+  const [oauthStep, setOauthStep] = useState<"idle" | "started" | "complete">("idle");
+  const [oauthData, setOauthData] = useState<{
+    auth_url: string;
+    state: string;
+    code_verifier: string;
+    redirect_uri: string;
+  } | null>(null);
+  const [callbackUrl, setCallbackUrl] = useState("");
+  const [_oauthCredentials, setOauthCredentials] = useState<string | null>(null);
+
   const upstreams = data?.data ?? [];
+
+  function resetOauthState() {
+    setOauthStep("idle");
+    setOauthData(null);
+    setCallbackUrl("");
+    setOauthCredentials(null);
+  }
 
   function openCreate() {
     setEditingId(null);
@@ -70,6 +99,7 @@ export function UpstreamsPage() {
       test_model: "",
       status: "active",
     });
+    resetOauthState();
     setDialogOpen(true);
   }
 
@@ -86,6 +116,7 @@ export function UpstreamsPage() {
       test_model: u.test_model ?? "",
       status: u.status,
     });
+    resetOauthState();
     setDialogOpen(true);
   }
 
@@ -155,6 +186,45 @@ export function UpstreamsPage() {
     }
   }
 
+  async function handleOAuthStart() {
+    try {
+      const res = await oauthStart.mutateAsync({});
+      setOauthData(res.data);
+      setOauthStep("started");
+    } catch {
+      toast.error("Failed to start OAuth flow");
+    }
+  }
+
+  async function handleOAuthExchange() {
+    if (!oauthData || !callbackUrl) return;
+    try {
+      const res = await oauthExchange.mutateAsync({
+        callback_url: callbackUrl,
+        code_verifier: oauthData.code_verifier,
+        state: oauthData.state,
+        redirect_uri: oauthData.redirect_uri,
+      });
+      const credsJson = JSON.stringify(res.data);
+      setOauthCredentials(credsJson);
+      setOauthStep("complete");
+      setForm((p) => ({ ...p, api_key: credsJson }));
+      toast.success("OAuth authorization successful");
+    } catch {
+      toast.error("Failed to exchange OAuth code");
+    }
+  }
+
+  async function handleOAuthRefresh(upstreamId: string, upstreamName: string) {
+    try {
+      const res = await oauthRefresh.mutateAsync(upstreamId);
+      const expiresAt = new Date(res.data.expires_at * 1000);
+      toast.success(`${upstreamName}: token refreshed, expires ${expiresAt.toLocaleString()}`);
+    } catch {
+      toast.error(`${upstreamName}: token refresh failed`);
+    }
+  }
+
   const isSaving = createUpstream.isPending || updateUpstream.isPending;
 
   const columns: Column<Upstream>[] = [
@@ -206,6 +276,15 @@ export function UpstreamsPage() {
               <Zap className="mr-2 h-4 w-4" />
               Test Connection
             </DropdownMenuItem>
+            {u.provider === "claudecode" && (
+              <DropdownMenuItem
+                onClick={() => handleOAuthRefresh(u.id, u.name)}
+                disabled={oauthRefresh.isPending}
+              >
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Refresh Token
+              </DropdownMenuItem>
+            )}
             {u.status === "active" ? (
               <DropdownMenuItem
                 onClick={() =>
@@ -312,9 +391,88 @@ export function UpstreamsPage() {
                   : "https://api.anthropic.com"}
               />
             </div>
-            <div className="space-y-2">
-              <Label>{editingId ? "API Key (leave blank to keep current)" : "API Key"}</Label>
-              {form.provider === "vertex" ? (
+            {form.provider === "claudecode" ? (
+              <div className="space-y-3">
+                <Label>OAuth Authorization</Label>
+                {oauthStep === "idle" && !editingId && (
+                  <div className="space-y-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full"
+                      onClick={handleOAuthStart}
+                      disabled={oauthStart.isPending}
+                    >
+                      <KeyRound className="mr-2 h-4 w-4" />
+                      {oauthStart.isPending ? "Starting..." : "Start OAuth Authorization"}
+                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                      Authorize via Anthropic OAuth to get access tokens automatically.
+                    </p>
+                  </div>
+                )}
+                {oauthStep === "idle" && editingId && (
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      This upstream already has OAuth credentials. Use "Re-authorize" to get new tokens.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full"
+                      onClick={handleOAuthStart}
+                      disabled={oauthStart.isPending}
+                    >
+                      <RefreshCw className="mr-2 h-4 w-4" />
+                      Re-authorize
+                    </Button>
+                  </div>
+                )}
+                {oauthStep === "started" && oauthData && (
+                  <div className="space-y-3">
+                    <div className="rounded-md bg-muted p-3 text-sm space-y-2">
+                      <p className="font-medium">Step 1: Click the link below to authorize</p>
+                      <a
+                        href={oauthData.auth_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary underline inline-flex items-center gap-1 break-all"
+                      >
+                        Open Anthropic Authorization Page
+                        <ExternalLink className="h-3 w-3 flex-shrink-0" />
+                      </a>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium">Step 2: Paste the callback URL here</p>
+                      <p className="text-xs text-muted-foreground">
+                        After authorizing, your browser will redirect to a localhost URL that won't load.
+                        Copy the full URL from your browser's address bar and paste it below.
+                      </p>
+                      <Input
+                        value={callbackUrl}
+                        onChange={(e) => setCallbackUrl(e.target.value)}
+                        placeholder="http://localhost:PORT/callback?code=...&state=..."
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      className="w-full"
+                      onClick={handleOAuthExchange}
+                      disabled={!callbackUrl || oauthExchange.isPending}
+                    >
+                      {oauthExchange.isPending ? "Exchanging..." : "Complete Authorization"}
+                    </Button>
+                  </div>
+                )}
+                {oauthStep === "complete" && (
+                  <div className="rounded-md bg-green-50 dark:bg-green-950 p-3 text-sm text-green-700 dark:text-green-300">
+                    OAuth credentials obtained successfully. Click Save to create the upstream.
+                  </div>
+                )}
+              </div>
+            ) : form.provider === "vertex" ? (
+              <div className="space-y-2">
+                <Label>{editingId ? "API Key (leave blank to keep current)" : "API Key"}</Label>
                 <Textarea
                   value={form.api_key}
                   onChange={(e) => setForm((p) => ({ ...p, api_key: e.target.value }))}
@@ -322,15 +480,18 @@ export function UpstreamsPage() {
                   rows={6}
                   className="font-mono text-xs"
                 />
-              ) : (
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label>{editingId ? "API Key (leave blank to keep current)" : "API Key"}</Label>
                 <Input
                   type="password"
                   value={form.api_key}
                   onChange={(e) => setForm((p) => ({ ...p, api_key: e.target.value }))}
                   placeholder="sk-..."
                 />
-              )}
-            </div>
+              </div>
+            )}
             <div className="space-y-2">
               <Label>Supported Models (comma-separated)</Label>
               <Input
@@ -388,7 +549,13 @@ export function UpstreamsPage() {
             </Button>
             <Button
               onClick={handleSave}
-              disabled={!form.name || !form.base_url || (!editingId && !form.api_key) || isSaving}
+              disabled={
+                !form.name ||
+                !form.base_url ||
+                (!editingId && !form.api_key && form.provider !== "claudecode") ||
+                (!editingId && form.provider === "claudecode" && oauthStep !== "complete") ||
+                isSaving
+              }
             >
               {isSaving ? "Saving..." : editingId ? "Save Changes" : "Create Upstream"}
             </Button>
