@@ -110,7 +110,6 @@ export function UpstreamsPage() {
     redirect_uri: string;
   } | null>(null);
   const [callbackUrl, setCallbackUrl] = useState("");
-  const [_oauthCredentials, setOauthCredentials] = useState<string | null>(null);
 
   const upstreams = data?.data ?? [];
 
@@ -118,7 +117,6 @@ export function UpstreamsPage() {
     setOauthStep("idle");
     setOauthData(null);
     setCallbackUrl("");
-    setOauthCredentials(null);
   }
 
   function openCreate() {
@@ -241,7 +239,6 @@ export function UpstreamsPage() {
         redirect_uri: oauthData.redirect_uri,
       });
       const credsJson = JSON.stringify(res.data);
-      setOauthCredentials(credsJson);
       setOauthStep("complete");
       setForm((p) => ({ ...p, api_key: credsJson }));
       toast.success("OAuth authorization successful");
@@ -402,7 +399,10 @@ export function UpstreamsPage() {
               <Label>Provider</Label>
               <Select
                 value={form.provider}
-                onValueChange={(v) => setForm((p) => ({ ...p, provider: v ?? "anthropic" }))}
+                onValueChange={(v) => {
+                  setForm((p) => ({ ...p, provider: v ?? "anthropic" }));
+                  resetOauthState();
+                }}
               >
                 <SelectTrigger>
                   <SelectValue />
