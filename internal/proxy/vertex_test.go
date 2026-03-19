@@ -62,14 +62,53 @@ func TestTransformVertexBody(t *testing.T) {
 			},
 		},
 		{
-			name: "strips context_management from body",
-			body: `{"model":"m","stream":true,"context_management":{"type":"auto"},"max_tokens":1024}`,
+			name: "strips output_format and output_config from body",
+			body: `{"model":"m","stream":true,"output_format":{"type":"json"},"output_config":{"x":1},"max_tokens":1024}`,
 			wantCheck: func(t *testing.T, result string) {
-				if strings.Contains(result, `"context_management"`) {
-					t.Errorf("context_management should be stripped, got %s", result)
+				if strings.Contains(result, `"output_format"`) {
+					t.Errorf("output_format should be stripped, got %s", result)
+				}
+				if strings.Contains(result, `"output_config"`) {
+					t.Errorf("output_config should be stripped, got %s", result)
 				}
 				if !strings.Contains(result, `"max_tokens"`) {
 					t.Errorf("max_tokens should remain, got %s", result)
+				}
+			},
+		},
+		{
+			name: "preserves context_management in body",
+			body: `{"model":"m","stream":true,"context_management":{"edits":[{"type":"clear_tool_results"}]},"max_tokens":1024}`,
+			wantCheck: func(t *testing.T, result string) {
+				if !strings.Contains(result, `"context_management"`) {
+					t.Errorf("context_management should be preserved, got %s", result)
+				}
+			},
+		},
+		{
+			name: "strips scope from cache_control in messages",
+			body: `{"model":"m","stream":false,"messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral","scope":"auto"}}]}]}`,
+			wantCheck: func(t *testing.T, result string) {
+				if strings.Contains(result, `"scope"`) {
+					t.Errorf("scope should be stripped from cache_control, got %s", result)
+				}
+				if !strings.Contains(result, `"cache_control"`) {
+					t.Errorf("cache_control itself should remain, got %s", result)
+				}
+				if !strings.Contains(result, `"ephemeral"`) {
+					t.Errorf("cache_control.type should remain, got %s", result)
+				}
+			},
+		},
+		{
+			name: "strips scope from cache_control in system and tools",
+			body: `{"model":"m","stream":false,"system":[{"type":"text","text":"sys","cache_control":{"type":"ephemeral","scope":"auto"}}],"tools":[{"name":"t","cache_control":{"type":"ephemeral","scope":"auto"}}]}`,
+			wantCheck: func(t *testing.T, result string) {
+				if strings.Contains(result, `"scope"`) {
+					t.Errorf("scope should be stripped from all cache_control, got %s", result)
+				}
+				if !strings.Contains(result, `"cache_control"`) {
+					t.Errorf("cache_control itself should remain, got %s", result)
 				}
 			},
 		},
@@ -86,27 +125,28 @@ func TestTransformVertexBody(t *testing.T) {
 	}
 }
 
-func TestFilterVertexBetas(t *testing.T) {
+func TestFilterVertexBetas_Allowlist(t *testing.T) {
 	input := []string{
 		"interleaved-thinking-2025-05-14",
 		"prompt-caching-2024-07-31",
 		"claude-code-20250219",
 		"context-management-2025-06-27",
-		"max-tokens-3-5-sonnet-2024-07-15",
 		"output-128k-2025-02-19",
+		"web-search-2025-03-05",
 	}
+	body := []byte(`{}`)
 
-	supported, dropped := filterVertexBetas(input)
+	supported, dropped := filterVertexBetas(input, body)
 
 	wantSupported := []string{
 		"interleaved-thinking-2025-05-14",
-		"claude-code-20250219",
-		"max-tokens-3-5-sonnet-2024-07-15",
-		"output-128k-2025-02-19",
+		"context-management-2025-06-27",
+		"web-search-2025-03-05",
 	}
 	wantDropped := []string{
 		"prompt-caching-2024-07-31",
-		"context-management-2025-06-27",
+		"claude-code-20250219",
+		"output-128k-2025-02-19",
 	}
 
 	if len(supported) != len(wantSupported) {
@@ -127,14 +167,61 @@ func TestFilterVertexBetas(t *testing.T) {
 	}
 }
 
-func TestFilterVertexBetas_AllPass(t *testing.T) {
-	input := []string{"interleaved-thinking-2025-05-14", "claude-code-20250219"}
-	supported, dropped := filterVertexBetas(input)
-	if len(supported) != 2 {
-		t.Errorf("expected 2 supported, got %v", supported)
+func TestFilterVertexBetas_Rename(t *testing.T) {
+	input := []string{"advanced-tool-use-2025-11-20"}
+	body := []byte(`{}`)
+
+	supported, _ := filterVertexBetas(input, body)
+
+	if len(supported) != 1 || supported[0] != "tool-search-tool-2025-10-19" {
+		t.Errorf("expected advanced-tool-use renamed to tool-search-tool, got %v", supported)
 	}
-	if len(dropped) != 0 {
-		t.Errorf("expected 0 dropped, got %v", dropped)
+}
+
+func TestFilterVertexBetas_InferFromBody(t *testing.T) {
+	// No beta headers, but body has context_management and web search tool.
+	body := []byte(`{
+		"context_management":{"edits":[{"type":"compact_20260112"},{"type":"clear_tool_results"}]},
+		"tools":[{"type":"web_search_20250305","name":"web_search"}]
+	}`)
+
+	supported, _ := filterVertexBetas(nil, body)
+
+	wantSupported := []string{
+		"compact-2026-01-12",
+		"context-management-2025-06-27",
+		"web-search-2025-03-05",
+	}
+
+	if len(supported) != len(wantSupported) {
+		t.Fatalf("supported = %v, want %v", supported, wantSupported)
+	}
+	for i, b := range supported {
+		if b != wantSupported[i] {
+			t.Errorf("supported[%d] = %q, want %q", i, b, wantSupported[i])
+		}
+	}
+}
+
+func TestFilterVertexBetas_InferToolSearch(t *testing.T) {
+	body := []byte(`{"tools":[{"type":"tool_search","name":"ts"}]}`)
+
+	supported, _ := filterVertexBetas(nil, body)
+
+	if len(supported) != 1 || supported[0] != "tool-search-tool-2025-10-19" {
+		t.Errorf("expected tool-search-tool inferred, got %v", supported)
+	}
+}
+
+func TestFilterVertexBetas_NoDuplicates(t *testing.T) {
+	// Header has context-management AND body infers it too — should deduplicate.
+	input := []string{"context-management-2025-06-27"}
+	body := []byte(`{"context_management":{"edits":[{"type":"clear_tool_results"}]}}`)
+
+	supported, _ := filterVertexBetas(input, body)
+
+	if len(supported) != 1 {
+		t.Errorf("expected 1 deduplicated beta, got %v", supported)
 	}
 }
 

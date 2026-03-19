@@ -1,15 +1,19 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/modelserver/modelserver/internal/types"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // vertexContextKey is used to pass Vertex-specific parameters through the
@@ -45,7 +49,7 @@ var _ ProviderTransformer = (*VertexTransformer)(nil)
 // TransformBody applies Vertex-specific body modifications.
 func (t *VertexTransformer) TransformBody(body []byte, _ string, _ bool, headers http.Header) ([]byte, error) {
 	allBetas := splitBetaHeaders(headers.Values("anthropic-beta"))
-	betas, _ := filterVertexBetas(allBetas)
+	betas, _ := filterVertexBetas(allBetas, body)
 	return transformVertexBody(body, betas)
 }
 
@@ -55,6 +59,9 @@ func (t *VertexTransformer) SetTokenManager(tm *VertexTokenManager) {
 }
 
 // SetUpstream configures the outbound request for a Vertex AI upstream.
+// After directorSetVertexUpstream sets the URL and auth, this method moves
+// the anthropic_beta array from the request body to the anthropic-beta HTTP
+// header, matching the approach used by litellm for Vertex AI passthrough.
 func (t *VertexTransformer) SetUpstream(r *http.Request, upstream *types.Upstream, _ string) error {
 	params, _ := r.Context().Value(vertexContextKey{}).(vertexParams)
 
@@ -68,6 +75,26 @@ func (t *VertexTransformer) SetUpstream(r *http.Request, upstream *types.Upstrea
 	}
 
 	directorSetVertexUpstream(r, upstream.BaseURL, accessToken, params.Model, params.IsStream)
+
+	// Move anthropic_beta from body to HTTP header.
+	if r.Body != nil {
+	if body, err := io.ReadAll(r.Body); err == nil {
+		r.Body.Close()
+		if betasResult := gjson.GetBytes(body, "anthropic_beta"); betasResult.IsArray() {
+			var betas []string
+			for _, b := range betasResult.Array() {
+				betas = append(betas, b.String())
+			}
+			if len(betas) > 0 {
+				r.Header.Set("anthropic-beta", strings.Join(betas, ","))
+			}
+			body, _ = sjson.DeleteBytes(body, "anthropic_beta")
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		r.ContentLength = int64(len(body))
+	}
+	}
+
 	return nil
 }
 

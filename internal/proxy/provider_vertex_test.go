@@ -1,7 +1,10 @@
 package proxy
 
 import (
+	"bytes"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/modelserver/modelserver/internal/types"
@@ -37,6 +40,52 @@ func TestVertexTransformer_SetUpstream(t *testing.T) {
 	wantPath := "/v1/projects/p/locations/us-east5/publishers/anthropic/models/claude-sonnet-4-20250514:streamRawPredict"
 	if req.URL.Path != wantPath {
 		t.Errorf("path = %q, want %q", req.URL.Path, wantPath)
+	}
+}
+
+func TestVertexTransformer_SetUpstream_MovesBetasToHeader(t *testing.T) {
+	tm := NewVertexTokenManager()
+	mock := &mockTokenSource{
+		token: &oauth2.Token{AccessToken: "ya29.token"},
+	}
+	tm.registerWithSource("u1", mock)
+
+	transformer := &VertexTransformer{}
+	transformer.SetTokenManager(tm)
+
+	// Body with anthropic_beta array (as produced by TransformBody).
+	body := []byte(`{"anthropic_version":"vertex-2023-10-16","anthropic_beta":["interleaved-thinking-2025-05-14","context-management-2025-06-27"],"stream":true,"max_tokens":1024}`)
+	req := mustNewRequest(t, "POST", "http://localhost/v1/messages", bytes.NewReader(body))
+	req.ContentLength = int64(len(body))
+	req = withVertexParams(req, "claude-sonnet-4-20250514", true)
+
+	upstream := &types.Upstream{
+		ID:      "u1",
+		BaseURL: "https://us-east5-aiplatform.googleapis.com/v1/projects/p/locations/us-east5/publishers/anthropic/models",
+	}
+
+	err := transformer.SetUpstream(req, upstream, "")
+	if err != nil {
+		t.Fatalf("SetUpstream() error = %v", err)
+	}
+
+	// Betas should now be in the HTTP header.
+	gotHeader := req.Header.Get("anthropic-beta")
+	if !strings.Contains(gotHeader, "interleaved-thinking-2025-05-14") {
+		t.Errorf("anthropic-beta header should contain interleaved-thinking, got %q", gotHeader)
+	}
+	if !strings.Contains(gotHeader, "context-management-2025-06-27") {
+		t.Errorf("anthropic-beta header should contain context-management, got %q", gotHeader)
+	}
+
+	// Body should no longer contain anthropic_beta.
+	resultBody, _ := io.ReadAll(req.Body)
+	if strings.Contains(string(resultBody), "anthropic_beta") {
+		t.Errorf("anthropic_beta should be removed from body, got %s", resultBody)
+	}
+	// Body should still have other fields.
+	if !strings.Contains(string(resultBody), "anthropic_version") {
+		t.Errorf("anthropic_version should remain in body, got %s", resultBody)
 	}
 }
 
@@ -80,7 +129,7 @@ func TestVertexTransformer_TransformBody(t *testing.T) {
 	transformer := &VertexTransformer{}
 
 	headers := http.Header{}
-	headers.Set("anthropic-beta", "interleaved-thinking-2025-05-14,claude-code-20250219,prompt-caching-2024-07-31")
+	headers.Set("anthropic-beta", "interleaved-thinking-2025-05-14,claude-code-20250219,prompt-caching-2024-07-31,context-management-2025-06-27")
 
 	body := []byte(`{"model":"claude-sonnet-4","stream":true,"max_tokens":1024}`)
 	result, err := transformer.TransformBody(body, "claude-sonnet-4", true, headers)
@@ -98,13 +147,18 @@ func TestVertexTransformer_TransformBody(t *testing.T) {
 	if !contains(s, `"anthropic_version"`) {
 		t.Errorf("anthropic_version should be set: %s", s)
 	}
+	// Allowlisted betas should pass through
 	if !contains(s, "interleaved-thinking-2025-05-14") {
-		t.Errorf("supported beta should be in body: %s", s)
+		t.Errorf("interleaved-thinking should pass through: %s", s)
 	}
-	if !contains(s, "claude-code-20250219") {
-		t.Errorf("supported beta should be in body: %s", s)
+	if !contains(s, "context-management-2025-06-27") {
+		t.Errorf("context-management should pass through: %s", s)
+	}
+	// Non-allowlisted betas should be dropped
+	if contains(s, "claude-code-20250219") {
+		t.Errorf("claude-code beta should be dropped (not in allowlist): %s", s)
 	}
 	if contains(s, "prompt-caching-2024-07-31") {
-		t.Errorf("prompt-caching beta should be filtered out: %s", s)
+		t.Errorf("prompt-caching beta should be dropped (not in allowlist): %s", s)
 	}
 }
