@@ -5,84 +5,66 @@
 
 ## Problem
 
-The new **upstreams** system has no OAuth support for Claude Code provider. Admins must manually obtain and paste a credentials JSON blob into the API Key field. There is no token status visibility or automatic/manual refresh capability.
+The upstreams system has backend OAuth endpoints and an `OAuthTokenManager` for Claude Code, but:
 
-The legacy **channels** system already has complete OAuth support (`oauth/start`, `oauth/exchange`, `oauth/status`, `oauth/refresh`) and proxy-level auto-refresh via `OAuthTokenManager`, but none of this is available for upstreams.
+1. **No frontend UI** — the dashboard has no OAuth authorization flow for claudecode upstreams. Admins must manually obtain credentials JSON and paste it into the API Key field.
+2. **No proxy-level auto-refresh** — `OAuthTokenManager` exists and supports upstreams, but is not wired into the proxy execution path. `ClaudeCodeTransformer.SetUpstream` still calls `ParseClaudeCodeAccessToken(apiKey)` directly instead of using the manager.
+3. **No token visibility** — the frontend shows no token status (expiry, refresh availability) for claudecode upstreams.
 
-## Solution
+## Already Implemented
 
-Add Claude Code OAuth authorization flow and token refresh to the upstreams system, covering three layers:
+The following are already working in the current codebase:
 
-1. **Admin API** — new endpoints for OAuth start/exchange/status/refresh under `/api/v1/upstreams/`
-2. **Proxy auto-refresh** — extend `OAuthTokenManager` to support upstreams alongside channels
-3. **Frontend** — OAuth-aware UI in `UpstreamsPage.tsx` for claudecode upstreams
+### Backend Admin API Endpoints (in `routes.go`)
 
-## Design
+| Method | Path | Handler | Status |
+|--------|------|---------|--------|
+| `POST` | `/api/v1/upstreams/claudecode/oauth/start` | `handleClaudeCodeOAuthStart()` | Mounted |
+| `POST` | `/api/v1/upstreams/claudecode/oauth/exchange` | `handleClaudeCodeOAuthExchange()` | Mounted |
+| `GET` | `/api/v1/upstreams/{upstreamID}/oauth/status` | `handleClaudeCodeTokenStatus(st, encKey)` | Mounted |
+| `POST` | `/api/v1/upstreams/{upstreamID}/oauth/refresh` | `handleClaudeCodeTokenRefresh(st, encKey)` | Mounted |
 
-### 1. Backend Admin API
+All four handlers already operate on upstreams (using `st.GetUpstreamByID`, `st.UpdateUpstream`).
 
-#### New Endpoints
+### OAuthTokenManager (`internal/proxy/claudecode_oauth.go`)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/v1/upstreams/claudecode/oauth/start` | Generate PKCE params + auth URL. Reuse existing `handleClaudeCodeOAuthStart()` |
-| `POST` | `/api/v1/upstreams/claudecode/oauth/exchange` | Exchange authorization code for tokens. Reuse existing `handleClaudeCodeOAuthExchange()` |
-| `GET` | `/api/v1/upstreams/{upstreamID}/oauth/status` | Decrypt credentials, return `expires_at` and `has_refresh_token` |
-| `POST` | `/api/v1/upstreams/{upstreamID}/oauth/refresh` | Refresh token and persist updated credentials |
+Already supports upstreams:
+- `LoadCredentials(upstreams []types.Upstream, decryptedKeys map[string]string)` — loads claudecode upstream credentials
+- `Reload(upstreams []types.Upstream, decryptedKeys map[string]string)` — reloads with freshness preservation
+- `GetAccessToken(upstreamID string) (string, error)` — returns valid token, auto-refreshes if needed
+- `refreshToken(upstreamID string)` — exchanges refresh token, persists via `st.UpdateUpstream`
+- Uses `singleflight.Group` for concurrent refresh deduplication
 
-#### Route Registration (in `routes.go`)
+## Remaining Work
 
-```go
-// Inside the upstreams route group (superadmin only):
-r.Route("/upstreams", func(r chi.Router) {
-    r.Use(RequireSuperadmin)
-    // Existing CRUD...
-    r.Post("/claudecode/oauth/start", handleClaudeCodeOAuthStart())
-    r.Post("/claudecode/oauth/exchange", handleClaudeCodeOAuthExchange())
-    r.Route("/{upstreamID}", func(r chi.Router) {
-        // Existing CRUD + test...
-        r.Get("/oauth/status", handleUpstreamClaudeCodeTokenStatus(st, encKey))
-        r.Post("/oauth/refresh", handleUpstreamClaudeCodeTokenRefresh(st, encKey))
-    })
-})
-```
+### 1. Wire `OAuthTokenManager` into Proxy Path
 
-#### New Handlers (`handle_claudecode_oauth.go`)
+**Current state:**
+- `ClaudeCodeTransformer.SetUpstream` (in `provider_claudecode.go:30-35`) calls `ParseClaudeCodeAccessToken(apiKey)` — no auto-refresh
+- `handler.go:189-191` (count_tokens proxy) also calls `ParseClaudeCodeAccessToken(selected.APIKey)` directly
+- `Router` has `_ *store.Store` parameter (line 90) reserved for this integration but unused
 
-`handleUpstreamClaudeCodeTokenStatus` — identical to `handleClaudeCodeTokenStatus` but uses `st.GetUpstreamByID` instead of `st.GetChannelByID`.
+**Design:**
 
-`handleUpstreamClaudeCodeTokenRefresh` — identical to `handleClaudeCodeTokenRefresh` but uses `st.GetUpstreamByID` / `st.UpdateUpstream` instead of channel equivalents.
+The cleanest approach is to resolve the access token in the executor/handler before calling `SetUpstream`, rather than changing the `ProviderTransformer` interface. This avoids interface changes that affect all providers.
 
-### 2. Proxy Auto-Refresh (`OAuthTokenManager`)
+**Option chosen:** Store `*OAuthTokenManager` on `Router`. Before calling `SetUpstream` for claudecode upstreams, resolve the access token via the manager and pass it as the `apiKey` parameter.
 
-The existing `OAuthTokenManager` maps `channelID → *ClaudeCodeCredentials` and calls `st.UpdateChannel` to persist refreshed tokens. Extend it to also handle upstreams.
+Changes:
 
-#### Changes to `claudecode_oauth.go`
+1. **`router_engine.go`**: Add `oauthMgr *OAuthTokenManager` field to `Router`. Accept it in `NewRouter` (replace the `_ *store.Store` param). Call `oauthMgr.LoadCredentials` in `buildMaps`. Call `oauthMgr.Reload` in `Reload`. Add `GetClaudeCodeAccessToken(upstreamID string) (string, error)` method that delegates to the manager.
 
-**Unified key namespace:** Use prefixed keys internally:
-- Channel credentials: `"ch:"+channelID`
-- Upstream credentials: `"up:"+upstreamID`
+2. **`executor.go`** (line ~247): Before calling `transformer.SetUpstream`, if the upstream is claudecode, call `router.GetClaudeCodeAccessToken(upstream.ID)` to get a fresh access token and use that instead of `candidate.APIKey`.
 
-**New methods:**
-- `LoadUpstreamCredentials(upstreams []types.Upstream, decryptedKeys map[string]string)` — parse and store credentials for claudecode upstreams
-- `ReloadUpstreams(upstreams []types.Upstream, decryptedKeys map[string]string)` — reload with freshness preservation (same logic as `Reload`)
-- `GetUpstreamAccessToken(upstreamID string) (string, error)` — like `GetAccessToken` but uses upstream prefix and `st.UpdateUpstream` for persistence
+3. **`handler.go`** (line ~189-191): Same pattern for the count_tokens proxy director function.
 
-**Refactor `refreshToken`:** Accept a generic key + a persistence callback, so the refresh logic is shared between channels and upstreams. Only the persist step differs (`UpdateChannel` vs `UpdateUpstream`).
+4. **`provider_claudecode.go`**: Remove the TODO comments. `SetUpstream` still receives the access token as `apiKey` but now it's already been refreshed by the caller.
 
-#### Integration with `Router` / `ClaudeCodeTransformer`
+### 2. Frontend OAuth Flow UI
 
-The `Router` constructor already has a reserved `*store.Store` parameter (line 90: `reserved for future OAuthTokenManager integration`). Wire it up:
+#### API Hooks (`dashboard/src/api/upstreams.ts`)
 
-1. `Router` stores an `*OAuthTokenManager` field
-2. On `NewRouter` / `Reload`, call `mgr.LoadUpstreamCredentials` / `mgr.ReloadUpstreams`
-3. `ClaudeCodeTransformer.SetUpstream` receives the `OAuthTokenManager` and calls `GetUpstreamAccessToken(upstreamID)` instead of `ParseClaudeCodeAccessToken(apiKey)`
-
-### 3. Frontend
-
-#### API Layer (`dashboard/src/api/upstreams.ts`)
-
-New hooks:
+New React Query hooks calling the existing backend endpoints:
 
 ```typescript
 // Start OAuth flow — returns auth_url, state, code_verifier, redirect_uri
@@ -116,7 +98,7 @@ export function useClaudeCodeOAuthExchange() {
 }
 
 // Get token status for a claudecode upstream
-export function useUpstreamOAuthStatus(upstreamId: string) {
+export function useUpstreamOAuthStatus(upstreamId: string | undefined) {
   return useQuery({
     queryKey: ["admin", "upstreams", upstreamId, "oauth-status"],
     queryFn: () => api.get<DataResponse<{
@@ -124,7 +106,7 @@ export function useUpstreamOAuthStatus(upstreamId: string) {
       has_refresh_token: boolean;
     }>>(`/api/v1/upstreams/${upstreamId}/oauth/status`),
     enabled: !!upstreamId,
-    refetchInterval: 60_000, // Poll every minute
+    refetchInterval: 60_000,
   });
 }
 
@@ -148,82 +130,87 @@ export function useUpstreamOAuthRefresh() {
 
 **Create/Edit Dialog — when `provider === "claudecode"`:**
 
-1. Hide the API Key text input
+1. Hide the standard API Key text input
 2. Show a multi-step OAuth flow:
-   - **Step 1:** "Start Authorization" button → calls `oauth/start`, displays the auth URL as a clickable link (opens in new tab)
-   - **Step 2:** Input field for user to paste back the callback URL from their browser
-   - **Step 3:** "Complete Authorization" button → calls `oauth/exchange` with the callback URL + PKCE params
-   - On success: the credentials JSON is sent as the `api_key` field in the create/update upstream call
+   - **Step 1:** "Start Authorization" button → calls `oauth/start`, displays the auth URL as a clickable link (opens in new tab). The `redirect_uri` uses a random high port on localhost, matching Claude Code CLI behavior.
+   - **Step 2:** Input field for user to paste back the full callback URL from their browser address bar (the localhost URL that didn't resolve)
+   - **Step 3:** "Complete Authorization" button → calls `oauth/exchange` with the callback URL + PKCE params stored from step 1
+   - On success: the returned credentials JSON is sent as the `api_key` field when creating/updating the upstream
 3. When editing an existing claudecode upstream: show current token status (expires_at, formatted as relative time) and a "Re-authorize" option
 
 **Upstream List Table:**
 
-For claudecode upstreams, add a token status indicator in the Status column or as a separate badge:
-- Green: token valid (expires_at > now + 5min)
-- Yellow: token expiring soon (expires_at within 5min)
-- Red: token expired
-- Plus a "Refresh" quick action in the dropdown menu
+For claudecode upstreams, show token status in an additional column or badge:
+- Token valid: show relative expiry time (e.g., "3h 20m")
+- Token expiring soon (< 5min): yellow warning
+- Token expired: red indicator
+- "Refresh" action in the dropdown menu for claudecode upstreams
 
-**Token Status Component:**
+**Token Status Display:**
 
-A small component that shows for claudecode upstreams:
-- Time until expiry (e.g., "Expires in 3h 20m")
+A section within the upstream detail/edit view:
+- Time until expiry
 - "Refresh Token" button
-- "Re-authorize" button (if refresh token is missing or refresh fails)
-
-## Files to Modify
-
-### Backend
-| File | Change |
-|------|--------|
-| `internal/admin/routes.go` | Mount new OAuth endpoints under `/upstreams` |
-| `internal/admin/handle_claudecode_oauth.go` | Add `handleUpstreamClaudeCodeTokenStatus` and `handleUpstreamClaudeCodeTokenRefresh` |
-| `internal/proxy/claudecode_oauth.go` | Extend `OAuthTokenManager` with upstream support (prefixed keys, `LoadUpstreamCredentials`, `ReloadUpstreams`, `GetUpstreamAccessToken`) |
-| `internal/proxy/provider_claudecode.go` | Wire `OAuthTokenManager` into `SetUpstream` |
-| `internal/proxy/router_engine.go` | Accept and store `*OAuthTokenManager`, call load/reload |
-
-### Frontend
-| File | Change |
-|------|--------|
-| `dashboard/src/api/upstreams.ts` | Add OAuth hooks |
-| `dashboard/src/api/types.ts` | Add OAuth response types (if needed) |
-| `dashboard/src/pages/admin/UpstreamsPage.tsx` | OAuth flow UI for claudecode provider, token status display |
-
-### Tests
-| File | Change |
-|------|--------|
-| `internal/proxy/claudecode_oauth_test.go` | Add tests for upstream credential loading, reload, and refresh |
-| `internal/admin/handle_claudecode_oauth_test.go` | Add tests for upstream token status and refresh handlers (if test file exists) |
+- "Re-authorize" button (when refresh token is missing or refresh fails)
 
 ## OAuth Flow Sequence
 
 ```
-Admin                   Dashboard             Backend            Anthropic OAuth
-  |                        |                     |                     |
-  |-- Click "Authorize" -->|                     |                     |
-  |                        |-- POST oauth/start ->|                    |
-  |                        |<- auth_url + PKCE ---|                    |
-  |<-- Open auth URL ------|                     |                     |
-  |                        |                     |                     |
-  |-- Authorize in browser -------------------------------------------------->|
-  |<-- Redirect to localhost:PORT/callback?code=xxx&state=yyy --------|
-  |                        |                     |                     |
-  |-- Paste callback URL ->|                     |                     |
-  |                        |-- POST oauth/exchange ->|                 |
-  |                        |   (callback_url,        |-- token req --->|
-  |                        |    code_verifier,        |<- tokens ------|
-  |                        |    state, redirect_uri)  |                |
-  |                        |<- credentials JSON ------|                |
-  |                        |                     |                     |
-  |                        |-- POST/PUT upstream -->|                  |
-  |                        |   (api_key=creds JSON) |                  |
-  |                        |<- upstream created ----|                  |
+Admin                   Dashboard              Backend              Anthropic OAuth
+  |                        |                      |                       |
+  |-- Click "Authorize" -->|                      |                       |
+  |                        |-- POST oauth/start -->|                      |
+  |                        |<- auth_url + PKCE ----|                      |
+  |<-- Show auth URL ------|                      |                       |
+  |                        |                      |                       |
+  |-- Click link, authorize in browser ---------------------------------------->|
+  |<-- Redirect to localhost:PORT/callback?code=xxx&state=yyy ------------|
+  |   (page doesn't load — just copy the URL)     |                       |
+  |                        |                      |                       |
+  |-- Paste callback URL ->|                      |                       |
+  |                        |-- POST oauth/exchange -->|                    |
+  |                        |   (callback_url,         |-- token request -->|
+  |                        |    code_verifier,         |<-- tokens --------|
+  |                        |    state, redirect_uri)   |                   |
+  |                        |<-- credentials JSON ------|                   |
+  |                        |                      |                       |
+  |                        |-- POST/PUT upstream ->|                      |
+  |                        |   (api_key=creds JSON)|                      |
+  |                        |<-- upstream created --|                      |
 ```
+
+## Files to Modify
+
+### Backend (proxy integration)
+| File | Change |
+|------|--------|
+| `internal/proxy/router_engine.go` | Add `oauthMgr` field, accept in `NewRouter`, wire load/reload, add `GetClaudeCodeAccessToken` |
+| `internal/proxy/executor.go` | Resolve claudecode access token via router before `SetUpstream` |
+| `internal/proxy/handler.go` | Same for count_tokens proxy |
+| `internal/proxy/provider_claudecode.go` | Remove TODO comments, `SetUpstream` now receives pre-resolved token |
+
+### Frontend (new)
+| File | Change |
+|------|--------|
+| `dashboard/src/api/upstreams.ts` | Add 4 OAuth hooks |
+| `dashboard/src/pages/admin/UpstreamsPage.tsx` | OAuth flow UI, token status display, conditional UI for claudecode |
+
+### Tests
+| File | Change |
+|------|--------|
+| `internal/proxy/claudecode_oauth_test.go` | Add integration test for router-level token resolution |
 
 ## Edge Cases
 
 - **Token expired, no refresh token:** Show "Re-authorize" button, disable "Refresh"
-- **Refresh fails (e.g., refresh token revoked):** Show error, prompt re-authorization
+- **Refresh fails (e.g., refresh token revoked):** Show error toast, prompt re-authorization
 - **Concurrent refresh (proxy + manual):** `singleflight.Group` in `OAuthTokenManager` deduplicates
 - **Upstream deleted while OAuth in progress:** Frontend should handle 404 gracefully
 - **Multiple claudecode upstreams:** Each has independent credentials, no interference
+- **Proxy request when token is expired and refresh fails:** Fallback to existing token (current behavior), request may still succeed if token grace period applies
+
+## Non-Goals
+
+- Changing the `ProviderTransformer` interface
+- Adding `HTTPS_PROXY` support to `OAuthTokenManager`'s HTTP client (follow-up item)
+- Frontend auto-polling for OAuth completion (manual paste workflow)
