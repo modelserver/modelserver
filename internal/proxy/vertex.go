@@ -12,37 +12,48 @@ import (
 
 const vertexDefaultVersion = "vertex-2023-10-16"
 
-// vertexSupportedBetas is the set of anthropic_beta flags that Vertex AI
-// recognises. Uses the same set as Bedrock since both host Claude models.
-var vertexSupportedBetas = map[string]bool{
-	"computer-use-2025-01-24":          true,
-	"token-efficient-tools-2025-02-19": true,
-	"interleaved-thinking-2025-05-14":  true,
-	"output-128k-2025-02-19":           true,
-	"dev-full-thinking-2025-05-14":     true,
-	"context-1m-2025-08-07":            true,
-	"context-management-2025-06-27":    true,
-	"effort-2025-11-24":                true,
-	"tool-search-tool-2025-10-19":      true,
-	"tool-examples-2025-10-29":         true,
+// vertexUnsupportedBetaKeywords lists keyword patterns that identify beta flags
+// unsupported by Vertex AI. A beta flag is dropped if it contains any of these
+// substrings. This blacklist approach is more resilient to new beta versions
+// than a whitelist — unknown betas pass through by default.
+var vertexUnsupportedBetaKeywords = []string{
+	"prompt-caching",
+	"max-tokens",
+	"output-128k",
+	"token-efficient-tools",
 }
 
-// filterVertexBetas returns only the beta flags that Vertex AI supports.
+// filterVertexBetas returns beta flags with unsupported ones removed.
+// A beta is dropped if it contains any keyword from vertexUnsupportedBetaKeywords.
 func filterVertexBetas(betas []string) (supported, dropped []string) {
 	for _, b := range betas {
-		if vertexSupportedBetas[b] {
-			supported = append(supported, b)
-		} else {
+		blocked := false
+		for _, kw := range vertexUnsupportedBetaKeywords {
+			if strings.Contains(b, kw) {
+				blocked = true
+				break
+			}
+		}
+		if blocked {
 			dropped = append(dropped, b)
+		} else {
+			supported = append(supported, b)
 		}
 	}
 	return
+}
+
+// vertexUnsupportedBodyFields lists top-level request body fields that Vertex AI
+// does not accept. These are stripped before forwarding to avoid 400 errors.
+var vertexUnsupportedBodyFields = []string{
+	"context_management",
 }
 
 // transformVertexBody modifies the request body for Vertex AI format:
 //   - Sets anthropic_version to "vertex-2023-10-16" if not present
 //   - Moves anthropic-beta header values into body as anthropic_beta array
 //   - Removes model field (encoded in the URL)
+//   - Strips body fields that Vertex AI does not support
 //
 // NOTE: Unlike Bedrock, the stream field is NOT removed. Vertex AI requires
 // "stream": true in the request body in addition to using the streamRawPredict
@@ -65,6 +76,10 @@ func transformVertexBody(body []byte, betas []string) ([]byte, error) {
 	}
 
 	body, _ = sjson.DeleteBytes(body, "model")
+
+	for _, field := range vertexUnsupportedBodyFields {
+		body, _ = sjson.DeleteBytes(body, field)
+	}
 
 	return body, nil
 }

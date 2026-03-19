@@ -61,6 +61,18 @@ func TestTransformVertexBody(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "strips context_management from body",
+			body: `{"model":"m","stream":true,"context_management":{"type":"auto"},"max_tokens":1024}`,
+			wantCheck: func(t *testing.T, result string) {
+				if strings.Contains(result, `"context_management"`) {
+					t.Errorf("context_management should be stripped, got %s", result)
+				}
+				if !strings.Contains(result, `"max_tokens"`) {
+					t.Errorf("max_tokens should remain, got %s", result)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {

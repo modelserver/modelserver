@@ -301,15 +301,6 @@ export function UpstreamsPage() {
       accessor: (u) => u.supported_models?.join(", ") || "\u2014",
     },
     {
-      header: "Model Map",
-      accessor: (u) => {
-        if (!u.model_map || Object.keys(u.model_map).length === 0) return "\u2014";
-        return Object.entries(u.model_map)
-          .map(([from, to]) => `${from} \u2192 ${to}`)
-          .join(", ");
-      },
-    },
-    {
       header: "Weight",
       accessor: (u) => String(u.weight),
       className: "text-right",
