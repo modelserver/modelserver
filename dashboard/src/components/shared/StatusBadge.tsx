@@ -17,6 +17,7 @@ const statusStyles: Record<string, string> = {
   "claude-code": "bg-violet-500/10 text-violet-500 border-violet-500/20",
   opencode: "bg-teal-500/10 text-teal-500 border-teal-500/20",
   codex: "bg-amber-500/10 text-amber-500 border-amber-500/20",
+  openclaw: "bg-rose-500/10 text-rose-500 border-rose-500/20",
   body: "bg-cyan-500/10 text-cyan-500 border-cyan-500/20",
   auto: "bg-gray-500/10 text-gray-500 border-gray-500/20",
 };

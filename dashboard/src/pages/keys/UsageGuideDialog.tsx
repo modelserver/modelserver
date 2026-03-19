@@ -73,6 +73,7 @@ export function UsageGuideDialog({
             <TabsTrigger value="claude-code">Claude Code</TabsTrigger>
             <TabsTrigger value="codex">Codex</TabsTrigger>
             <TabsTrigger value="opencode">OpenCode</TabsTrigger>
+            <TabsTrigger value="openclaw">OpenClaw</TabsTrigger>
           </TabsList>
 
           <TabsContent value="claude-code" className="space-y-4 pt-4">
@@ -141,6 +142,27 @@ export function UsageGuideDialog({
 
             <Step n={3} title="Run">
               <CodeBlock code="cd your-project && opencode" />
+            </Step>
+          </TabsContent>
+
+          <TabsContent value="openclaw" className="space-y-4 pt-4">
+            <Step n={1} title="Install OpenClaw">
+              <CodeBlock code="npm install -g openclaw@latest" />
+            </Step>
+
+            <Step n={2} title="Configure">
+              <p className="text-xs text-muted-foreground">
+                Edit{" "}
+                <code className="rounded bg-muted px-1 py-0.5">~/.openclaw/openclaw.json</code> and
+                add:
+              </p>
+              <CodeBlock
+                code={`{\n  "models": {\n    "providers": {\n      "modelserver": {\n        "baseUrl": "https://code.ai.cs.ac.cn",\n        "apiKey": "${apiKey}",\n        "api": "anthropic-messages"\n      }\n    }\n  }\n}`}
+              />
+            </Step>
+
+            <Step n={3} title="Run">
+              <CodeBlock code="openclaw" />
             </Step>
           </TabsContent>
         </Tabs>

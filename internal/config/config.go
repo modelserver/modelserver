@@ -79,6 +79,7 @@ type TraceConfig struct {
 	ExtraTraceBodyFields   []string      `yaml:"extra_trace_body_fields"   mapstructure:"extra_trace_body_fields"`
 	ClaudeCodeTraceEnabled bool          `yaml:"claude_code_trace_enabled" mapstructure:"claude_code_trace_enabled"`
 	CodexTraceEnabled      bool          `yaml:"codex_trace_enabled"       mapstructure:"codex_trace_enabled"`
+	OpenClawTraceEnabled   bool          `yaml:"openclaw_trace_enabled"    mapstructure:"openclaw_trace_enabled"`
 	RequireSession         bool          `yaml:"require_session"           mapstructure:"require_session"`
 	SessionTTL             time.Duration `yaml:"session_ttl"               mapstructure:"session_ttl"`
 }
@@ -154,6 +155,7 @@ func setDefaults(v *viper.Viper) {
 	_ = v.BindEnv("trace.extra_trace_body_fields")
 	v.SetDefault("trace.claude_code_trace_enabled", true)
 	v.SetDefault("trace.codex_trace_enabled", true)
+	v.SetDefault("trace.openclaw_trace_enabled", true)
 	v.SetDefault("trace.require_session", false)
 	v.SetDefault("trace.session_ttl", 24*time.Hour)
 

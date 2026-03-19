@@ -1,12 +1,21 @@
 package proxy
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/modelserver/modelserver/internal/config"
+	"github.com/modelserver/modelserver/internal/types"
 )
+
+// withAPIKey injects a fake API key into the request context,
+// simulating what AuthMiddleware does (which runs before TraceMiddleware).
+func withAPIKey(r *http.Request, keyID string) *http.Request {
+	ctx := context.WithValue(r.Context(), ctxAPIKey, &types.APIKey{ID: keyID})
+	return r.WithContext(ctx)
+}
 
 func TestTraceMiddleware_RequireSession_RejectsAnonymousPOST(t *testing.T) {
 	cfg := config.TraceConfig{
@@ -150,6 +159,134 @@ func TestExtractClaudeTraceID(t *testing.T) {
 				t.Errorf("extractClaudeTraceID() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTraceMiddleware_OpenClaw_DetectsViaUserAgent(t *testing.T) {
+	cfg := config.TraceConfig{
+		TraceHeader:          "X-Trace-Id",
+		RequireSession:       true,
+		OpenClawTraceEnabled: true,
+	}
+
+	var gotSource string
+	var gotTraceID string
+	handler := TraceMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSource = TraceSourceFromContext(r.Context())
+		gotTraceID = TraceIDFromContext(r.Context())
+	}))
+
+	req := withAPIKey(httptest.NewRequest(http.MethodPost, "/v1/messages", nil), "key-abc-123")
+	req.Header.Set("User-Agent", "openclaw/2026.3.14")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+	if gotSource != types.TraceSourceOpenClaw {
+		t.Errorf("expected source %q, got %q", types.TraceSourceOpenClaw, gotSource)
+	}
+	if gotTraceID != "key-abc-123" {
+		t.Errorf("expected trace ID %q, got %q", "key-abc-123", gotTraceID)
+	}
+}
+
+func TestTraceMiddleware_OpenClaw_DetectsViaOriginator(t *testing.T) {
+	cfg := config.TraceConfig{
+		TraceHeader:          "X-Trace-Id",
+		OpenClawTraceEnabled: true,
+	}
+
+	var gotSource string
+	var gotTraceID string
+	handler := TraceMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSource = TraceSourceFromContext(r.Context())
+		gotTraceID = TraceIDFromContext(r.Context())
+	}))
+
+	req := withAPIKey(httptest.NewRequest(http.MethodPost, "/v1/messages", nil), "key-orig-456")
+	req.Header.Set("originator", "openclaw")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if gotSource != types.TraceSourceOpenClaw {
+		t.Errorf("expected source %q, got %q", types.TraceSourceOpenClaw, gotSource)
+	}
+	if gotTraceID != "key-orig-456" {
+		t.Errorf("expected trace ID %q, got %q", "key-orig-456", gotTraceID)
+	}
+}
+
+func TestTraceMiddleware_OpenClaw_DisabledDoesNotDetect(t *testing.T) {
+	cfg := config.TraceConfig{
+		TraceHeader:          "X-Trace-Id",
+		RequireSession:       true,
+		OpenClawTraceEnabled: false,
+	}
+
+	handler := TraceMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not be reached")
+	}))
+
+	req := withAPIKey(httptest.NewRequest(http.MethodPost, "/v1/messages", nil), "key-abc-123")
+	req.Header.Set("User-Agent", "openclaw/2026.3.14")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 when openclaw detection disabled, got %d", rr.Code)
+	}
+}
+
+func TestTraceMiddleware_OpenClaw_ExplicitHeaderTakesPrecedence(t *testing.T) {
+	cfg := config.TraceConfig{
+		TraceHeader:          "X-Trace-Id",
+		OpenClawTraceEnabled: true,
+	}
+
+	var gotSource string
+	var gotTraceID string
+	handler := TraceMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSource = TraceSourceFromContext(r.Context())
+		gotTraceID = TraceIDFromContext(r.Context())
+	}))
+
+	req := withAPIKey(httptest.NewRequest(http.MethodPost, "/v1/messages", nil), "key-abc-123")
+	req.Header.Set("User-Agent", "openclaw/2026.3.14")
+	req.Header.Set("X-Trace-Id", "explicit-session-123")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if gotSource != types.TraceSourceHeader {
+		t.Errorf("expected source %q, got %q", types.TraceSourceHeader, gotSource)
+	}
+	if gotTraceID != "explicit-session-123" {
+		t.Errorf("expected trace ID %q, got %q", "explicit-session-123", gotTraceID)
+	}
+}
+
+func TestTraceMiddleware_OpenClaw_SameKeyGetsSameTraceID(t *testing.T) {
+	cfg := config.TraceConfig{
+		TraceHeader:          "X-Trace-Id",
+		OpenClawTraceEnabled: true,
+	}
+
+	var ids []string
+	handler := TraceMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ids = append(ids, TraceIDFromContext(r.Context()))
+	}))
+
+	for i := 0; i < 3; i++ {
+		req := withAPIKey(httptest.NewRequest(http.MethodPost, "/v1/messages", nil), "key-stable-789")
+		req.Header.Set("User-Agent", "openclaw/2026.3.14")
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	for i, id := range ids {
+		if id != "key-stable-789" {
+			t.Errorf("request %d: expected trace ID %q, got %q", i, "key-stable-789", id)
+		}
 	}
 }
 

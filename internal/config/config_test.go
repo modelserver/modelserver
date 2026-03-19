@@ -320,6 +320,9 @@ func TestTraceConfigDefaults(t *testing.T) {
 	if !cfg.Trace.CodexTraceEnabled {
 		t.Error("Trace.CodexTraceEnabled = false, want true")
 	}
+	if !cfg.Trace.OpenClawTraceEnabled {
+		t.Error("Trace.OpenClawTraceEnabled = false, want true")
+	}
 }
 
 // TestTraceConfigYAML verifies that TraceConfig fields are populated from YAML.

@@ -17,6 +17,7 @@ const (
 	TraceSourceClaudeCode = "claude-code"
 	TraceSourceOpenCode   = "opencode"
 	TraceSourceCodex      = "codex"
+	TraceSourceOpenClaw   = "openclaw"
 	TraceSourceBody       = "body"
 )
 

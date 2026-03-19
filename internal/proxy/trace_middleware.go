@@ -47,7 +47,8 @@ func TraceSourceFromContext(ctx context.Context) string {
 }
 
 // TraceMiddleware extracts trace IDs from multiple sources.
-// If no trace ID is found from any source, no trace context is set (no auto-generation).
+// If no trace ID is found from any source, no trace context is set — except for
+// OpenClaw, which does not send a session ID and uses the API key ID as trace ID.
 func TraceMiddleware(traceCfg config.TraceConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +58,7 @@ func TraceMiddleware(traceCfg config.TraceConfig) func(http.Handler) http.Handle
 			if traceCfg.RequireSession && traceID == "" {
 				if r.Method == http.MethodPost && isCompletionEndpoint(r.URL.Path) {
 					writeProxyError(w, http.StatusBadRequest,
-						"please use a coding agent such as Claude Code, OpenCode, Codex, or Gemini CLI")
+						"please use a coding agent such as Claude Code, OpenCode, Codex, OpenClaw, or Gemini CLI")
 					return
 				}
 			}
@@ -113,7 +114,19 @@ func extractTraceID(r *http.Request, cfg config.TraceConfig) (string, string) {
 		}
 	}
 
-	// 6. Body field extraction via gjson paths
+	// 6. OpenClaw detection via User-Agent or originator header.
+	// OpenClaw does not send a session ID, so we use the API key ID
+	// (set by AuthMiddleware which runs before TraceMiddleware) to group
+	// all OpenClaw requests from the same key into one trace.
+	if cfg.OpenClawTraceEnabled {
+		if isOpenClawRequest(r) {
+			if apiKey := APIKeyFromContext(r.Context()); apiKey != nil {
+				return apiKey.ID, types.TraceSourceOpenClaw
+			}
+		}
+	}
+
+	// 7. Body field extraction via gjson paths
 	if len(cfg.ExtraTraceBodyFields) > 0 {
 		if id, err := tryExtractTraceIDFromBody(r, cfg.ExtraTraceBodyFields); err == nil && id != "" {
 			return id, types.TraceSourceBody
@@ -189,6 +202,17 @@ func tryExtractTraceIDFromBody(r *http.Request, fields []string) (string, error)
 	}
 
 	return "", nil
+}
+
+// isOpenClawRequest returns true if the request originates from OpenClaw.
+// Detection signals (either one is sufficient):
+//   - User-Agent header containing "openclaw/"
+//   - originator header equal to "openclaw" (sent by OpenClaw for OpenAI requests)
+func isOpenClawRequest(r *http.Request) bool {
+	if strings.Contains(strings.ToLower(r.Header.Get("User-Agent")), "openclaw/") {
+		return true
+	}
+	return strings.EqualFold(r.Header.Get("originator"), "openclaw")
 }
 
 // isCompletionEndpoint returns true for endpoints that create completions.
