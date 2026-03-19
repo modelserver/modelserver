@@ -5,6 +5,7 @@ import { DataTable, type Column } from "@/components/shared/DataTable";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -289,6 +290,7 @@ export function UpstreamsPage() {
                   <SelectItem value="gemini">Gemini</SelectItem>
                   <SelectItem value="bedrock">AWS Bedrock</SelectItem>
                   <SelectItem value="claudecode">Claude Code</SelectItem>
+                  <SelectItem value="vertex">Google Vertex AI</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -305,17 +307,29 @@ export function UpstreamsPage() {
               <Input
                 value={form.base_url}
                 onChange={(e) => setForm((p) => ({ ...p, base_url: e.target.value }))}
-                placeholder="https://api.anthropic.com"
+                placeholder={form.provider === "vertex"
+                  ? "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/REGION/publishers/anthropic/models"
+                  : "https://api.anthropic.com"}
               />
             </div>
             <div className="space-y-2">
               <Label>{editingId ? "API Key (leave blank to keep current)" : "API Key"}</Label>
-              <Input
-                type="password"
-                value={form.api_key}
-                onChange={(e) => setForm((p) => ({ ...p, api_key: e.target.value }))}
-                placeholder="sk-..."
-              />
+              {form.provider === "vertex" ? (
+                <Textarea
+                  value={form.api_key}
+                  onChange={(e) => setForm((p) => ({ ...p, api_key: e.target.value }))}
+                  placeholder="Paste service account JSON key here..."
+                  rows={6}
+                  className="font-mono text-xs"
+                />
+              ) : (
+                <Input
+                  type="password"
+                  value={form.api_key}
+                  onChange={(e) => setForm((p) => ({ ...p, api_key: e.target.value }))}
+                  placeholder="sk-..."
+                />
+              )}
             </div>
             <div className="space-y-2">
               <Label>Supported Models (comma-separated)</Label>
