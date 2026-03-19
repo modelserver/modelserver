@@ -58,6 +58,8 @@ type Router struct {
 	sessionMap sync.Map // sessionID -> sessionBinding
 	sessionTTL time.Duration
 
+	vertexTokenManager *VertexTokenManager
+
 	logger *slog.Logger
 }
 
@@ -94,11 +96,17 @@ func NewRouter(
 		logger:     logger,
 	}
 
+	// Create the Vertex AI token manager.
+	r.vertexTokenManager = NewVertexTokenManager()
+
+	// Register the Vertex transformer (needs token manager).
+	RegisterVertexTransformer(r.vertexTokenManager)
+
 	// Build shared infrastructure components.
 	r.connTracker = lb.NewConnectionTracker()
 	r.metrics = lb.NewUpstreamMetrics()
 	r.circuitBreaker = lb.NewCircuitBreaker(5, 2, 30*time.Second)
-	r.healthChecker = lb.NewHealthChecker(r.circuitBreaker, r.metrics, logger, nil)
+	r.healthChecker = lb.NewHealthChecker(r.circuitBreaker, r.metrics, logger, r.vertexTokenManager.GetToken)
 
 	// Build all maps from the configuration.
 	r.buildMaps(upstreams, groups, routes, encKey)
@@ -122,6 +130,21 @@ func (r *Router) buildMaps(
 
 	// 2. Decrypt all upstream API keys.
 	keys := decryptUpstreamKeys(upstreams, encKey, r.logger)
+
+	// Register Vertex AI service account keys with the token manager.
+	if r.vertexTokenManager != nil {
+		r.vertexTokenManager.Clear()
+		for _, u := range upstreams {
+			if u.Provider == types.ProviderVertex {
+				if key, ok := keys[u.ID]; ok {
+					if err := r.vertexTokenManager.Register(u.ID, []byte(key)); err != nil {
+						r.logger.Error("failed to register vertex token source",
+							"upstream_id", u.ID, "error", err)
+					}
+				}
+			}
+		}
+	}
 
 	// 3. Resolve groups: for each group, find its member upstreams from the map,
 	//    compute effective weight (member override or upstream default).
