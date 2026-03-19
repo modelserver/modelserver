@@ -86,6 +86,56 @@ func TestTransformVertexBody(t *testing.T) {
 	}
 }
 
+func TestFilterVertexBetas(t *testing.T) {
+	input := []string{
+		"interleaved-thinking-2025-05-14",
+		"prompt-caching-2024-07-31",
+		"claude-code-20250219",
+		"max-tokens-3-5-sonnet-2024-07-15",
+		"output-128k-2025-02-19",
+	}
+
+	supported, dropped := filterVertexBetas(input)
+
+	wantSupported := []string{
+		"interleaved-thinking-2025-05-14",
+		"claude-code-20250219",
+		"max-tokens-3-5-sonnet-2024-07-15",
+		"output-128k-2025-02-19",
+	}
+	wantDropped := []string{
+		"prompt-caching-2024-07-31",
+	}
+
+	if len(supported) != len(wantSupported) {
+		t.Fatalf("supported = %v, want %v", supported, wantSupported)
+	}
+	for i, b := range supported {
+		if b != wantSupported[i] {
+			t.Errorf("supported[%d] = %q, want %q", i, b, wantSupported[i])
+		}
+	}
+	if len(dropped) != len(wantDropped) {
+		t.Fatalf("dropped = %v, want %v", dropped, wantDropped)
+	}
+	for i, b := range dropped {
+		if b != wantDropped[i] {
+			t.Errorf("dropped[%d] = %q, want %q", i, b, wantDropped[i])
+		}
+	}
+}
+
+func TestFilterVertexBetas_AllPass(t *testing.T) {
+	input := []string{"interleaved-thinking-2025-05-14", "claude-code-20250219"}
+	supported, dropped := filterVertexBetas(input)
+	if len(supported) != 2 {
+		t.Errorf("expected 2 supported, got %v", supported)
+	}
+	if len(dropped) != 0 {
+		t.Errorf("expected 0 dropped, got %v", dropped)
+	}
+}
+
 func TestVertexEndpointURL(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -12,6 +12,34 @@ import (
 
 const vertexDefaultVersion = "vertex-2023-10-16"
 
+// vertexUnsupportedBetaPrefixes lists beta flag prefixes that Vertex AI does
+// not recognise. Flags matching any prefix are dropped to avoid 400 errors.
+//   - prompt-caching-*: Vertex handles caching via cache_control in the body.
+var vertexUnsupportedBetaPrefixes = []string{
+	"prompt-caching-",
+}
+
+// filterVertexBetas drops beta flags that Vertex AI does not support.
+// Unlike Bedrock's allowlist approach, Vertex uses a denylist: only flags
+// matching vertexUnsupportedBetaPrefixes are dropped; everything else passes through.
+func filterVertexBetas(betas []string) (supported, dropped []string) {
+	for _, b := range betas {
+		drop := false
+		for _, prefix := range vertexUnsupportedBetaPrefixes {
+			if strings.HasPrefix(b, prefix) {
+				drop = true
+				break
+			}
+		}
+		if drop {
+			dropped = append(dropped, b)
+		} else {
+			supported = append(supported, b)
+		}
+	}
+	return
+}
+
 // vertexUnsupportedBodyFields lists top-level request body fields that Vertex AI
 // does not accept. These are stripped before forwarding to avoid 400 errors.
 var vertexUnsupportedBodyFields = []string{

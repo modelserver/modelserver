@@ -80,7 +80,7 @@ func TestVertexTransformer_TransformBody(t *testing.T) {
 	transformer := &VertexTransformer{}
 
 	headers := http.Header{}
-	headers.Set("anthropic-beta", "interleaved-thinking-2025-05-14,claude-code-20250219")
+	headers.Set("anthropic-beta", "interleaved-thinking-2025-05-14,claude-code-20250219,prompt-caching-2024-07-31")
 
 	body := []byte(`{"model":"claude-sonnet-4","stream":true,"max_tokens":1024}`)
 	result, err := transformer.TransformBody(body, "claude-sonnet-4", true, headers)
@@ -99,9 +99,12 @@ func TestVertexTransformer_TransformBody(t *testing.T) {
 		t.Errorf("anthropic_version should be set: %s", s)
 	}
 	if !contains(s, "interleaved-thinking-2025-05-14") {
-		t.Errorf("beta should be in body: %s", s)
+		t.Errorf("supported beta should be in body: %s", s)
 	}
 	if !contains(s, "claude-code-20250219") {
-		t.Errorf("all betas should be forwarded without filtering: %s", s)
+		t.Errorf("supported beta should be in body: %s", s)
+	}
+	if contains(s, "prompt-caching-2024-07-31") {
+		t.Errorf("prompt-caching beta should be filtered out: %s", s)
 	}
 }

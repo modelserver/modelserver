@@ -44,7 +44,8 @@ var _ ProviderTransformer = (*VertexTransformer)(nil)
 
 // TransformBody applies Vertex-specific body modifications.
 func (t *VertexTransformer) TransformBody(body []byte, _ string, _ bool, headers http.Header) ([]byte, error) {
-	betas := splitBetaHeaders(headers.Values("anthropic-beta"))
+	allBetas := splitBetaHeaders(headers.Values("anthropic-beta"))
+	betas, _ := filterVertexBetas(allBetas)
 	return transformVertexBody(body, betas)
 }
 
