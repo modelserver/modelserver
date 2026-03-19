@@ -915,46 +915,15 @@ In `internal/proxy/handler.go`, change the filter at lines 168-172 from:
 to:
 
 ```go
-		if c.Upstream.Provider == types.ProviderAnthropic || c.Upstream.Provider == types.ProviderClaudeCode || c.Upstream.Provider == types.ProviderVertex {
+		if c.Upstream.Provider == types.ProviderAnthropic || c.Upstream.Provider == types.ProviderClaudeCode {
+			// Note: Vertex is excluded from count_tokens because the
+			// httputil.ReverseProxy Director cannot transform the request body
+			// (strip model/stream, inject anthropic_version). If Vertex
+			// count_tokens support is needed later, refactor to use the
+			// Executor pipeline instead of ReverseProxy.
 ```
 
-Also update the `HandleCountTokens` reverse proxy Director (lines 188-194) to handle Vertex. The Director must call `directorSetVertexUpstream` directly (not via `SetUpstream`) because the `httputil.ReverseProxy` Director cannot inject context params. Change:
-
-```go
-		Director: func(req *http.Request) {
-			if selected.Upstream.Provider == types.ProviderClaudeCode {
-				accessToken := ParseClaudeCodeAccessToken(selected.APIKey)
-				directorSetClaudeCodeUpstream(req, selected.Upstream.BaseURL, accessToken)
-			} else {
-				directorSetUpstream(req, selected.Upstream.BaseURL, selected.APIKey)
-			}
-		},
-```
-
-to:
-
-```go
-		Director: func(req *http.Request) {
-			switch selected.Upstream.Provider {
-			case types.ProviderClaudeCode:
-				accessToken := ParseClaudeCodeAccessToken(selected.APIKey)
-				directorSetClaudeCodeUpstream(req, selected.Upstream.BaseURL, accessToken)
-			case types.ProviderVertex:
-				// Call directorSetVertexUpstream directly (not via SetUpstream)
-				// because the ReverseProxy Director cannot set context params.
-				// count_tokens is always non-streaming.
-				vt, _ := GetProviderTransformer(types.ProviderVertex).(*VertexTransformer)
-				if vt != nil {
-					token, err := vt.tokenManager.GetToken(selected.Upstream.ID)
-					if err == nil {
-						directorSetVertexUpstream(req, selected.Upstream.BaseURL, token, actualModel, false)
-					}
-				}
-			default:
-				directorSetUpstream(req, selected.Upstream.BaseURL, selected.APIKey)
-			}
-		},
-```
+The `HandleCountTokens` Director does not need changes — Vertex is excluded from the provider filter above, so the Director will never receive a Vertex upstream.
 
 - [ ] **Step 5: Verify build**
 
