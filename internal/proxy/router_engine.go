@@ -357,7 +357,59 @@ func (r *Router) SelectWithRetry(ctx context.Context, group *resolvedGroup, sess
 		return nil
 	}
 
-	// 6. Use group's balancer to rank (SelectN).
+	// 6. Apply session stickiness BEFORE balancer selection: if the session
+	//    is bound to an upstream that's in our candidate list, force it as
+	//    the primary pick and use the balancer only for retry slots.
+	//    This must happen before SelectN because SelectN(n=1) may randomly
+	//    pick a different upstream, silently breaking stickiness.
+	if sessionID != "" {
+		if val, ok := r.sessionMap.Load(sessionID); ok {
+			binding := val.(sessionBinding)
+			if time.Since(binding.usedAt) < r.sessionTTL {
+				for i, c := range candidates {
+					if c.Upstream.ID == binding.upstreamID {
+						// Refresh binding.
+						r.sessionMap.Store(sessionID, sessionBinding{
+							upstreamID: c.Upstream.ID,
+							usedAt:     time.Now(),
+						})
+
+						// Build result: bound upstream first.
+						result := make([]*SelectedUpstream, 0, n)
+						result = append(result, &SelectedUpstream{
+							Upstream: c.Upstream,
+							APIKey:   r.decryptedKeys[c.Upstream.ID],
+						})
+
+						// For retry slots, use balancer on remaining candidates.
+						if n > 1 && len(candidates) > 1 {
+							remaining := make([]lb.CandidateInfo, 0, len(candidates)-1)
+							remaining = append(remaining, candidates[:i]...)
+							remaining = append(remaining, candidates[i+1:]...)
+
+							balancer, ok := r.balancers[group.group.ID]
+							if !ok {
+								balancer = lb.NewBalancer(group.group.LBPolicy, r.connTracker)
+							}
+							for _, u := range balancer.SelectN(remaining, n-1) {
+								result = append(result, &SelectedUpstream{
+									Upstream: u,
+									APIKey:   r.decryptedKeys[u.ID],
+								})
+							}
+						}
+						return result
+					}
+				}
+				// Bound upstream not in candidates (disabled/unhealthy) — fall through.
+			} else {
+				// Expired binding.
+				r.sessionMap.Delete(sessionID)
+			}
+		}
+	}
+
+	// 7. Use group's balancer to rank (SelectN).
 	//    Fall back to a default weighted_random balancer for auto-discovered groups.
 	balancer, ok := r.balancers[group.group.ID]
 	if !ok {
@@ -365,34 +417,6 @@ func (r *Router) SelectWithRetry(ctx context.Context, group *resolvedGroup, sess
 	}
 
 	ranked := balancer.SelectN(candidates, n)
-
-	// 7. Apply session stickiness: if the session is bound to an upstream
-	//    that's in our candidate list, move it to the front.
-	if sessionID != "" {
-		if val, ok := r.sessionMap.Load(sessionID); ok {
-			binding := val.(sessionBinding)
-			if time.Since(binding.usedAt) < r.sessionTTL {
-				for i, u := range ranked {
-					if u.ID == binding.upstreamID {
-						// Move to front.
-						if i > 0 {
-							copy(ranked[1:i+1], ranked[:i])
-							ranked[0] = u
-						}
-						// Refresh binding.
-						r.sessionMap.Store(sessionID, sessionBinding{
-							upstreamID: u.ID,
-							usedAt:     time.Now(),
-						})
-						break
-					}
-				}
-			} else {
-				// Expired binding.
-				r.sessionMap.Delete(sessionID)
-			}
-		}
-	}
 
 	// 8. Wrap as []*SelectedUpstream with decrypted API keys.
 	result := make([]*SelectedUpstream, len(ranked))
