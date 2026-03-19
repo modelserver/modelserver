@@ -257,6 +257,36 @@ func TestExecutor_ClaudeCodeTokenResolution(t *testing.T) {
 	}
 }
 
+func TestClaudeCodeTransformer_SetUpstream_RawToken(t *testing.T) {
+	transformer := &ClaudeCodeTransformer{}
+	req, _ := http.NewRequest("POST", "https://example.com/v1/messages", nil)
+	upstream := &types.Upstream{BaseURL: "https://api.anthropic.com"}
+
+	err := transformer.SetUpstream(req, upstream, "raw-access-token")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := req.Header.Get("Authorization")
+	if got != "Bearer raw-access-token" {
+		t.Errorf("Authorization = %q, want %q", got, "Bearer raw-access-token")
+	}
+}
+
+func TestClaudeCodeTransformer_SetUpstream_JSONBlob(t *testing.T) {
+	transformer := &ClaudeCodeTransformer{}
+	req, _ := http.NewRequest("POST", "https://example.com/v1/messages", nil)
+	upstream := &types.Upstream{BaseURL: "https://api.anthropic.com"}
+
+	err := transformer.SetUpstream(req, upstream, `{"access_token":"extracted-token","refresh_token":"rt","expires_at":9999999999}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := req.Header.Get("Authorization")
+	if got != "Bearer extracted-token" {
+		t.Errorf("Authorization = %q, want %q", got, "Bearer extracted-token")
+	}
+}
+
 func TestReload_UsesDBWhenNewer(t *testing.T) {
 	mgr := NewOAuthTokenManager(nil, nil, nil)
 

@@ -22,15 +22,16 @@ func (t *ClaudeCodeTransformer) TransformBody(body []byte, _ string, _ bool, _ h
 }
 
 // SetUpstream configures the outbound request for a Claude Code upstream.
-// It parses the API key as a JSON credentials blob to extract the access token,
-// then delegates to directorSetClaudeCodeUpstream for URL and header setup.
-//
-// In the future, full OAuth token refresh will be integrated via OAuthTokenManager.
-// For now, we fall back to ParseClaudeCodeAccessToken for the access token.
+// The apiKey parameter is expected to be either a raw access token (when resolved
+// by the OAuthTokenManager via the executor) or a JSON credentials blob (fallback).
 func (t *ClaudeCodeTransformer) SetUpstream(r *http.Request, upstream *types.Upstream, apiKey string) error {
-	// Extract access token from the credentials JSON stored as the API key.
-	// Full OAuth refresh integration will be wired in a future step.
-	accessToken := ParseClaudeCodeAccessToken(apiKey)
+	accessToken := apiKey
+	// If the apiKey looks like JSON (starts with '{'), extract the access_token field.
+	if len(apiKey) > 0 && apiKey[0] == '{' {
+		if parsed := ParseClaudeCodeAccessToken(apiKey); parsed != "" {
+			accessToken = parsed
+		}
+	}
 	directorSetClaudeCodeUpstream(r, upstream.BaseURL, accessToken)
 	return nil
 }

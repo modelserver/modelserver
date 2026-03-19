@@ -188,7 +188,11 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 	proxy := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			if selected.Upstream.Provider == types.ProviderClaudeCode {
+				// Resolve fresh OAuth token via the manager.
 				accessToken := ParseClaudeCodeAccessToken(selected.APIKey)
+				if token, err := h.router.GetClaudeCodeAccessToken(selected.Upstream.ID); err == nil {
+					accessToken = token
+				}
 				directorSetClaudeCodeUpstream(req, selected.Upstream.BaseURL, accessToken)
 			} else {
 				directorSetUpstream(req, selected.Upstream.BaseURL, selected.APIKey)
