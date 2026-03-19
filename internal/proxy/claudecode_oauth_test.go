@@ -20,7 +20,7 @@ func TestLoadCredentials(t *testing.T) {
 	}
 	credsJSON, _ := json.Marshal(creds)
 
-	channels := []types.Channel{
+	upstreams := []types.Upstream{
 		{ID: "ch1", Provider: types.ProviderClaudeCode},
 		{ID: "ch2", Provider: types.ProviderAnthropic},
 	}
@@ -29,7 +29,7 @@ func TestLoadCredentials(t *testing.T) {
 		"ch2": "sk-ant-key",
 	}
 
-	mgr.LoadCredentials(channels, keys)
+	mgr.LoadCredentials(upstreams, keys)
 
 	mgr.mu.RLock()
 	defer mgr.mu.RUnlock()
@@ -41,21 +41,21 @@ func TestLoadCredentials(t *testing.T) {
 		t.Errorf("access_token = %s, want at-123", mgr.credentials["ch1"].AccessToken)
 	}
 	if _, ok := mgr.credentials["ch2"]; ok {
-		t.Error("should not load credentials for non-claudecode channel")
+		t.Error("should not load credentials for non-claudecode upstream")
 	}
 }
 
 func TestLoadCredentials_InvalidJSON(t *testing.T) {
 	mgr := NewOAuthTokenManager(nil, nil, nil)
 
-	channels := []types.Channel{
+	upstreams := []types.Upstream{
 		{ID: "ch1", Provider: types.ProviderClaudeCode},
 	}
 	keys := map[string]string{
 		"ch1": "not-json",
 	}
 
-	mgr.LoadCredentials(channels, keys)
+	mgr.LoadCredentials(upstreams, keys)
 
 	mgr.mu.RLock()
 	defer mgr.mu.RUnlock()
@@ -89,7 +89,7 @@ func TestGetAccessToken_NotFound(t *testing.T) {
 
 	_, err := mgr.GetAccessToken("nonexistent")
 	if err == nil {
-		t.Error("expected error for nonexistent channel")
+		t.Error("expected error for nonexistent upstream")
 	}
 }
 
@@ -184,14 +184,14 @@ func TestReload_PreservesNewerCredentials(t *testing.T) {
 	}
 	credsJSON, _ := json.Marshal(olderCreds)
 
-	channels := []types.Channel{
+	upstreams := []types.Upstream{
 		{ID: "ch1", Provider: types.ProviderClaudeCode},
 	}
 	keys := map[string]string{
 		"ch1": string(credsJSON),
 	}
 
-	mgr.Reload(channels, keys)
+	mgr.Reload(upstreams, keys)
 
 	mgr.mu.RLock()
 	defer mgr.mu.RUnlock()
@@ -221,14 +221,14 @@ func TestReload_UsesDBWhenNewer(t *testing.T) {
 	}
 	credsJSON, _ := json.Marshal(newerCreds)
 
-	channels := []types.Channel{
+	upstreams := []types.Upstream{
 		{ID: "ch1", Provider: types.ProviderClaudeCode},
 	}
 	keys := map[string]string{
 		"ch1": string(credsJSON),
 	}
 
-	mgr.Reload(channels, keys)
+	mgr.Reload(upstreams, keys)
 
 	mgr.mu.RLock()
 	defer mgr.mu.RUnlock()

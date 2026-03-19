@@ -10,6 +10,18 @@ import (
 	"github.com/modelserver/modelserver/internal/types"
 )
 
+// unmarshalModelMap decodes a JSONB column value into a model map.
+func unmarshalModelMap(data []byte) map[string]string {
+	if len(data) == 0 {
+		return nil
+	}
+	var m map[string]string
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil
+	}
+	return m
+}
+
 // CreateUpstream inserts a new upstream.
 func (s *Store) CreateUpstream(u *types.Upstream) error {
 	modelMapJSON, _ := json.Marshal(u.ModelMap)

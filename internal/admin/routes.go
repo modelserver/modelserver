@@ -143,45 +143,20 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 				})
 			})
 
-			// Channels (superadmin only).
-			r.Route("/channels", func(r chi.Router) {
-				r.Use(RequireSuperadmin)
-				r.Get("/", handleListChannels(st, encKey))
-				r.Post("/", handleCreateChannel(st, encKey))
-				r.Get("/stats", handleChannelStats(st))
-				r.Post("/claudecode/oauth/start", handleClaudeCodeOAuthStart())
-				r.Post("/claudecode/oauth/exchange", handleClaudeCodeOAuthExchange())
-				r.Route("/{channelID}", func(r chi.Router) {
-					r.Get("/", handleGetChannel(st))
-					r.Put("/", handleUpdateChannel(st, encKey))
-					r.Delete("/", handleDeleteChannel(st))
-					r.Post("/test", handleTestChannel(st, encKey))
-					r.Get("/oauth/status", handleClaudeCodeTokenStatus(st, encKey))
-					r.Post("/oauth/refresh", handleClaudeCodeTokenRefresh(st, encKey))
-				})
-			})
-
-			// Channel routes (superadmin only).
-			r.Route("/routes", func(r chi.Router) {
-				r.Use(RequireSuperadmin)
-				r.Get("/", handleListRoutes(st))
-				r.Post("/", handleCreateRoute(st))
-				r.Route("/{routeID}", func(r chi.Router) {
-					r.Put("/", handleUpdateRoute(st))
-					r.Delete("/", handleDeleteRoute(st))
-				})
-			})
-
 			// Upstreams (superadmin only).
 			r.Route("/upstreams", func(r chi.Router) {
 				r.Use(RequireSuperadmin)
 				r.Get("/", handleListUpstreams(st, encKey))
 				r.Post("/", handleCreateUpstream(st, encKey))
+				r.Post("/claudecode/oauth/start", handleClaudeCodeOAuthStart())
+				r.Post("/claudecode/oauth/exchange", handleClaudeCodeOAuthExchange())
 				r.Route("/{upstreamID}", func(r chi.Router) {
 					r.Get("/", handleGetUpstream(st))
 					r.Put("/", handleUpdateUpstream(st, encKey))
 					r.Delete("/", handleDeleteUpstream(st))
 					r.Post("/test", handleTestUpstream(st, encKey))
+					r.Get("/oauth/status", handleClaudeCodeTokenStatus(st, encKey))
+					r.Post("/oauth/refresh", handleClaudeCodeTokenRefresh(st, encKey))
 				})
 			})
 

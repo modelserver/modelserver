@@ -100,23 +100,6 @@ export interface APIKeyCreateResponse {
   created_at: string;
 }
 
-// --- Channel ---
-export interface Channel {
-  id: string;
-  provider: "anthropic" | "openai" | "gemini" | "bedrock" | "claudecode";
-  name: string;
-  base_url: string;
-  supported_models: string[];
-  model_map?: Record<string, string>;
-  weight: number;
-  selection_priority: number;
-  status: "active" | "disabled";
-  max_concurrent: number;
-  test_model?: string;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface UpstreamUsageSummary {
   upstream_id: string;
   request_count: number;
@@ -128,24 +111,12 @@ export interface UpstreamUsageSummary {
   error_count: number;
 }
 
-export interface ChannelTestResult {
+export interface UpstreamTestResult {
   success: boolean;
   status_code?: number;
   latency_ms?: number;
   model?: string;
   error?: string;
-}
-
-// --- Channel Route ---
-export interface ChannelRoute {
-  id: string;
-  project_id?: string;
-  model_pattern: string;
-  channel_ids: string[];
-  match_priority: number;
-  status: string;
-  created_at: string;
-  updated_at: string;
 }
 
 // --- Request ---

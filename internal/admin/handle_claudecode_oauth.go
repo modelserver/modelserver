@@ -146,7 +146,7 @@ func handleClaudeCodeOAuthExchange() http.HandlerFunc {
 			return
 		}
 
-		// Return credentials JSON that should be used as the channel's api_key.
+		// Return credentials JSON that should be used as the upstream's api_key.
 		credentials := map[string]interface{}{
 			"access_token":  tokenResp.AccessToken,
 			"refresh_token": tokenResp.RefreshToken,
@@ -160,18 +160,18 @@ func handleClaudeCodeOAuthExchange() http.HandlerFunc {
 
 func handleClaudeCodeTokenStatus(st *store.Store, encKey []byte) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		channelID := chi.URLParam(r, "channelID")
-		ch, err := st.GetChannelByID(channelID)
-		if err != nil || ch == nil {
-			writeError(w, http.StatusNotFound, "not_found", "channel not found")
+		upstreamID := chi.URLParam(r, "upstreamID")
+		u, err := st.GetUpstreamByID(upstreamID)
+		if err != nil || u == nil {
+			writeError(w, http.StatusNotFound, "not_found", "upstream not found")
 			return
 		}
-		if ch.Provider != "claudecode" {
-			writeError(w, http.StatusBadRequest, "bad_request", "channel is not a claudecode channel")
+		if u.Provider != "claudecode" {
+			writeError(w, http.StatusBadRequest, "bad_request", "upstream is not a claudecode upstream")
 			return
 		}
 
-		plaintext, err := crypto.Decrypt(encKey, ch.APIKeyEncrypted)
+		plaintext, err := crypto.Decrypt(encKey, u.APIKeyEncrypted)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to decrypt credentials")
 			return
@@ -192,18 +192,18 @@ func handleClaudeCodeTokenStatus(st *store.Store, encKey []byte) http.HandlerFun
 
 func handleClaudeCodeTokenRefresh(st *store.Store, encKey []byte) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		channelID := chi.URLParam(r, "channelID")
-		ch, err := st.GetChannelByID(channelID)
-		if err != nil || ch == nil {
-			writeError(w, http.StatusNotFound, "not_found", "channel not found")
+		upstreamID := chi.URLParam(r, "upstreamID")
+		u, err := st.GetUpstreamByID(upstreamID)
+		if err != nil || u == nil {
+			writeError(w, http.StatusNotFound, "not_found", "upstream not found")
 			return
 		}
-		if ch.Provider != "claudecode" {
-			writeError(w, http.StatusBadRequest, "bad_request", "channel is not a claudecode channel")
+		if u.Provider != "claudecode" {
+			writeError(w, http.StatusBadRequest, "bad_request", "upstream is not a claudecode upstream")
 			return
 		}
 
-		plaintext, err := crypto.Decrypt(encKey, ch.APIKeyEncrypted)
+		plaintext, err := crypto.Decrypt(encKey, u.APIKeyEncrypted)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to decrypt credentials")
 			return
@@ -235,7 +235,7 @@ func handleClaudeCodeTokenRefresh(st *store.Store, encKey []byte) http.HandlerFu
 		client := &http.Client{Timeout: 15 * time.Second}
 		resp, err := client.Post(proxy.ClaudeCodeTokenURL, "application/json", bytes.NewReader(reqBody))
 		if err != nil {
-			slog.Error("claudecode manual token refresh: request failed", "channel_id", channelID, "error", err)
+			slog.Error("claudecode manual token refresh: request failed", "upstream_id", upstreamID, "error", err)
 			writeError(w, http.StatusBadGateway, "upstream_error", fmt.Sprintf("token refresh request failed: %v", err))
 			return
 		}
@@ -243,7 +243,7 @@ func handleClaudeCodeTokenRefresh(st *store.Store, encKey []byte) http.HandlerFu
 
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
 		if resp.StatusCode != http.StatusOK {
-			slog.Error("claudecode manual token refresh: upstream error", "channel_id", channelID, "status", resp.StatusCode, "body", string(body))
+			slog.Error("claudecode manual token refresh: upstream error", "upstream_id", upstreamID, "status", resp.StatusCode, "body", string(body))
 			writeError(w, http.StatusBadGateway, "upstream_error",
 				fmt.Sprintf("token refresh returned %d: %s", resp.StatusCode, string(body)))
 			return
@@ -255,7 +255,7 @@ func handleClaudeCodeTokenRefresh(st *store.Store, encKey []byte) http.HandlerFu
 			ExpiresIn    int64  `json:"expires_in"`
 		}
 		if err := json.Unmarshal(body, &tokenResp); err != nil {
-			slog.Error("claudecode manual token refresh: parse error", "channel_id", channelID, "error", err)
+			slog.Error("claudecode manual token refresh: parse error", "upstream_id", upstreamID, "error", err)
 			writeError(w, http.StatusInternalServerError, "internal", "failed to parse token response")
 			return
 		}
@@ -279,15 +279,15 @@ func handleClaudeCodeTokenRefresh(st *store.Store, encKey []byte) http.HandlerFu
 			return
 		}
 
-		if err := st.UpdateChannel(channelID, map[string]interface{}{
+		if err := st.UpdateUpstream(upstreamID, map[string]interface{}{
 			"api_key_encrypted": encrypted,
 		}); err != nil {
-			slog.Error("claudecode manual token refresh: db update failed", "channel_id", channelID, "error", err)
+			slog.Error("claudecode manual token refresh: db update failed", "upstream_id", upstreamID, "error", err)
 			writeError(w, http.StatusInternalServerError, "internal", "failed to persist refreshed credentials")
 			return
 		}
 
-		slog.Info("claudecode token manually refreshed", "channel_id", channelID, "expires_at", newCreds.ExpiresAt)
+		slog.Info("claudecode token manually refreshed", "upstream_id", upstreamID, "expires_at", newCreds.ExpiresAt)
 
 		writeData(w, http.StatusOK, map[string]interface{}{
 			"expires_at":        newCreds.ExpiresAt,

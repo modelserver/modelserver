@@ -13,7 +13,6 @@ import {
   Zap,
   Settings,
   Shield,
-  Radio,
   Coins,
   FolderOpen,
   LogOut,
@@ -137,9 +136,6 @@ export function Sidebar() {
             </SidebarLink>
             <SidebarLink to="/admin/requests" icon={FileText}>
               Requests
-            </SidebarLink>
-            <SidebarLink to="/admin/channels" icon={Radio}>
-              Channels
             </SidebarLink>
             <SidebarLink to="/admin/routes" icon={Route}>
               Routes

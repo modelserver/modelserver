@@ -17,8 +17,8 @@ import (
 
 // sessionBinding tracks which upstream a session (trace) is pinned to.
 type sessionBinding struct {
-	channelID string // upstream ID (named channelID for backward compat with session map)
-	usedAt    time.Time
+	upstreamID string
+	usedAt     time.Time
 }
 
 // matchModel checks if a model name matches a glob pattern.
@@ -41,7 +41,7 @@ func modelSupported(supported []string, model string) bool {
 }
 
 // Router is the central routing engine (nginx: the config evaluator).
-// It replaces the core logic of ChannelRouter for the new upstream-based routing model.
+// It is the central routing engine for the upstream-based routing model.
 type Router struct {
 	mu            sync.RWMutex
 	upstreams     map[string]*types.Upstream    // id -> upstream
@@ -343,7 +343,7 @@ func (r *Router) SelectWithRetry(ctx context.Context, group *resolvedGroup, sess
 			binding := val.(sessionBinding)
 			if time.Since(binding.usedAt) < r.sessionTTL {
 				for i, u := range ranked {
-					if u.ID == binding.channelID {
+					if u.ID == binding.upstreamID {
 						// Move to front.
 						if i > 0 {
 							copy(ranked[1:i+1], ranked[:i])
@@ -351,8 +351,8 @@ func (r *Router) SelectWithRetry(ctx context.Context, group *resolvedGroup, sess
 						}
 						// Refresh binding.
 						r.sessionMap.Store(sessionID, sessionBinding{
-							channelID: u.ID,
-							usedAt:    time.Now(),
+							upstreamID: u.ID,
+							usedAt:     time.Now(),
 						})
 						break
 					}
@@ -381,7 +381,7 @@ func (r *Router) BindSession(sessionID, upstreamID string) {
 	if sessionID == "" {
 		return
 	}
-	r.sessionMap.Store(sessionID, sessionBinding{channelID: upstreamID, usedAt: time.Now()})
+	r.sessionMap.Store(sessionID, sessionBinding{upstreamID: upstreamID, usedAt: time.Now()})
 }
 
 // StartSessionCleanup runs a background goroutine that periodically removes

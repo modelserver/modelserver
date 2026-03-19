@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
-import type { DataResponse, Upstream, UpstreamGroupWithMembers, RoutingRoute, RoutingHealthResponse, ChannelTestResult } from "./types";
+import type { DataResponse, Upstream, UpstreamGroupWithMembers, RoutingRoute, RoutingHealthResponse, UpstreamTestResult } from "./types";
 
 // --- Upstreams ---
 export function useUpstreams() {
@@ -39,7 +39,7 @@ export function useDeleteUpstream() {
 export function useTestUpstream() {
   return useMutation({
     mutationFn: (upstreamId: string) =>
-      api.post<DataResponse<ChannelTestResult>>(`/api/v1/upstreams/${upstreamId}/test`),
+      api.post<DataResponse<UpstreamTestResult>>(`/api/v1/upstreams/${upstreamId}/test`),
   });
 }
 

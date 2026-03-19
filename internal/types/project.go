@@ -12,7 +12,7 @@ const (
 	ProjectStatusArchived  = "archived"
 )
 
-// Project represents a logical grouping of API keys, channels, and policies.
+// Project represents a logical grouping of API keys, upstreams, and policies.
 type Project struct {
 	ID          string          `json:"id"`
 	Name        string          `json:"name"`

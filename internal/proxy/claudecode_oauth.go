@@ -30,7 +30,7 @@ const (
 	tokenExpiryBuffer = 300
 )
 
-// ClaudeCodeCredentials holds OAuth credentials for a Claude Code channel.
+// ClaudeCodeCredentials holds OAuth credentials for a Claude Code upstream.
 type ClaudeCodeCredentials struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
@@ -38,10 +38,10 @@ type ClaudeCodeCredentials struct {
 	ClientID     string `json:"client_id,omitempty"`
 }
 
-// OAuthTokenManager manages OAuth tokens for Claude Code channels.
+// OAuthTokenManager manages OAuth tokens for Claude Code upstreams.
 type OAuthTokenManager struct {
 	mu            sync.RWMutex
-	credentials   map[string]*ClaudeCodeCredentials // channelID → credentials
+	credentials   map[string]*ClaudeCodeCredentials // upstreamID → credentials
 	store         *store.Store
 	encryptionKey []byte
 	logger        *slog.Logger
@@ -74,51 +74,51 @@ func ParseClaudeCodeAccessToken(raw string) string {
 	return creds.AccessToken
 }
 
-// LoadCredentials parses and stores credentials for all claudecode channels.
-func (m *OAuthTokenManager) LoadCredentials(channels []types.Channel, decryptedKeys map[string]string) {
+// LoadCredentials parses and stores credentials for all claudecode upstreams.
+func (m *OAuthTokenManager) LoadCredentials(upstreams []types.Upstream, decryptedKeys map[string]string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	for _, ch := range channels {
-		if ch.Provider != types.ProviderClaudeCode {
+	for _, u := range upstreams {
+		if u.Provider != types.ProviderClaudeCode {
 			continue
 		}
-		raw, ok := decryptedKeys[ch.ID]
+		raw, ok := decryptedKeys[u.ID]
 		if !ok || raw == "" {
 			continue
 		}
 		var creds ClaudeCodeCredentials
 		if err := json.Unmarshal([]byte(raw), &creds); err != nil {
 			if m.logger != nil {
-				m.logger.Error("failed to parse claudecode credentials", "channel_id", ch.ID, "error", err)
+				m.logger.Error("failed to parse claudecode credentials", "upstream_id", u.ID, "error", err)
 			}
 			continue
 		}
-		m.credentials[ch.ID] = &creds
+		m.credentials[u.ID] = &creds
 	}
 }
 
 // Reload re-loads credentials, preserving recently refreshed tokens that
 // may not yet be persisted to the database.
-func (m *OAuthTokenManager) Reload(channels []types.Channel, decryptedKeys map[string]string) {
+func (m *OAuthTokenManager) Reload(upstreams []types.Upstream, decryptedKeys map[string]string) {
 	newCreds := make(map[string]*ClaudeCodeCredentials)
 
-	for _, ch := range channels {
-		if ch.Provider != types.ProviderClaudeCode {
+	for _, u := range upstreams {
+		if u.Provider != types.ProviderClaudeCode {
 			continue
 		}
-		raw, ok := decryptedKeys[ch.ID]
+		raw, ok := decryptedKeys[u.ID]
 		if !ok || raw == "" {
 			continue
 		}
 		var creds ClaudeCodeCredentials
 		if err := json.Unmarshal([]byte(raw), &creds); err != nil {
 			if m.logger != nil {
-				m.logger.Error("failed to parse claudecode credentials on reload", "channel_id", ch.ID, "error", err)
+				m.logger.Error("failed to parse claudecode credentials on reload", "upstream_id", u.ID, "error", err)
 			}
 			continue
 		}
-		newCreds[ch.ID] = &creds
+		newCreds[u.ID] = &creds
 	}
 
 	m.mu.Lock()
@@ -135,32 +135,32 @@ func (m *OAuthTokenManager) Reload(channels []types.Channel, decryptedKeys map[s
 	m.credentials = newCreds
 }
 
-// GetAccessToken returns a valid access token for the given channel,
+// GetAccessToken returns a valid access token for the given upstream,
 // refreshing if necessary.
-func (m *OAuthTokenManager) GetAccessToken(channelID string) (string, error) {
+func (m *OAuthTokenManager) GetAccessToken(upstreamID string) (string, error) {
 	m.mu.RLock()
-	creds, ok := m.credentials[channelID]
+	creds, ok := m.credentials[upstreamID]
 	if !ok {
 		m.mu.RUnlock()
-		return "", fmt.Errorf("no credentials for claudecode channel %s", channelID)
+		return "", fmt.Errorf("no credentials for claudecode upstream %s", upstreamID)
 	}
 	token := creds.AccessToken
 	needsRefresh := time.Now().Unix() > creds.ExpiresAt-tokenExpiryBuffer
 	m.mu.RUnlock()
 
 	if needsRefresh {
-		_, err, _ := m.sfGroup.Do(channelID, func() (interface{}, error) {
-			return nil, m.refreshToken(channelID)
+		_, err, _ := m.sfGroup.Do(upstreamID, func() (interface{}, error) {
+			return nil, m.refreshToken(upstreamID)
 		})
 		if err != nil {
 			if m.logger != nil {
-				m.logger.Error("failed to refresh claudecode token", "channel_id", channelID, "error", err)
+				m.logger.Error("failed to refresh claudecode token", "upstream_id", upstreamID, "error", err)
 			}
 			// Return the existing token as fallback; it might still work.
 			return token, nil
 		}
 		m.mu.RLock()
-		token = m.credentials[channelID].AccessToken
+		token = m.credentials[upstreamID].AccessToken
 		m.mu.RUnlock()
 	}
 
@@ -168,12 +168,12 @@ func (m *OAuthTokenManager) GetAccessToken(channelID string) (string, error) {
 }
 
 // refreshToken exchanges a refresh token for new access/refresh tokens.
-func (m *OAuthTokenManager) refreshToken(channelID string) error {
+func (m *OAuthTokenManager) refreshToken(upstreamID string) error {
 	m.mu.RLock()
-	creds, ok := m.credentials[channelID]
+	creds, ok := m.credentials[upstreamID]
 	if !ok {
 		m.mu.RUnlock()
-		return fmt.Errorf("no credentials for channel %s", channelID)
+		return fmt.Errorf("no credentials for upstream %s", upstreamID)
 	}
 	refreshToken := creds.RefreshToken
 	clientID := creds.ClientID
@@ -219,7 +219,7 @@ func (m *OAuthTokenManager) refreshToken(channelID string) error {
 
 	// Update in-memory credentials.
 	m.mu.Lock()
-	m.credentials[channelID] = newCreds
+	m.credentials[upstreamID] = newCreds
 	m.mu.Unlock()
 
 	// Persist to database.
@@ -232,17 +232,17 @@ func (m *OAuthTokenManager) refreshToken(channelID string) error {
 		if err != nil {
 			return fmt.Errorf("failed to encrypt new credentials: %w", err)
 		}
-		if err := m.store.UpdateChannel(channelID, map[string]interface{}{
+		if err := m.store.UpdateUpstream(upstreamID, map[string]interface{}{
 			"api_key_encrypted": encrypted,
 		}); err != nil {
 			if m.logger != nil {
-				m.logger.Error("failed to persist refreshed claudecode token", "channel_id", channelID, "error", err)
+				m.logger.Error("failed to persist refreshed claudecode token", "upstream_id", upstreamID, "error", err)
 			}
 		}
 	}
 
 	if m.logger != nil {
-		m.logger.Info("refreshed claudecode token", "channel_id", channelID)
+		m.logger.Info("refreshed claudecode token", "upstream_id", upstreamID)
 	}
 
 	return nil

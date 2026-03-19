@@ -80,7 +80,7 @@ type TraceConfig struct {
 	ClaudeCodeTraceEnabled bool          `yaml:"claude_code_trace_enabled" mapstructure:"claude_code_trace_enabled"`
 	CodexTraceEnabled      bool          `yaml:"codex_trace_enabled"       mapstructure:"codex_trace_enabled"`
 	RequireSession         bool          `yaml:"require_session"           mapstructure:"require_session"`
-	SessionChannelTTL      time.Duration `yaml:"session_channel_ttl"       mapstructure:"session_channel_ttl"`
+	SessionTTL             time.Duration `yaml:"session_ttl"               mapstructure:"session_ttl"`
 }
 
 // CollectorConfig holds settings for the metrics/event collector.
@@ -155,7 +155,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("trace.claude_code_trace_enabled", true)
 	v.SetDefault("trace.codex_trace_enabled", true)
 	v.SetDefault("trace.require_session", false)
-	v.SetDefault("trace.session_channel_ttl", 24*time.Hour)
+	v.SetDefault("trace.session_ttl", 24*time.Hour)
 
 	// Collector
 	v.SetDefault("collector.batch_size", 100)
