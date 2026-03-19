@@ -5,6 +5,7 @@ import {
   useDeleteRoutingRoute,
   useUpstreamGroups,
 } from "@/api/upstreams";
+import { useAllProjects } from "@/api/projects";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { Button } from "@/components/ui/button";
@@ -33,13 +34,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { RoutingRoute, UpstreamGroupWithMembers } from "@/api/types";
+import type { RoutingRoute, UpstreamGroupWithMembers, Project } from "@/api/types";
 import { Plus, MoreHorizontal, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 export function RoutesPage() {
   const { data: routesData, isLoading } = useRoutingRoutes();
   const { data: groupsData } = useUpstreamGroups();
+  const { data: projectsData } = useAllProjects();
   const createRoute = useCreateRoutingRoute();
   const deleteRoute = useDeleteRoutingRoute();
 
@@ -50,10 +52,12 @@ export function RoutesPage() {
     upstream_group_id: "",
     match_priority: 0,
     status: "active",
+    project_id: "",
   });
 
   const routes = routesData?.data ?? [];
   const groups = groupsData?.data ?? [];
+  const projects = projectsData?.data ?? [];
 
   const groupMap = useMemo(() => {
     const m = new Map<string, UpstreamGroupWithMembers>();
@@ -61,8 +65,14 @@ export function RoutesPage() {
     return m;
   }, [groups]);
 
+  const projectMap = useMemo(() => {
+    const m = new Map<string, Project>();
+    for (const p of projects) m.set(p.id, p);
+    return m;
+  }, [projects]);
+
   function openCreate() {
-    setForm({ model_pattern: "", upstream_group_id: "", match_priority: 0, status: "active" });
+    setForm({ model_pattern: "", upstream_group_id: "", match_priority: 0, status: "active", project_id: "" });
     setDialogOpen(true);
   }
 
@@ -119,13 +129,18 @@ export function RoutesPage() {
     },
     {
       header: "Scope",
-      accessor: (r) =>
-        r.project_id ? (
-          <Badge variant="outline" className="text-xs">Project</Badge>
-        ) : (
-          <Badge variant="secondary" className="text-xs">Global</Badge>
-        ),
-      className: "w-20",
+      accessor: (r) => {
+        if (!r.project_id) {
+          return <Badge variant="secondary" className="text-xs">Global</Badge>;
+        }
+        const proj = projectMap.get(r.project_id);
+        return (
+          <Badge variant="outline" className="text-xs">
+            {proj?.name ?? r.project_id.slice(0, 8)}
+          </Badge>
+        );
+      },
+      className: "w-28",
     },
     {
       header: "Status",
@@ -197,6 +212,28 @@ export function RoutesPage() {
             <DialogTitle>Create Route</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Project (optional)</Label>
+              <Select
+                value={form.project_id}
+                onValueChange={(v) => setForm((p) => ({ ...p, project_id: v === "__global__" ? "" : (v ?? "") }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Global (all projects)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__global__">Global (all projects)</SelectItem>
+                  {projects.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Leave as Global to apply to all projects, or select a specific project
+              </p>
+            </div>
             <div className="space-y-2">
               <Label>Model Pattern</Label>
               <Input
