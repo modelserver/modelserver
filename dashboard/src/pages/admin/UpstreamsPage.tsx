@@ -8,6 +8,7 @@ import {
   useClaudeCodeOAuthStart,
   useClaudeCodeOAuthExchange,
   useUpstreamOAuthRefresh,
+  useUpstreamOAuthStatus,
 } from "@/api/upstreams";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
@@ -39,8 +40,42 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { Upstream } from "@/api/types";
-import { Plus, MoreHorizontal, Pencil, Trash2, Loader2, Zap, RefreshCw, ExternalLink, KeyRound } from "lucide-react";
+import { Plus, MoreHorizontal, Pencil, Trash2, Loader2, Zap, RefreshCw, ExternalLink, KeyRound, Clock } from "lucide-react";
 import { toast } from "sonner";
+
+function TokenStatusBadge({ upstreamId }: { upstreamId: string }) {
+  const { data, isLoading } = useUpstreamOAuthStatus(upstreamId);
+
+  if (isLoading) return <span className="text-xs text-muted-foreground">...</span>;
+
+  const status = data?.data;
+  if (!status) return null;
+
+  const now = Math.floor(Date.now() / 1000);
+  const diff = status.expires_at - now;
+
+  let color: string;
+  let text: string;
+  if (diff <= 0) {
+    color = "text-red-600 dark:text-red-400";
+    text = "Token expired";
+  } else if (diff < 300) {
+    color = "text-yellow-600 dark:text-yellow-400";
+    text = `Expiring (${Math.floor(diff / 60)}m)`;
+  } else {
+    const hours = Math.floor(diff / 3600);
+    const mins = Math.floor((diff % 3600) / 60);
+    color = "text-green-600 dark:text-green-400";
+    text = hours > 0 ? `Token OK (${hours}h ${mins}m)` : `Token OK (${mins}m)`;
+  }
+
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs ${color}`}>
+      <Clock className="h-3 w-3" />
+      {text}
+    </span>
+  );
+}
 
 export function UpstreamsPage() {
   const { data, isLoading } = useUpstreams();
@@ -240,6 +275,15 @@ export function UpstreamsPage() {
     {
       header: "Status",
       accessor: (u) => <StatusBadge status={u.status} />,
+    },
+    {
+      header: "Token",
+      accessor: (u) =>
+        u.provider === "claudecode" ? (
+          <TokenStatusBadge upstreamId={u.id} />
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        ),
     },
     {
       header: "Models",
