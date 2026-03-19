@@ -249,8 +249,19 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			outReq = withVertexParams(outReq, actualModel, reqCtx.IsStream)
 		}
 
+		// For Claude Code upstreams, resolve a fresh OAuth access token
+		// via the OAuthTokenManager instead of using the raw credentials JSON.
+		apiKeyForUpstream := candidate.APIKey
+		if upstream.Provider == types.ProviderClaudeCode {
+			if token, err := e.router.GetClaudeCodeAccessToken(upstream.ID); err == nil {
+				apiKeyForUpstream = token
+			} else {
+				logger.Warn("claudecode token resolution failed, falling back to stored key", "error", err)
+			}
+		}
+
 		// 6d. Configure the outbound request for this upstream.
-		if err := transformer.SetUpstream(outReq, upstream, candidate.APIKey); err != nil {
+		if err := transformer.SetUpstream(outReq, upstream, apiKeyForUpstream); err != nil {
 			logger.Error("set upstream failed", "error", err)
 			continue
 		}

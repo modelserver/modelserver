@@ -230,6 +230,33 @@ func TestRouter_GetClaudeCodeAccessToken_NoManager(t *testing.T) {
 	}
 }
 
+func TestExecutor_ClaudeCodeTokenResolution(t *testing.T) {
+	mgr := NewOAuthTokenManager(nil, nil, nil)
+	mgr.mu.Lock()
+	mgr.credentials["up-cc"] = &ClaudeCodeCredentials{
+		AccessToken:  "resolved-oauth-token",
+		RefreshToken: "rt",
+		ExpiresAt:    time.Now().Add(1 * time.Hour).Unix(),
+	}
+	mgr.mu.Unlock()
+
+	r := &Router{oauthMgr: mgr}
+	// Simulate what the executor does: resolve token for claudecode upstream.
+	token, err := r.GetClaudeCodeAccessToken("up-cc")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token != "resolved-oauth-token" {
+		t.Errorf("token = %s, want resolved-oauth-token", token)
+	}
+
+	// For non-existent upstream, should return error (executor falls back to raw key).
+	_, err = r.GetClaudeCodeAccessToken("nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent upstream")
+	}
+}
+
 func TestReload_UsesDBWhenNewer(t *testing.T) {
 	mgr := NewOAuthTokenManager(nil, nil, nil)
 
