@@ -99,9 +99,9 @@ func TestVertexTransformer_TransformBody(t *testing.T) {
 		t.Errorf("anthropic_version should be set: %s", s)
 	}
 	if !contains(s, "interleaved-thinking-2025-05-14") {
-		t.Errorf("supported beta should be in body: %s", s)
+		t.Errorf("beta should be in body: %s", s)
 	}
-	if contains(s, "claude-code-20250219") {
-		t.Errorf("unsupported beta should be dropped: %s", s)
+	if !contains(s, "claude-code-20250219") {
+		t.Errorf("all betas should be forwarded without filtering: %s", s)
 	}
 }
