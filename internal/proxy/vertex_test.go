@@ -91,6 +91,7 @@ func TestFilterVertexBetas(t *testing.T) {
 		"interleaved-thinking-2025-05-14",
 		"prompt-caching-2024-07-31",
 		"claude-code-20250219",
+		"context-management-2025-06-27",
 		"max-tokens-3-5-sonnet-2024-07-15",
 		"output-128k-2025-02-19",
 	}
@@ -105,6 +106,7 @@ func TestFilterVertexBetas(t *testing.T) {
 	}
 	wantDropped := []string{
 		"prompt-caching-2024-07-31",
+		"context-management-2025-06-27",
 	}
 
 	if len(supported) != len(wantSupported) {

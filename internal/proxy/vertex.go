@@ -15,8 +15,10 @@ const vertexDefaultVersion = "vertex-2023-10-16"
 // vertexUnsupportedBetaPrefixes lists beta flag prefixes that Vertex AI does
 // not recognise. Flags matching any prefix are dropped to avoid 400 errors.
 //   - prompt-caching-*: Vertex handles caching via cache_control in the body.
+//   - context-management-*: Vertex does not support this beta flag.
 var vertexUnsupportedBetaPrefixes = []string{
 	"prompt-caching-",
+	"context-management-",
 }
 
 // filterVertexBetas drops beta flags that Vertex AI does not support.
