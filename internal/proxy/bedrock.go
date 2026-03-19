@@ -124,5 +124,8 @@ func directorSetBedrockUpstream(req *http.Request, baseURL, apiKey string, model
 	}
 
 	// Set all required headers from scratch — do not inherit from client.
+	req.Header.Del("x-api-key")
+	req.Header.Del("anthropic-version")
+	req.Header.Del("anthropic-beta")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 }

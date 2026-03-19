@@ -22,10 +22,12 @@ const (
 	codexTraceHeader    = "Session_id"
 )
 
-// claudeUserIDPattern matches the Claude Code user_id format:
+// claudeUserIDLegacyPattern matches the legacy Claude Code user_id string format:
+// user_<64 hex chars>_account_<uuid>_session_<uuid>
+// Also matches the variant without account UUID:
 // user_<64 hex chars>_account__session_<uuid>
-var claudeUserIDPattern = regexp.MustCompile(
-	`(?i)^user_[0-9a-f]{64}_account__session_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`,
+var claudeUserIDLegacyPattern = regexp.MustCompile(
+	`(?i)^user_[0-9a-f]{64}_account_(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?_session_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$`,
 )
 
 // TraceIDFromContext returns the trace ID from the request context.
@@ -145,22 +147,30 @@ func tryExtractClaudeCodeTraceID(r *http.Request) (string, error) {
 	return extractClaudeTraceID(userID), nil
 }
 
-// extractClaudeTraceID parses the Claude Code user ID format to extract the
-// session UUID which is used as the trace ID.
+// extractClaudeTraceID parses the Claude Code metadata.user_id to extract the
+// session ID used as the trace ID.
+//
+// Current format (v2.1+): JSON string, e.g.
+//
+//	{"device_id":"<hex>","account_uuid":"<uuid>","session_id":"<uuid>"}
+//
+// Legacy format: plain string, e.g.
+//
+//	user_<64hex>_account_<uuid>_session_<uuid>
+//	user_<64hex>_account__session_<uuid>
 func extractClaudeTraceID(userID string) string {
-	if !claudeUserIDPattern.MatchString(userID) {
+	// Try JSON format first (current Claude Code ≥ v2.1).
+	sessionID := gjson.Get(userID, "session_id").String()
+	if sessionID != "" {
+		return strings.TrimSpace(sessionID)
+	}
+
+	// Fall back to legacy string format.
+	m := claudeUserIDLegacyPattern.FindStringSubmatch(userID)
+	if len(m) < 2 {
 		return ""
 	}
-
-	traceID := userID
-	if idx := strings.LastIndex(traceID, "__"); idx >= 0 && idx+2 < len(traceID) {
-		traceID = traceID[idx+2:]
-	}
-	if idx := strings.LastIndex(traceID, "_"); idx >= 0 && idx+1 < len(traceID) {
-		traceID = traceID[idx+1:]
-	}
-
-	return strings.TrimSpace(traceID)
+	return strings.TrimSpace(m[1])
 }
 
 // tryExtractTraceIDFromBody reads the request body and checks configured
