@@ -12,33 +12,6 @@ import (
 
 const vertexDefaultVersion = "vertex-2023-10-16"
 
-// vertexSupportedBetas is the set of anthropic_beta flags that Vertex AI
-// recognises. Flags not in this set are dropped to avoid 400 errors.
-var vertexSupportedBetas = map[string]bool{
-	"computer-use-2025-01-24":          true,
-	"token-efficient-tools-2025-02-19": true,
-	"interleaved-thinking-2025-05-14":  true,
-	"output-128k-2025-02-19":           true,
-	"dev-full-thinking-2025-05-14":     true,
-	"context-1m-2025-08-07":            true,
-	"context-management-2025-06-27":    true,
-	"effort-2025-11-24":                true,
-	"tool-search-tool-2025-10-19":      true,
-	"tool-examples-2025-10-29":         true,
-}
-
-// filterVertexBetas returns only the beta flags that Vertex AI supports.
-func filterVertexBetas(betas []string) (supported, dropped []string) {
-	for _, b := range betas {
-		if vertexSupportedBetas[b] {
-			supported = append(supported, b)
-		} else {
-			dropped = append(dropped, b)
-		}
-	}
-	return
-}
-
 // vertexUnsupportedBodyFields lists top-level request body fields that Vertex AI
 // does not accept. These are stripped before forwarding to avoid 400 errors.
 var vertexUnsupportedBodyFields = []string{
