@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -45,6 +46,10 @@ func handleCreatePlan(st *store.Store) http.HandlerFunc {
 		}
 		if body.PeriodMonths <= 0 {
 			body.PeriodMonths = 1
+		}
+		if err := validateCreditRules(body.CreditRules); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+			return
 		}
 
 		plan := &types.Plan{
@@ -107,6 +112,18 @@ func handleUpdatePlan(st *store.Store) http.HandlerFunc {
 			}
 		}
 
+		// Validate credit_rules if present.
+		if raw, ok := body["credit_rules"]; ok {
+			b, _ := json.Marshal(raw)
+			var rules []types.CreditRule
+			if err := json.Unmarshal(b, &rules); err == nil {
+				if err := validateCreditRules(rules); err != nil {
+					writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+					return
+				}
+			}
+		}
+
 		if len(updates) == 0 {
 			writeError(w, http.StatusBadRequest, "bad_request", "no valid fields to update")
 			return
@@ -143,4 +160,14 @@ func handleListAvailablePlans(st *store.Store) http.HandlerFunc {
 		}
 		writeData(w, http.StatusOK, plans)
 	}
+}
+
+// validateCreditRules checks for invalid CreditRule configurations.
+func validateCreditRules(rules []types.CreditRule) error {
+	for _, rule := range rules {
+		if rule.WindowType == types.WindowTypeFixed && len(rule.Window) > 0 && rule.Window[len(rule.Window)-1] == 'M' {
+			return fmt.Errorf("month-based window %q is not supported with window_type \"fixed\" — use duration-based intervals like \"7d\"", rule.Window)
+		}
+	}
+	return nil
 }
