@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/modelserver/modelserver/internal/ratelimit"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
@@ -101,7 +102,7 @@ func (h *Handler) HandleUsage(w http.ResponseWriter, r *http.Request) {
 
 func computeCreditProgress(st *store.Store, projectID, apiKeyID string, rule types.CreditRule) (*UsageProgress, error) {
 	now := time.Now().UTC()
-	windowStart := computeWindowStart(now, rule.Window, rule.WindowType)
+	windowStart := computeWindowStart(now, rule.Window, rule.WindowType, rule.AnchorTime)
 	windowEnd := computeWindowEnd(windowStart, rule.Window, rule.WindowType)
 
 	var used float64
@@ -136,33 +137,12 @@ func computeCreditProgress(st *store.Store, projectID, apiKeyID string, rule typ
 	}, nil
 }
 
-// computeWindowStart calculates the start of the current window.
-func computeWindowStart(now time.Time, window, windowType string) time.Time {
-	if windowType == "calendar" {
-		switch window {
-		case "1w":
-			// Monday 00:00 UTC of this week.
-			weekday := now.Weekday()
-			if weekday == time.Sunday {
-				weekday = 7
-			}
-			daysBack := int(weekday) - 1
-			start := now.AddDate(0, 0, -daysBack)
-			return time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC)
-		case "1M":
-			// First of current month.
-			return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-		}
-	}
-
-	// Sliding window: parse as duration and subtract.
-	d := parseDuration(window)
-	return now.Add(-d)
+func computeWindowStart(now time.Time, window, windowType string, anchorTime *time.Time) time.Time {
+	return ratelimit.WindowStartTimeAt(now, window, windowType, anchorTime)
 }
 
-// computeWindowEnd calculates the end of the current window.
 func computeWindowEnd(windowStart time.Time, window, windowType string) time.Time {
-	if windowType == "calendar" {
+	if windowType == types.WindowTypeCalendar {
 		switch window {
 		case "1w":
 			return windowStart.AddDate(0, 0, 7)
@@ -170,26 +150,10 @@ func computeWindowEnd(windowStart time.Time, window, windowType string) time.Tim
 			return windowStart.AddDate(0, 1, 0)
 		}
 	}
-
+	if windowType == types.WindowTypeFixed {
+		return windowStart.Add(ratelimit.ParseDurationStr(window))
+	}
 	// Sliding window: end is now.
 	return time.Now().UTC()
 }
 
-// parseDuration parses window strings like "5h", "24h", "1h" into time.Duration.
-func parseDuration(window string) time.Duration {
-	d, err := time.ParseDuration(window)
-	if err != nil {
-		// Fallback: treat "1d" as 24h.
-		switch window {
-		case "1d":
-			return 24 * time.Hour
-		case "7d":
-			return 7 * 24 * time.Hour
-		case "30d":
-			return 30 * 24 * time.Hour
-		default:
-			return time.Hour
-		}
-	}
-	return d
-}
