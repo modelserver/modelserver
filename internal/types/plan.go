@@ -31,7 +31,8 @@ func (p *Plan) ToPolicy(projectID string, subscriptionStartsAt *time.Time) *Rate
 	if subscriptionStartsAt != nil {
 		for i := range rules {
 			if rules[i].WindowType == WindowTypeFixed {
-				rules[i].AnchorTime = subscriptionStartsAt
+				t := *subscriptionStartsAt
+				rules[i].AnchorTime = &t
 			}
 		}
 	}
