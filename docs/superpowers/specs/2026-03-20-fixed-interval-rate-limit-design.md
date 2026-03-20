@@ -20,6 +20,7 @@ Both are independent of when a user's subscription started. The new `"fixed"` ty
 3. Credits do NOT carry over between windows. Each window resets to `MaxCredits`.
 4. `"fixed"` rules only appear in Plans linked via Subscriptions. No fallback logic needed for missing subscriptions.
 5. No database schema migration required — `credit_rules` is JSONB and the new window type is just a new string value.
+6. `"1M"` (month) is NOT a valid window string for fixed rules — only duration-based intervals (`"5h"`, `"7d"`, etc.) are supported, because months have variable lengths (28-31 days). Validation should reject `"1M"` with `window_type: "fixed"` at plan creation time.
 
 ## Design
 
@@ -147,12 +148,62 @@ This produces a concrete end time (unlike sliding, which returns `now`).
 
 Update the call chain: `HandleUsage` → `computeCreditProgress` → `computeWindowStart`, passing `rule.AnchorTime`.
 
-### 4. What Does NOT Change
+#### Unify duration parsers
+
+The `parseDuration` function in `usage_handler.go` only handles hardcoded cases (`"1d"`, `"7d"`, `"30d"`), while `parseDurationStr` in `composite.go` handles generic `d` and `w` suffixes. Replace `parseDuration` in `usage_handler.go` with a call to the shared `ratelimit.ParseDurationStr` (exported), ensuring consistent behavior across all window calculations. Alternatively, extract both into a shared utility in `internal/ratelimit/duration.go`.
+
+### 4. Admin Handler Adaptation
+
+**File:** `internal/admin/handle_orders.go`
+
+The `handleSubscriptionUsage` function (line 246) directly calls `ratelimit.WindowStartTime` and `ratelimit.WindowResetDuration` on `plan.CreditRules` without going through `ToPolicy()`. This must be updated:
+
+1. **Inject AnchorTime**: Since `activeSub` is already loaded (line 230), populate `AnchorTime` on fixed rules before computing windows:
+   ```go
+   rules := make([]types.CreditRule, len(plan.CreditRules))
+   copy(rules, plan.CreditRules)
+   for i := range rules {
+       if rules[i].WindowType == "fixed" {
+           rules[i].AnchorTime = &activeSub.StartsAt
+       }
+   }
+   ```
+   Then iterate over `rules` instead of `plan.CreditRules`.
+
+2. **Update reset time guard** (line 264-265): The current condition `if rule.WindowType == "calendar"` must be expanded to also include `"fixed"`, since fixed windows also have a concrete, meaningful reset time:
+   ```go
+   if rule.WindowType == "calendar" || rule.WindowType == "fixed" {
+   ```
+
+3. **Update function calls** to pass `rule.AnchorTime` to the new signatures of `WindowStartTime` and `WindowResetDuration`.
+
+### 5. Cache Key Update
+
+**File:** `internal/ratelimit/composite.go`
+
+The current cache key format `projectID|apiKeyID|window` does not discriminate by window type. If a plan has both a sliding `"7d"` rule and a fixed `"7d"` rule, the cache keys would collide.
+
+Update the cache key to include `windowType`:
+```go
+cacheKey := fmt.Sprintf("%s|%s|%s|%s", projectID, apiKeyID, rule.Window, rule.WindowType)
+if rule.EffectiveScope() == types.CreditScopeProject {
+    cacheKey = fmt.Sprintf("p:%s|%s|%s", projectID, rule.Window, rule.WindowType)
+}
+```
+
+Note: The 10-second TTL cache can still serve a stale value across a window boundary for up to 10 seconds. This is an existing limitation for calendar windows and is acceptable for fixed windows as well.
+
+### 6. AnchorTime API Leakage Prevention
+
+`AnchorTime` is injected at runtime by `ToPolicy()` and only exists on the in-memory `RateLimitPolicy` used for rate limit checks and `/v1/usage` responses. The admin API endpoints (GET plans, GET policies) serialize the stored `Plan`/`Policy` objects directly from the database, where `AnchorTime` is never persisted. Therefore, `AnchorTime` does not leak through admin API responses.
+
+The `json:"anchor_time,omitempty"` tag with `*time.Time` pointer ensures it is also omitted from `/v1/usage` serialization when nil (sliding/calendar rules).
+
+### 7. What Does NOT Change
 
 | Component | Why unchanged |
 |---|---|
 | `RateLimiter` interface | Signature unchanged; AnchorTime travels inside CreditRule |
-| Credit cache (`cache.go`) | Cache key format `projectID\|apiKeyID\|window` still unique per rule per moment |
 | Store SQL queries | `SumCreditsInWindow*` queries use `created_at >= $windowStart` — works for any window type |
 | `ratelimit_middleware.go` | Passes policy transparently; no window logic here |
 | Database schema | `credit_rules` is JSONB; `"fixed"` is just a new string value in the JSON |
@@ -169,12 +220,14 @@ User subscribes on March 10, plan has rule `{window: "7d", window_type: "fixed",
 
 If the user hits the limit on Mar 12, `Retry-After` = seconds until Mar 17 00:00.
 
-### 6. Testing Strategy
+### 8. Testing Strategy
 
 **Unit tests (core):**
 - `WindowStartTime` with `windowType="fixed"`: normal case, anchor in future, exact boundary, multi-window spans.
 - `WindowResetDuration` with `windowType="fixed"`: correct retry-after calculation.
 - `ToPolicy` correctly injects `AnchorTime` for fixed rules and leaves others untouched.
+
+**Testability note:** `WindowStartTime` and `WindowResetDuration` currently call `time.Now()` internally. For reliable unit tests, refactor them to accept a `now time.Time` parameter (matching the existing `computeWindowStart` pattern in `usage_handler.go`). The public functions become thin wrappers that call `time.Now()` and delegate to the testable core.
 
 **Integration tests:**
 - Configure a plan with fixed rules, simulate requests exceeding quota, verify rate limiting triggers.
@@ -188,6 +241,7 @@ If the user hits the limit on Mar 12, `Retry-After` = seconds until Mar 17 00:00
 | `internal/types/policy.go` | Add `AnchorTime` field to `CreditRule` |
 | `internal/types/plan.go` | Change `ToPolicy` signature, inject `AnchorTime` for fixed rules |
 | `internal/proxy/auth_middleware.go` | Pass `&subscription.StartsAt` to `ToPolicy` |
-| `internal/ratelimit/composite.go` | Add `anchorTime` param to `WindowStartTime`/`WindowResetDuration`, add fixed branches, update `PreCheck` |
-| `internal/proxy/usage_handler.go` | Add fixed branches to `computeWindowStart`/`computeWindowEnd`, thread `AnchorTime` |
+| `internal/ratelimit/composite.go` | Add `anchorTime` param to `WindowStartTime`/`WindowResetDuration`, add fixed branches, update `PreCheck`, update cache key format |
+| `internal/proxy/usage_handler.go` | Add fixed branches to `computeWindowStart`/`computeWindowEnd`, thread `AnchorTime`, unify duration parser |
+| `internal/admin/handle_orders.go` | Inject `AnchorTime` for fixed rules, update reset time guard, update function call signatures |
 | New: `internal/ratelimit/composite_test.go` | Unit tests for fixed window calculations |
