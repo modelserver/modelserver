@@ -139,7 +139,7 @@ Add `anchorTime *time.Time` parameter. For `"fixed"`, use the same algorithm as 
 
 For `"fixed"`:
 ```go
-return windowStart.Add(parseDuration(window))
+return windowStart.Add(ParseDurationStr(window))
 ```
 
 This produces a concrete end time (unlike sliding, which returns `now`).
@@ -208,7 +208,7 @@ The `json:"anchor_time,omitempty"` tag with `*time.Time` pointer ensures it is a
 | `ratelimit_middleware.go` | Passes policy transparently; no window logic here |
 | Database schema | `credit_rules` is JSONB; `"fixed"` is just a new string value in the JSON |
 
-### 5. Example
+### 8. Example
 
 User subscribes on March 10, plan has rule `{window: "7d", window_type: "fixed", max_credits: 500000}`:
 
@@ -220,7 +220,7 @@ User subscribes on March 10, plan has rule `{window: "7d", window_type: "fixed",
 
 If the user hits the limit on Mar 12, `Retry-After` = seconds until Mar 17 00:00.
 
-### 8. Testing Strategy
+### 9. Testing Strategy
 
 **Unit tests (core):**
 - `WindowStartTime` with `windowType="fixed"`: normal case, anchor in future, exact boundary, multi-window spans.
@@ -244,4 +244,5 @@ If the user hits the limit on Mar 12, `Retry-After` = seconds until Mar 17 00:00
 | `internal/ratelimit/composite.go` | Add `anchorTime` param to `WindowStartTime`/`WindowResetDuration`, add fixed branches, update `PreCheck`, update cache key format |
 | `internal/proxy/usage_handler.go` | Add fixed branches to `computeWindowStart`/`computeWindowEnd`, thread `AnchorTime`, unify duration parser |
 | `internal/admin/handle_orders.go` | Inject `AnchorTime` for fixed rules, update reset time guard, update function call signatures |
+| `internal/admin/handle_plans.go` | Add validation: reject `"1M"` with `window_type: "fixed"` in `handleCreatePlan` and `handleUpdatePlan` |
 | New: `internal/ratelimit/composite_test.go` | Unit tests for fixed window calculations |
