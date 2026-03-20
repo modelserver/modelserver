@@ -467,7 +467,7 @@ export function PlansPage() {
                       <Select
                         value={rule.window_type}
                         onValueChange={(v) =>
-                          setCreditRule(idx, { window_type: v as "sliding" | "calendar" })
+                          setCreditRule(idx, { window_type: v as "sliding" | "calendar" | "fixed" })
                         }
                       >
                         <SelectTrigger>
@@ -476,6 +476,7 @@ export function PlansPage() {
                         <SelectContent>
                           <SelectItem value="sliding">Sliding</SelectItem>
                           <SelectItem value="calendar">Calendar</SelectItem>
+                          <SelectItem value="fixed">Fixed</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>

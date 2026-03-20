@@ -145,7 +145,7 @@ export interface Request {
 // --- Rate Limit Policy ---
 export interface CreditRule {
   window: string;
-  window_type: "sliding" | "calendar";
+  window_type: "sliding" | "calendar" | "fixed";
   max_credits: number;
   scope?: "project" | "key";
 }
