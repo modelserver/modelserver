@@ -98,11 +98,15 @@ export function UpstreamsPage() {
         ...prev,
         [upstreamId]: { status: r.success ? "success" : "error", result: r },
       }));
+      if (!r.success) {
+        toast.error(r.error ?? "test failed");
+      }
     } catch {
       setTestStates((prev) => ({
         ...prev,
         [upstreamId]: { status: "error", result: { success: false, error: "connection failed" } },
       }));
+      toast.error("connection failed");
     }
   }, [testUpstream]);
 
