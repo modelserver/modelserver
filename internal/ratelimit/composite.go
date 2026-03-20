@@ -36,10 +36,10 @@ func (c *CompositeRateLimiter) PreCheck(ctx context.Context, projectID, apiKeyID
 
 	// Check credit rules.
 	for _, rule := range policy.CreditRules {
-		windowStart := WindowStartTime(rule.Window, rule.WindowType)
-		cacheKey := fmt.Sprintf("%s|%s|%s", projectID, apiKeyID, rule.Window)
+		windowStart := WindowStartTime(rule.Window, rule.WindowType, rule.AnchorTime)
+		cacheKey := fmt.Sprintf("%s|%s|%s|%s", projectID, apiKeyID, rule.Window, rule.WindowType)
 		if rule.EffectiveScope() == types.CreditScopeProject {
-			cacheKey = fmt.Sprintf("p:%s|%s", projectID, rule.Window)
+			cacheKey = fmt.Sprintf("p:%s|%s|%s", projectID, rule.Window, rule.WindowType)
 		}
 
 		var used float64
@@ -60,7 +60,7 @@ func (c *CompositeRateLimiter) PreCheck(ctx context.Context, projectID, apiKeyID
 		}
 
 		if used >= float64(rule.MaxCredits) {
-			retryAfter := WindowResetDuration(rule.Window, rule.WindowType)
+			retryAfter := WindowResetDuration(rule.Window, rule.WindowType, rule.AnchorTime)
 			return false, retryAfter, nil
 		}
 	}
@@ -83,11 +83,9 @@ func (c *CompositeRateLimiter) PostRecord(ctx context.Context, projectID, apiKey
 	c.cache.invalidatePrefix("p:" + projectID)
 }
 
-// WindowStartTime returns the start of the current window.
-func WindowStartTime(window, windowType string) time.Time {
-	now := time.Now().UTC()
-
-	if windowType == "calendar" {
+// WindowStartTimeAt is the testable core that accepts an explicit now.
+func WindowStartTimeAt(now time.Time, window, windowType string, anchorTime *time.Time) time.Time {
+	if windowType == types.WindowTypeCalendar {
 		switch window {
 		case "1w":
 			weekday := now.Weekday()
@@ -101,15 +99,34 @@ func WindowStartTime(window, windowType string) time.Time {
 		}
 	}
 
-	d := parseDurationStr(window)
+	if windowType == types.WindowTypeFixed {
+		if anchorTime == nil {
+			d := ParseDurationStr(window)
+			return now.Add(-d)
+		}
+		anchor := anchorTime.UTC()
+		d := ParseDurationStr(window)
+		elapsed := now.Sub(anchor)
+		if elapsed < 0 {
+			return anchor
+		}
+		windowIndex := int64(elapsed / d)
+		return anchor.Add(time.Duration(windowIndex) * d)
+	}
+
+	// Default: sliding window.
+	d := ParseDurationStr(window)
 	return now.Add(-d)
 }
 
-// WindowResetDuration returns how long until the window resets.
-func WindowResetDuration(window, windowType string) time.Duration {
-	now := time.Now().UTC()
+// WindowStartTime returns the start of the current window.
+func WindowStartTime(window, windowType string, anchorTime *time.Time) time.Time {
+	return WindowStartTimeAt(time.Now().UTC(), window, windowType, anchorTime)
+}
 
-	if windowType == "calendar" {
+// WindowResetDurationAt is the testable core that accepts an explicit now.
+func WindowResetDurationAt(now time.Time, window, windowType string, anchorTime *time.Time) time.Duration {
+	if windowType == types.WindowTypeCalendar {
 		switch window {
 		case "1w":
 			weekday := now.Weekday()
@@ -125,10 +142,24 @@ func WindowResetDuration(window, windowType string) time.Duration {
 		}
 	}
 
-	return parseDurationStr(window)
+	if windowType == types.WindowTypeFixed {
+		windowStart := WindowStartTimeAt(now, window, windowType, anchorTime)
+		d := ParseDurationStr(window)
+		windowEnd := windowStart.Add(d)
+		return windowEnd.Sub(now)
+	}
+
+	// Default: sliding window.
+	return ParseDurationStr(window)
 }
 
-func parseDurationStr(s string) time.Duration {
+// WindowResetDuration returns how long until the window resets.
+func WindowResetDuration(window, windowType string, anchorTime *time.Time) time.Duration {
+	return WindowResetDurationAt(time.Now().UTC(), window, windowType, anchorTime)
+}
+
+// ParseDurationStr parses a duration string with support for day (d) and week (w) suffixes.
+func ParseDurationStr(s string) time.Duration {
 	if d, err := time.ParseDuration(s); err == nil {
 		return d
 	}
