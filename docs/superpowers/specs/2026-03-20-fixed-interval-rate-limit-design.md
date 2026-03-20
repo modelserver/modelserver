@@ -20,7 +20,7 @@ Both are independent of when a user's subscription started. The new `"fixed"` ty
 3. Credits do NOT carry over between windows. Each window resets to `MaxCredits`.
 4. `"fixed"` rules only appear in Plans linked via Subscriptions. No fallback logic needed for missing subscriptions.
 5. No database schema migration required — `credit_rules` is JSONB and the new window type is just a new string value.
-6. `"1M"` (month) is NOT a valid window string for fixed rules — only duration-based intervals (`"5h"`, `"7d"`, etc.) are supported, because months have variable lengths (28-31 days). Validation should reject `"1M"` with `window_type: "fixed"` at plan creation time.
+6. Month-based windows (any window string ending in `'M'`, e.g. `"1M"`, `"2M"`, `"3M"`) are NOT valid for fixed rules — only duration-based intervals (`"5h"`, `"7d"`, etc.) are supported, because months have variable lengths (28-31 days). `parseDurationStr` cannot convert month strings to a fixed `time.Duration`, so they silently degrade to 1 hour. Validation must reject any `window` ending in `'M'` when `window_type` is `"fixed"` at plan creation/update time.
 
 ## Design
 
@@ -78,25 +78,31 @@ policy = plan.ToPolicy(project.ID, &subscription.StartsAt)
 
 ### 2. Window Calculation Logic
 
-#### WindowStartTime — add fixed branch
+#### Refactor into internal + public functions
 
 **File:** `internal/ratelimit/composite.go`
 
-Current signature:
+Extract a testable internal function that accepts `now` and is shared by both `WindowStartTime` and `WindowResetDuration`:
+
 ```go
-func WindowStartTime(window, windowType string) time.Time
+// WindowStartTimeAt is the testable core — accepts explicit now.
+func WindowStartTimeAt(now time.Time, window, windowType string, anchorTime *time.Time) time.Time
+
+// WindowStartTime is the public convenience wrapper.
+func WindowStartTime(window, windowType string, anchorTime *time.Time) time.Time {
+    return WindowStartTimeAt(time.Now().UTC(), window, windowType, anchorTime)
+}
 ```
 
-New signature:
-```go
-func WindowStartTime(window, windowType string, anchorTime *time.Time) time.Time
-```
+Same pattern for `WindowResetDuration` → `WindowResetDurationAt`.
 
-Fixed window calculation:
+Export `parseDurationStr` as `ParseDurationStr` so the usage handler can reuse it.
+
+#### Fixed window calculation (in `WindowStartTimeAt`)
+
 ```
-now = time.Now().UTC()
 anchor = anchorTime.UTC()
-interval = parseDurationStr(window)
+interval = ParseDurationStr(window)
 elapsed = now - anchor
 windowIndex = floor(elapsed / interval)
 windowStart = anchor + windowIndex × interval
@@ -110,8 +116,10 @@ Edge cases:
 
 Same signature change (add `anchorTime *time.Time`).
 
-Fixed calculation:
+The fixed branch must internally compute `windowStart` first, then derive the reset duration. It reuses `WindowStartTimeAt` (defined above) to avoid duplicating the window start algorithm:
 ```
+interval = ParseDurationStr(window)
+windowStart = WindowStartTimeAt(now, window, "fixed", anchorTime)
 windowEnd = windowStart + interval
 retryAfter = windowEnd - now
 ```
@@ -131,44 +139,49 @@ retryAfter := WindowResetDuration(rule.Window, rule.WindowType, rule.AnchorTime)
 
 **File:** `internal/proxy/usage_handler.go`
 
-#### computeWindowStart — add fixed branch
+#### Unify window calculation with ratelimit package
 
-Add `anchorTime *time.Time` parameter. For `"fixed"`, use the same algorithm as `WindowStartTime`.
+Currently `usage_handler.go` has its own `computeWindowStart`, `computeWindowEnd`, and `parseDuration` functions that duplicate logic from the `ratelimit` package (`WindowStartTime`, `WindowResetDuration`, `parseDurationStr`). Adding a fixed branch to both would create a third independent copy of the fixed window algorithm.
 
-#### computeWindowEnd — add fixed branch
+Instead, after refactoring `WindowStartTime`/`WindowResetDuration` to accept a `now time.Time` parameter (see Section 9 testability note), **delegate** from the usage handler:
 
-For `"fixed"`:
 ```go
-return windowStart.Add(ParseDurationStr(window))
+func computeWindowStart(now time.Time, window, windowType string, anchorTime *time.Time) time.Time {
+    return ratelimit.WindowStartTimeAt(now, window, windowType, anchorTime)
+}
+
+func computeWindowEnd(windowStart time.Time, window, windowType string) time.Time {
+    if windowType == "calendar" {
+        // existing calendar logic (1w → +7 days, 1M → +1 month)
+        ...
+    }
+    if windowType == "fixed" {
+        return windowStart.Add(ratelimit.ParseDurationStr(window))
+    }
+    return time.Now().UTC() // sliding: end is now
+}
 ```
 
-This produces a concrete end time (unlike sliding, which returns `now`).
+This eliminates the duplicated fixed window algorithm and the divergent `parseDuration` function. Export `parseDurationStr` as `ParseDurationStr` from the ratelimit package.
 
 #### computeCreditProgress — thread AnchorTime
 
 Update the call chain: `HandleUsage` → `computeCreditProgress` → `computeWindowStart`, passing `rule.AnchorTime`.
 
-#### Unify duration parsers
-
-The `parseDuration` function in `usage_handler.go` only handles hardcoded cases (`"1d"`, `"7d"`, `"30d"`), while `parseDurationStr` in `composite.go` handles generic `d` and `w` suffixes. Replace `parseDuration` in `usage_handler.go` with a call to the shared `ratelimit.ParseDurationStr` (exported), ensuring consistent behavior across all window calculations. Alternatively, extract both into a shared utility in `internal/ratelimit/duration.go`.
-
 ### 4. Admin Handler Adaptation
 
 **File:** `internal/admin/handle_orders.go`
 
-The `handleSubscriptionUsage` function (line 246) directly calls `ratelimit.WindowStartTime` and `ratelimit.WindowResetDuration` on `plan.CreditRules` without going through `ToPolicy()`. This must be updated:
+The `handleSubscriptionUsage` function (line 246) directly calls `ratelimit.WindowStartTime` and `ratelimit.WindowResetDuration` on `plan.CreditRules` without going through `ToPolicy()`. This duplicates the AnchorTime injection logic. Refactor to reuse `ToPolicy()`:
 
-1. **Inject AnchorTime**: Since `activeSub` is already loaded (line 230), populate `AnchorTime` on fixed rules before computing windows:
+1. **Use `ToPolicy()` to get rules with AnchorTime injected**: Since `activeSub` is already loaded (line 230), replace direct iteration over `plan.CreditRules` with:
    ```go
-   rules := make([]types.CreditRule, len(plan.CreditRules))
-   copy(rules, plan.CreditRules)
-   for i := range rules {
-       if rules[i].WindowType == "fixed" {
-           rules[i].AnchorTime = &activeSub.StartsAt
-       }
+   policy := plan.ToPolicy(projectID, &activeSub.StartsAt)
+   for _, rule := range policy.CreditRules {
+       // ... use rule (AnchorTime already populated for fixed rules)
    }
    ```
-   Then iterate over `rules` instead of `plan.CreditRules`.
+   This keeps the AnchorTime injection logic in a single place (`ToPolicy`).
 
 2. **Update reset time guard** (line 264-265): The current condition `if rule.WindowType == "calendar"` must be expanded to also include `"fixed"`, since fixed windows also have a concrete, meaningful reset time:
    ```go
@@ -227,7 +240,7 @@ If the user hits the limit on Mar 12, `Retry-After` = seconds until Mar 17 00:00
 - `WindowResetDuration` with `windowType="fixed"`: correct retry-after calculation.
 - `ToPolicy` correctly injects `AnchorTime` for fixed rules and leaves others untouched.
 
-**Testability note:** `WindowStartTime` and `WindowResetDuration` currently call `time.Now()` internally. For reliable unit tests, refactor them to accept a `now time.Time` parameter (matching the existing `computeWindowStart` pattern in `usage_handler.go`). The public functions become thin wrappers that call `time.Now()` and delegate to the testable core.
+**Testability note:** As described in Section 2, `WindowStartTime` and `WindowResetDuration` are refactored into `WindowStartTimeAt(now, ...)` / `WindowResetDurationAt(now, ...)` testable core functions. Unit tests call the `*At` variants directly with controlled time values.
 
 **Integration tests:**
 - Configure a plan with fixed rules, simulate requests exceeding quota, verify rate limiting triggers.
@@ -241,8 +254,8 @@ If the user hits the limit on Mar 12, `Retry-After` = seconds until Mar 17 00:00
 | `internal/types/policy.go` | Add `AnchorTime` field to `CreditRule` |
 | `internal/types/plan.go` | Change `ToPolicy` signature, inject `AnchorTime` for fixed rules |
 | `internal/proxy/auth_middleware.go` | Pass `&subscription.StartsAt` to `ToPolicy` |
-| `internal/ratelimit/composite.go` | Add `anchorTime` param to `WindowStartTime`/`WindowResetDuration`, add fixed branches, update `PreCheck`, update cache key format |
-| `internal/proxy/usage_handler.go` | Add fixed branches to `computeWindowStart`/`computeWindowEnd`, thread `AnchorTime`, unify duration parser |
-| `internal/admin/handle_orders.go` | Inject `AnchorTime` for fixed rules, update reset time guard, update function call signatures |
-| `internal/admin/handle_plans.go` | Add validation: reject `"1M"` with `window_type: "fixed"` in `handleCreatePlan` and `handleUpdatePlan` |
+| `internal/ratelimit/composite.go` | Refactor into `*At` internal functions, add fixed branches, export `ParseDurationStr`, update `PreCheck`, update cache key format |
+| `internal/proxy/usage_handler.go` | Delegate `computeWindowStart` to `ratelimit.WindowStartTimeAt`, add fixed branch to `computeWindowEnd`, remove local `parseDuration`, thread `AnchorTime` |
+| `internal/admin/handle_orders.go` | Use `plan.ToPolicy()` instead of raw `plan.CreditRules`, update reset time guard to include `"fixed"`, update function call signatures |
+| `internal/admin/handle_plans.go` | Add validation: reject any window ending in `'M'` with `window_type: "fixed"` in `handleCreatePlan` and `handleUpdatePlan` |
 | New: `internal/ratelimit/composite_test.go` | Unit tests for fixed window calculations |
