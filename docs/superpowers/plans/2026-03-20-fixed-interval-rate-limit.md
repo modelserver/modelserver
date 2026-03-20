@@ -525,7 +525,7 @@ Replace `computeWindowEnd`:
 
 ```go
 func computeWindowEnd(windowStart time.Time, window, windowType string) time.Time {
-	if windowType == "calendar" {
+	if windowType == types.WindowTypeCalendar {
 		switch window {
 		case "1w":
 			return windowStart.AddDate(0, 0, 7)
@@ -533,7 +533,7 @@ func computeWindowEnd(windowStart time.Time, window, windowType string) time.Tim
 			return windowStart.AddDate(0, 1, 0)
 		}
 	}
-	if windowType == "fixed" {
+	if windowType == types.WindowTypeFixed {
 		return windowStart.Add(ratelimit.ParseDurationStr(window))
 	}
 	// Sliding window: end is now.
