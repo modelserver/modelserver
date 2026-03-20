@@ -3,6 +3,7 @@ import { usePlans, useCreatePlan, useUpdatePlan, useDeletePlan } from "@/api/pla
 import type { Plan, CreditRule, CreditRate, ClassicRule } from "@/api/types";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
+import { Pagination } from "@/components/shared/Pagination";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -146,8 +147,11 @@ function formatPrice(cents: number) {
   return `\u00A5${(cents / 100).toFixed(2)}`;
 }
 
+const PER_PAGE = 20;
+
 export function PlansPage() {
-  const { data, isLoading } = usePlans();
+  const [page, setPage] = useState(1);
+  const { data, isLoading } = usePlans(page, PER_PAGE);
   const createPlan = useCreatePlan();
   const updatePlan = useUpdatePlan();
   const deletePlan = useDeletePlan();
@@ -158,6 +162,7 @@ export function PlansPage() {
   const [deleteTarget, setDeleteTarget] = useState<Plan | null>(null);
 
   const plans = data?.data ?? [];
+  const meta = data?.meta;
 
   function openCreate() {
     setEditingId(null);
@@ -342,6 +347,16 @@ export function PlansPage() {
           )}
         </CardContent>
       </Card>
+
+      {meta && meta.total > 0 && (
+        <Pagination
+          page={page}
+          totalPages={meta.total_pages}
+          total={meta.total}
+          perPage={meta.per_page}
+          onPageChange={setPage}
+        />
+      )}
 
       {/* Create / Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

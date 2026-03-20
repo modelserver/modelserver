@@ -71,6 +71,30 @@ func (s *Store) GetUsageByUpstream(since, until time.Time) ([]UpstreamUsageSumma
 	return summaries, nil
 }
 
+// GetCreditsByUpstreamSince returns total credits consumed per upstream since a given time.
+func (s *Store) GetCreditsByUpstreamSince(since time.Time) (map[string]float64, error) {
+	rows, err := s.pool.Query(context.Background(), `
+		SELECT upstream_id, COALESCE(SUM(credits_consumed), 0)
+		FROM requests
+		WHERE upstream_id IS NOT NULL AND created_at >= $1
+		GROUP BY upstream_id`, since)
+	if err != nil {
+		return nil, fmt.Errorf("credits by upstream: %w", err)
+	}
+	defer rows.Close()
+
+	m := make(map[string]float64)
+	for rows.Next() {
+		var id string
+		var credits float64
+		if err := rows.Scan(&id, &credits); err != nil {
+			return nil, err
+		}
+		m[id] = credits
+	}
+	return m, rows.Err()
+}
+
 // GetUsageByModel returns usage aggregated by model for a project.
 func (s *Store) GetUsageByModel(projectID string, since, until time.Time) ([]UsageSummary, error) {
 	rows, err := s.pool.Query(context.Background(), `

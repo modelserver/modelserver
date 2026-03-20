@@ -100,6 +100,41 @@ func (s *Store) ListUpstreams() ([]types.Upstream, error) {
 	return upstreams, nil
 }
 
+// ListUpstreamsPaginated returns upstreams with pagination.
+func (s *Store) ListUpstreamsPaginated(p types.PaginationParams) ([]types.Upstream, int, error) {
+	ctx := context.Background()
+	var total int
+	if err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM upstreams").Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count upstreams: %w", err)
+	}
+
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
+		SELECT id, provider, name, base_url, api_key_encrypted, supported_models, model_map,
+			weight, status, max_concurrent, test_model, health_check, dial_timeout, read_timeout,
+			created_at, updated_at
+		FROM upstreams ORDER BY %s %s LIMIT $1 OFFSET $2`,
+		sanitizeSort(p.Sort, "name"), sanitizeOrder(p.Order)),
+		p.Limit(), p.Offset(),
+	)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list upstreams: %w", err)
+	}
+	defer rows.Close()
+
+	var upstreams []types.Upstream
+	for rows.Next() {
+		u, err := scanUpstream(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("scan upstream: %w", err)
+		}
+		upstreams = append(upstreams, *u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate upstreams: %w", err)
+	}
+	return upstreams, total, nil
+}
+
 // ListActiveUpstreamsForModel returns active upstreams that support a given model,
 // ordered by weight descending.
 func (s *Store) ListActiveUpstreamsForModel(model string) ([]types.Upstream, error) {

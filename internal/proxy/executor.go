@@ -95,7 +95,7 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 	// 1. Match the request to an upstream group.
 	group, err := e.router.Match(reqCtx.ProjectID, reqCtx.Model)
 	if err != nil {
-		writeProxyError(w, http.StatusServiceUnavailable, "no upstreams available for model "+reqCtx.Model)
+		writeProxyError(w, http.StatusNotFound, "no route configured for model "+reqCtx.Model)
 		return
 	}
 

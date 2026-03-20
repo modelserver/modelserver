@@ -10,12 +10,13 @@ import (
 
 func handleListUpstreamGroups(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		groups, err := st.ListUpstreamGroupsWithMembers()
+		p := parsePagination(r)
+		groups, total, err := st.ListUpstreamGroupsWithMembersPaginated(p)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to list upstream groups")
 			return
 		}
-		writeData(w, http.StatusOK, groups)
+		writeList(w, groups, total, p.Page, p.Limit())
 	}
 }
 

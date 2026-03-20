@@ -148,6 +148,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 				r.Use(RequireSuperadmin)
 				r.Get("/", handleListUpstreams(st, encKey))
 				r.Post("/", handleCreateUpstream(st, encKey))
+				r.Get("/usage", handleUpstreamUsage(st))
 				r.Post("/claudecode/oauth/start", handleClaudeCodeOAuthStart())
 				r.Post("/claudecode/oauth/exchange", handleClaudeCodeOAuthExchange())
 				r.Route("/{upstreamID}", func(r chi.Router) {

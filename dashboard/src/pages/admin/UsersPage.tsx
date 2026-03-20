@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { useUsers, useUpdateUser } from "@/api/users";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
+import { Pagination } from "@/components/shared/Pagination";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -26,10 +28,14 @@ function initials(name?: string): string {
   );
 }
 
+const PER_PAGE = 20;
+
 export function UsersPage() {
-  const { data, isLoading } = useUsers();
+  const [page, setPage] = useState(1);
+  const { data, isLoading } = useUsers(page, PER_PAGE);
   const updateUser = useUpdateUser();
   const users = data?.data ?? [];
+  const meta = data?.meta;
 
   const columns: Column<User>[] = [
     {
@@ -145,6 +151,16 @@ export function UsersPage() {
           )}
         </CardContent>
       </Card>
+
+      {meta && meta.total > 0 && (
+        <Pagination
+          page={page}
+          totalPages={meta.total_pages}
+          total={meta.total}
+          perPage={meta.per_page}
+          onPageChange={setPage}
+        />
+      )}
     </div>
   );
 }

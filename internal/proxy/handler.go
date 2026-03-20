@@ -159,7 +159,7 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 	// Use router to find an upstream for count_tokens (Anthropic/ClaudeCode only).
 	group, err := h.router.Match(project.ID, reqShape.Model)
 	if err != nil {
-		writeProxyError(w, http.StatusServiceUnavailable, "no upstreams available for model "+reqShape.Model)
+		writeProxyError(w, http.StatusNotFound, "no route configured for model "+reqShape.Model)
 		return
 	}
 	candidates := h.router.SelectWithRetry(r.Context(), group, "")

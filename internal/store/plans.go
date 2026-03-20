@@ -94,6 +94,34 @@ func (s *Store) ListPlans(activeOnly bool) ([]types.Plan, error) {
 	return scanPlans(rows)
 }
 
+// ListPlansPaginated returns all plans with pagination.
+func (s *Store) ListPlansPaginated(p types.PaginationParams) ([]types.Plan, int, error) {
+	ctx := context.Background()
+	var total int
+	if err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM plans").Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count plans: %w", err)
+	}
+
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
+		SELECT id, name, slug, display_name, description, tier_level, group_tag,
+			price_per_period, period_months, credit_rules, model_credit_rates, classic_rules,
+			is_active, created_at, updated_at
+		FROM plans ORDER BY %s %s LIMIT $1 OFFSET $2`,
+		sanitizeSort(p.Sort, "tier_level"), sanitizeOrder(p.Order)),
+		p.Limit(), p.Offset(),
+	)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list plans: %w", err)
+	}
+	defer rows.Close()
+
+	plans, err := scanPlans(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return plans, total, nil
+}
+
 // ListPlansForProject returns active plans matching the project's billing_tags.
 func (s *Store) ListPlansForProject(projectID string) ([]types.Plan, error) {
 	rows, err := s.pool.Query(context.Background(), `

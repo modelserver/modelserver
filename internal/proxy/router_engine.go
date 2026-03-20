@@ -30,16 +30,6 @@ func matchModel(pattern, model string) bool {
 	return matched
 }
 
-// modelSupported checks if a model is in the supported list.
-func modelSupported(supported []string, model string) bool {
-	for _, s := range supported {
-		if s == model {
-			return true
-		}
-	}
-	return false
-}
-
 // Router is the central routing engine (nginx: the config evaluator).
 // It is the central routing engine for the upstream-based routing model.
 type Router struct {
@@ -227,8 +217,8 @@ func (r *Router) buildMaps(
 }
 
 // Match finds the upstream group for a request (project + model).
-// It checks project-specific routes first, then global routes, then auto-discovers
-// upstreams that support the model.
+// It checks project-specific routes first, then global routes.
+// No auto-discovery fallback — all routing must go through explicit routes.
 func (r *Router) Match(projectID, model string) (*resolvedGroup, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -257,22 +247,7 @@ func (r *Router) Match(projectID, model string) (*resolvedGroup, error) {
 		}
 	}
 
-	// 3. Auto-discover: find all active upstreams supporting the model,
-	//    create a virtual group with weighted_random LB.
-	var members []groupMember
-	for _, u := range r.upstreams {
-		if u.Status == types.UpstreamStatusActive && modelSupported(u.SupportedModels, model) {
-			members = append(members, groupMember{upstream: u, weight: u.Weight, isBackup: false})
-		}
-	}
-	if len(members) == 0 {
-		return nil, fmt.Errorf("no upstreams available for model %s", model)
-	}
-
-	return &resolvedGroup{
-		group:   types.UpstreamGroup{LBPolicy: types.LBPolicyWeightedRandom},
-		members: members,
-	}, nil
+	return nil, fmt.Errorf("no route configured for model %s", model)
 }
 
 // SelectWithRetry returns an ordered list of upstreams to try for the given group.
@@ -410,7 +385,6 @@ func (r *Router) SelectWithRetry(ctx context.Context, group *resolvedGroup, sess
 	}
 
 	// 7. Use group's balancer to rank (SelectN).
-	//    Fall back to a default weighted_random balancer for auto-discovered groups.
 	balancer, ok := r.balancers[group.group.ID]
 	if !ok {
 		balancer = lb.NewBalancer(group.group.LBPolicy, r.connTracker)
@@ -505,19 +479,32 @@ func (r *Router) HealthChecker() *lb.HealthChecker {
 	return r.healthChecker
 }
 
-// ActiveModels returns all supported models from active upstreams.
+// ActiveModels returns models that are actually routable — i.e. supported by
+// an active upstream that belongs to a group referenced by an active route,
+// AND the model name matches that route's pattern.
 func (r *Router) ActiveModels() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
+	// Collect candidate models from groups referenced by active routes.
 	seen := make(map[string]bool)
 	var models []string
-	for _, u := range r.upstreams {
-		if u.Status == types.UpstreamStatusActive {
-			for _, m := range u.SupportedModels {
-				if !seen[m] {
-					seen[m] = true
-					models = append(models, m)
+	for _, route := range r.routes {
+		if route.Status != "active" {
+			continue
+		}
+		g, ok := r.groups[route.UpstreamGroupID]
+		if !ok {
+			continue
+		}
+		for _, m := range g.members {
+			if m.upstream.Status != types.UpstreamStatusActive {
+				continue
+			}
+			for _, model := range m.upstream.SupportedModels {
+				if !seen[model] && matchModel(route.ModelPattern, model) {
+					seen[model] = true
+					models = append(models, model)
 				}
 			}
 		}

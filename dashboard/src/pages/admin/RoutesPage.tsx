@@ -9,6 +9,7 @@ import {
 import { useAllProjects } from "@/api/projects";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
+import { Pagination } from "@/components/shared/Pagination";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -39,10 +40,13 @@ import type { RoutingRoute, UpstreamGroupWithMembers, Project } from "@/api/type
 import { Plus, MoreHorizontal, Pencil, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
+const PER_PAGE = 20;
+
 export function RoutesPage() {
-  const { data: routesData, isLoading } = useRoutingRoutes();
-  const { data: groupsData } = useUpstreamGroups();
-  const { data: projectsData } = useAllProjects();
+  const [page, setPage] = useState(1);
+  const { data: routesData, isLoading } = useRoutingRoutes(page, PER_PAGE);
+  const { data: groupsData } = useUpstreamGroups(1, 100);
+  const { data: projectsData } = useAllProjects(1, 100);
   const createRoute = useCreateRoutingRoute();
   const updateRoute = useUpdateRoutingRoute();
   const deleteRoute = useDeleteRoutingRoute();
@@ -59,6 +63,7 @@ export function RoutesPage() {
   });
 
   const routes = routesData?.data ?? [];
+  const meta = routesData?.meta;
   const groups = groupsData?.data ?? [];
   const projects = projectsData?.data ?? [];
 
@@ -229,6 +234,16 @@ export function RoutesPage() {
           )}
         </CardContent>
       </Card>
+
+      {meta && meta.total > 0 && (
+        <Pagination
+          page={page}
+          totalPages={meta.total_pages}
+          total={meta.total}
+          perPage={meta.per_page}
+          onPageChange={setPage}
+        />
+      )}
 
       {/* Create Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

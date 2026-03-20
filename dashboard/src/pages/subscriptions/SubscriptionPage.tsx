@@ -162,8 +162,9 @@ export function SubscriptionPage() {
         toast.success("Order created successfully");
         closeDialog();
       }
-    } catch {
-      toast.error("Failed to create order");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to create order";
+      toast.error(msg);
     }
   }
 
