@@ -1,12 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
-import type { DataResponse, Upstream, UpstreamGroupWithMembers, RoutingRoute, RoutingHealthResponse, UpstreamTestResult } from "./types";
+import type { ListResponse, DataResponse, Upstream, UpstreamGroupWithMembers, RoutingRoute, RoutingHealthResponse, UpstreamTestResult, UpstreamUsageSummary } from "./types";
 
 // --- Upstreams ---
-export function useUpstreams() {
+export function useUpstreams(page = 1, perPage = 20) {
   return useQuery({
-    queryKey: ["admin", "upstreams"],
-    queryFn: () => api.get<DataResponse<Upstream[]>>("/api/v1/upstreams"),
+    queryKey: ["admin", "upstreams", page, perPage],
+    queryFn: () => api.get<ListResponse<Upstream>>(`/api/v1/upstreams?page=${page}&per_page=${perPage}`),
   });
 }
 
@@ -40,6 +40,14 @@ export function useTestUpstream() {
   return useMutation({
     mutationFn: (upstreamId: string) =>
       api.post<DataResponse<UpstreamTestResult>>(`/api/v1/upstreams/${upstreamId}/test`),
+  });
+}
+
+export function useUpstreamUsage() {
+  return useQuery({
+    queryKey: ["admin", "upstream-usage"],
+    queryFn: () =>
+      api.get<DataResponse<(UpstreamUsageSummary & { credits_5h: number; credits_7d: number })[]>>("/api/v1/upstreams/usage"),
   });
 }
 
@@ -99,10 +107,10 @@ export function useUpstreamOAuthRefresh() {
 }
 
 // --- Upstream Groups ---
-export function useUpstreamGroups() {
+export function useUpstreamGroups(page = 1, perPage = 20) {
   return useQuery({
-    queryKey: ["admin", "upstream-groups"],
-    queryFn: () => api.get<DataResponse<UpstreamGroupWithMembers[]>>("/api/v1/upstream-groups"),
+    queryKey: ["admin", "upstream-groups", page, perPage],
+    queryFn: () => api.get<ListResponse<UpstreamGroupWithMembers>>(`/api/v1/upstream-groups?page=${page}&per_page=${perPage}`),
   });
 }
 
@@ -142,10 +150,10 @@ export function useRemoveGroupMember() {
 }
 
 // --- Routing Routes ---
-export function useRoutingRoutes() {
+export function useRoutingRoutes(page = 1, perPage = 20) {
   return useQuery({
-    queryKey: ["admin", "routing-routes"],
-    queryFn: () => api.get<DataResponse<RoutingRoute[]>>("/api/v1/routing/routes"),
+    queryKey: ["admin", "routing-routes", page, perPage],
+    queryFn: () => api.get<ListResponse<RoutingRoute>>(`/api/v1/routing/routes?page=${page}&per_page=${perPage}`),
   });
 }
 

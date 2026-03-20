@@ -178,6 +178,7 @@ func nullString(s string) interface{} {
 func sanitizeSort(input, fallback string) string {
 	allowed := map[string]bool{
 		"created_at": true, "updated_at": true, "nickname": true, "email": true, "status": true,
+		"name": true, "match_priority": true, "tier_level": true,
 	}
 	if allowed[input] {
 		return input

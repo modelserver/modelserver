@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useUpstreamGroups, useCreateUpstreamGroup, useDeleteUpstreamGroup, useAddGroupMember, useRemoveGroupMember, useUpstreams } from "@/api/upstreams";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
+import { Pagination } from "@/components/shared/Pagination";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,13 +40,16 @@ const lbPolicyLabels: Record<string, string> = {
   least_conn: "Least Connections",
 };
 
+const PER_PAGE = 20;
+
 export function UpstreamGroupsPage() {
-  const { data, isLoading } = useUpstreamGroups();
+  const [page, setPage] = useState(1);
+  const { data, isLoading } = useUpstreamGroups(page, PER_PAGE);
   const createGroup = useCreateUpstreamGroup();
   const deleteGroup = useDeleteUpstreamGroup();
   const addMember = useAddGroupMember();
   const removeMember = useRemoveGroupMember();
-  const { data: upstreamsData } = useUpstreams();
+  const { data: upstreamsData } = useUpstreams(1, 100);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<UpstreamGroupWithMembers | null>(null);
@@ -58,6 +62,7 @@ export function UpstreamGroupsPage() {
   });
 
   const groups = data?.data ?? [];
+  const meta = data?.meta;
   const allUpstreams = upstreamsData?.data ?? [];
 
   // Keep managingGroup in sync with fresh data after mutations
@@ -235,6 +240,16 @@ export function UpstreamGroupsPage() {
           )}
         </CardContent>
       </Card>
+
+      {meta && meta.total > 0 && (
+        <Pagination
+          page={page}
+          totalPages={meta.total_pages}
+          total={meta.total}
+          perPage={meta.per_page}
+          onPageChange={setPage}
+        />
+      )}
 
       {/* Create Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

@@ -12,12 +12,16 @@ import (
 
 func handleListPlans(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		plans, err := st.ListPlans(false)
+		p := parsePagination(r)
+		plans, total, err := st.ListPlansPaginated(p)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to list plans")
 			return
 		}
-		writeData(w, http.StatusOK, plans)
+		if plans == nil {
+			plans = []types.Plan{}
+		}
+		writeList(w, plans, total, p.Page, p.Limit())
 	}
 }
 

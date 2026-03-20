@@ -1,10 +1,11 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import {
   useUpstreams,
   useCreateUpstream,
   useUpdateUpstream,
   useDeleteUpstream,
   useTestUpstream,
+  useUpstreamUsage,
   useClaudeCodeOAuthStart,
   useClaudeCodeOAuthExchange,
   useUpstreamOAuthRefresh,
@@ -12,6 +13,7 @@ import {
 } from "@/api/upstreams";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
+import { Pagination } from "@/components/shared/Pagination";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -77,8 +79,11 @@ function TokenStatusBadge({ upstreamId }: { upstreamId: string }) {
   );
 }
 
+const PER_PAGE = 20;
+
 export function UpstreamsPage() {
-  const { data, isLoading } = useUpstreams();
+  const [page, setPage] = useState(1);
+  const { data, isLoading } = useUpstreams(page, PER_PAGE);
   const createUpstream = useCreateUpstream();
   const updateUpstream = useUpdateUpstream();
   const deleteUpstream = useDeleteUpstream();
@@ -86,6 +91,19 @@ export function UpstreamsPage() {
   const oauthStart = useClaudeCodeOAuthStart();
   const oauthExchange = useClaudeCodeOAuthExchange();
   const oauthRefresh = useUpstreamOAuthRefresh();
+  const { data: usageData } = useUpstreamUsage();
+
+  const usageMap = useMemo(() => {
+    const m = new Map<string, { request_count: number; input_tokens: number; output_tokens: number; credits_5h: number; credits_7d: number }>();
+    for (const u of usageData?.data ?? []) {
+      m.set(u.upstream_id, u);
+    }
+    return m;
+  }, [usageData]);
+
+  // max_20x plan limits
+  const MAX20X_5H = 11_000_000;
+  const MAX20X_7D = 83_333_300;
 
   const [testStates, setTestStates] = useState<Record<string, { status: "loading" | "success" | "error"; result?: UpstreamTestResult }>>({});
 
@@ -136,6 +154,7 @@ export function UpstreamsPage() {
   const [callbackUrl, setCallbackUrl] = useState("");
 
   const upstreams = data?.data ?? [];
+  const meta = data?.meta;
 
   function resetOauthState() {
     setOauthStep("idle");
@@ -321,6 +340,46 @@ export function UpstreamsPage() {
       className: "text-right",
     },
     {
+      header: "Requests",
+      accessor: (u) => {
+        const usage = usageMap.get(u.id);
+        return <span className="text-xs tabular-nums">{usage?.request_count?.toLocaleString() ?? "0"}</span>;
+      },
+      className: "text-right",
+    },
+    {
+      header: "Input Tokens",
+      accessor: (u) => {
+        const usage = usageMap.get(u.id);
+        return <span className="text-xs tabular-nums">{usage?.input_tokens?.toLocaleString() ?? "0"}</span>;
+      },
+      className: "text-right",
+    },
+    {
+      header: "Output Tokens",
+      accessor: (u) => {
+        const usage = usageMap.get(u.id);
+        return <span className="text-xs tabular-nums">{usage?.output_tokens?.toLocaleString() ?? "0"}</span>;
+      },
+      className: "text-right",
+    },
+    {
+      header: "Credits (5h / 7d)",
+      accessor: (u) => {
+        const usage = usageMap.get(u.id);
+        const pct5h = usage ? (usage.credits_5h / MAX20X_5H * 100) : 0;
+        const pct7d = usage ? (usage.credits_7d / MAX20X_7D * 100) : 0;
+        return (
+          <span className="text-xs tabular-nums">
+            <span className={pct5h > 80 ? "text-destructive font-medium" : ""}>{pct5h.toFixed(1)}%</span>
+            {" / "}
+            <span className={pct7d > 80 ? "text-destructive font-medium" : ""}>{pct7d.toFixed(1)}%</span>
+          </span>
+        );
+      },
+      className: "text-right",
+    },
+    {
       header: "Test",
       accessor: (u) => {
         const ts = testStates[u.id];
@@ -439,6 +498,16 @@ export function UpstreamsPage() {
           )}
         </CardContent>
       </Card>
+
+      {meta && meta.total > 0 && (
+        <Pagination
+          page={page}
+          totalPages={meta.total_pages}
+          total={meta.total}
+          perPage={meta.per_page}
+          onPageChange={setPage}
+        />
+      )}
 
       {/* Create / Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

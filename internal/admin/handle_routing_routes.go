@@ -10,12 +10,16 @@ import (
 
 func handleListRoutingRoutes(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		routes, err := st.ListRoutes()
+		p := parsePagination(r)
+		routes, total, err := st.ListRoutesPaginated(p)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to list routing routes")
 			return
 		}
-		writeData(w, http.StatusOK, routes)
+		if routes == nil {
+			routes = []types.Route{}
+		}
+		writeList(w, routes, total, p.Page, p.Limit())
 	}
 }
 
@@ -72,6 +76,12 @@ func handleUpdateRoutingRoute(st *store.Store) http.HandlerFunc {
 		updates := make(map[string]interface{})
 		for _, field := range []string{"project_id", "model_pattern", "upstream_group_id", "match_priority", "conditions", "status"} {
 			if v, ok := body[field]; ok {
+				// Convert empty project_id to NULL for the UUID column.
+				if field == "project_id" {
+					if s, ok := v.(string); ok && s == "" {
+						v = nil
+					}
+				}
 				updates[field] = v
 			}
 		}

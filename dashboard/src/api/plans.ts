@@ -1,11 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
-import type { DataResponse, Plan, CreditRule, CreditRate, ClassicRule } from "./types";
+import type { ListResponse, DataResponse, Plan, CreditRule, CreditRate, ClassicRule } from "./types";
 
-export function usePlans() {
+export function usePlans(page = 1, perPage = 20) {
   return useQuery({
-    queryKey: ["plans"],
-    queryFn: () => api.get<DataResponse<Plan[]>>("/api/v1/plans"),
+    queryKey: ["plans", page, perPage],
+    queryFn: () => api.get<ListResponse<Plan>>(`/api/v1/plans?page=${page}&per_page=${perPage}`),
   });
 }
 

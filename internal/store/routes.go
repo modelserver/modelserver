@@ -70,6 +70,40 @@ func (s *Store) ListRoutes() ([]types.Route, error) {
 	return routes, nil
 }
 
+// ListRoutesPaginated returns routes with pagination.
+func (s *Store) ListRoutesPaginated(p types.PaginationParams) ([]types.Route, int, error) {
+	ctx := context.Background()
+	var total int
+	if err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM routes").Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count routes: %w", err)
+	}
+
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
+		SELECT id, COALESCE(project_id::text, ''), model_pattern, upstream_group_id,
+			match_priority, conditions, status, created_at, updated_at
+		FROM routes ORDER BY %s %s LIMIT $1 OFFSET $2`,
+		sanitizeSort(p.Sort, "match_priority"), sanitizeOrder(p.Order)),
+		p.Limit(), p.Offset(),
+	)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list routes: %w", err)
+	}
+	defer rows.Close()
+
+	var routes []types.Route
+	for rows.Next() {
+		r, err := scanRoute(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("scan route: %w", err)
+		}
+		routes = append(routes, *r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate routes: %w", err)
+	}
+	return routes, total, nil
+}
+
 // ListRoutesForProject returns active routes for a specific project plus global routes.
 // Project-specific routes are returned first, then global routes; within each group
 // routes are ordered by match_priority descending.

@@ -2,10 +2,10 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
 import type { ListResponse, DataResponse, User } from "./types";
 
-export function useUsers() {
+export function useUsers(page = 1, perPage = 20) {
   return useQuery({
-    queryKey: ["admin", "users"],
-    queryFn: () => api.get<ListResponse<User>>("/api/v1/users?per_page=100"),
+    queryKey: ["admin", "users", page, perPage],
+    queryFn: () => api.get<ListResponse<User>>(`/api/v1/users?page=${page}&per_page=${perPage}`),
   });
 }
 

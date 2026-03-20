@@ -17,12 +17,16 @@ import (
 
 func handleListUpstreams(st *store.Store, _ []byte) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		upstreams, err := st.ListUpstreams()
+		p := parsePagination(r)
+		upstreams, total, err := st.ListUpstreamsPaginated(p)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to list upstreams")
 			return
 		}
-		writeData(w, http.StatusOK, upstreams)
+		if upstreams == nil {
+			upstreams = []types.Upstream{}
+		}
+		writeList(w, upstreams, total, p.Page, p.Limit())
 	}
 }
 
@@ -306,6 +310,48 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 		}
 		if !success {
 			result["error"] = fmt.Sprintf("upstream returned %d: %s", resp.StatusCode, string(respBody))
+		}
+		writeData(w, http.StatusOK, result)
+	}
+}
+
+func handleUpstreamUsage(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		now := time.Now()
+		farPast := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		// All-time usage.
+		allTime, err := st.GetUsageByUpstream(farPast, now)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to get upstream usage")
+			return
+		}
+
+		// Windowed credit sums for 5h and 7d.
+		credits5h, err := st.GetCreditsByUpstreamSince(now.Add(-5 * time.Hour))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to get 5h credits")
+			return
+		}
+		credits7d, err := st.GetCreditsByUpstreamSince(now.Add(-7 * 24 * time.Hour))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to get 7d credits")
+			return
+		}
+
+		type entry struct {
+			store.UpstreamUsageSummary
+			Credits5h float64 `json:"credits_5h"`
+			Credits7d float64 `json:"credits_7d"`
+		}
+
+		result := make([]entry, len(allTime))
+		for i, u := range allTime {
+			result[i] = entry{
+				UpstreamUsageSummary: u,
+				Credits5h:           credits5h[u.UpstreamID],
+				Credits7d:           credits7d[u.UpstreamID],
+			}
 		}
 		writeData(w, http.StatusOK, result)
 	}

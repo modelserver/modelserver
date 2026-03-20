@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { useAllProjects } from "@/api/projects";
 import { useUsers } from "@/api/users";
 import { usePlans } from "@/api/plans";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
+import { Pagination } from "@/components/shared/Pagination";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -46,13 +48,17 @@ function UsageBar({ percentage }: { percentage: number }) {
   );
 }
 
+const PER_PAGE = 20;
+
 export function AdminProjectsPage() {
-  const { data: projectsData, isLoading: loadingProjects } = useAllProjects();
-  const { data: usersData, isLoading: loadingUsers } = useUsers();
-  const { data: plansData } = usePlans();
+  const [page, setPage] = useState(1);
+  const { data: projectsData, isLoading: loadingProjects } = useAllProjects(page, PER_PAGE);
+  const { data: usersData, isLoading: loadingUsers } = useUsers(1, 100);
+  const { data: plansData } = usePlans(1, 100);
   const navigate = useNavigate();
 
   const projects = projectsData?.data ?? [];
+  const meta = projectsData?.meta;
   const users = usersData?.data ?? [];
   const plans = plansData?.data ?? [];
 
@@ -197,6 +203,16 @@ export function AdminProjectsPage() {
           )}
         </CardContent>
       </Card>
+
+      {meta && meta.total > 0 && (
+        <Pagination
+          page={page}
+          totalPages={meta.total_pages}
+          total={meta.total}
+          perPage={meta.per_page}
+          onPageChange={setPage}
+        />
+      )}
     </div>
   );
 }

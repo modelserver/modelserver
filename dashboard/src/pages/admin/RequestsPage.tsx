@@ -47,7 +47,7 @@ export function AdminRequestsPage() {
   const [until, setUntil] = useState(defaultUntil);
   const [selected, setSelected] = useState<Request | null>(null);
 
-  const { data: upstreamsData } = useUpstreams();
+  const { data: upstreamsData } = useUpstreams(1, 100);
   const upstreams = upstreamsData?.data ?? [];
 
   const filters: AdminRequestFilters = {
