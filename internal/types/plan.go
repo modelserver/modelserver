@@ -24,12 +24,22 @@ type Plan struct {
 // ToPolicy constructs an in-memory RateLimitPolicy from the plan's rules.
 // The returned policy has no StartsAt/ExpiresAt — the subscription's time
 // window is already validated by GetActiveSubscription.
-func (p *Plan) ToPolicy(projectID string) *RateLimitPolicy {
+// If subscriptionStartsAt is provided, fixed-window rules get their AnchorTime set.
+func (p *Plan) ToPolicy(projectID string, subscriptionStartsAt *time.Time) *RateLimitPolicy {
+	rules := make([]CreditRule, len(p.CreditRules))
+	copy(rules, p.CreditRules)
+	if subscriptionStartsAt != nil {
+		for i := range rules {
+			if rules[i].WindowType == WindowTypeFixed {
+				rules[i].AnchorTime = subscriptionStartsAt
+			}
+		}
+	}
 	return &RateLimitPolicy{
 		ID:               "plan:" + p.ID,
 		ProjectID:        projectID,
 		Name:             p.Name,
-		CreditRules:      p.CreditRules,
+		CreditRules:      rules,
 		ModelCreditRates: p.ModelCreditRates,
 		ClassicRules:     p.ClassicRules,
 	}

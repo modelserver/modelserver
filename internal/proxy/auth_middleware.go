@@ -123,7 +123,7 @@ func AuthMiddleware(st *store.Store, encKey []byte) func(http.Handler) http.Hand
 			if subscription != nil && subscription.PlanID != "" {
 				plan, _ := st.GetPlanByID(subscription.PlanID)
 				if plan != nil {
-					policy = plan.ToPolicy(project.ID)
+					policy = plan.ToPolicy(project.ID, &subscription.StartsAt)
 				}
 			}
 

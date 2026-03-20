@@ -16,6 +16,13 @@ const (
 	SubscriptionStatusRevoked = "revoked"
 )
 
+// Window type constants.
+const (
+	WindowTypeSliding  = "sliding"
+	WindowTypeCalendar = "calendar"
+	WindowTypeFixed    = "fixed"
+)
+
 // CreditScope determines how credit is counted.
 const (
 	CreditScopeProject = "project" // shared across all keys in the project
@@ -51,10 +58,11 @@ func (p *RateLimitPolicy) IsActive() bool {
 
 // CreditRule defines a credit budget for a time window.
 type CreditRule struct {
-	Window     string `json:"window"`      // "5h", "1w", "1M"
-	WindowType string `json:"window_type"` // "sliding" or "calendar"
-	MaxCredits int64  `json:"max_credits"`
-	Scope      string `json:"scope,omitempty"` // "project" or "key"; defaults to "project"
+	Window     string     `json:"window"`                // "5h", "1w", "1M"
+	WindowType string     `json:"window_type"`           // "sliding", "calendar", or "fixed"
+	MaxCredits int64      `json:"max_credits"`
+	Scope      string     `json:"scope,omitempty"`       // "project" or "key"; defaults to "project"
+	AnchorTime *time.Time `json:"anchor_time,omitempty"` // runtime-injected for fixed windows
 }
 
 // EffectiveScope returns the scope, defaulting to "project" if empty.
