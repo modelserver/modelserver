@@ -60,8 +60,9 @@ export function UsageGuideDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  apiKey: string;
+  apiKey?: string;
 }) {
+  const displayKey = apiKey || "<your-api-key>";
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
@@ -83,7 +84,7 @@ export function UsageGuideDialog({
 
             <Step n={2} title="Set environment variables">
               <CodeBlock
-                code={`export ANTHROPIC_BASE_URL=https://code.ai.cs.ac.cn\nexport ANTHROPIC_API_KEY=${apiKey}`}
+                code={`export ANTHROPIC_BASE_URL=https://code.ai.cs.ac.cn\nexport ANTHROPIC_API_KEY=${displayKey}`}
               />
             </Step>
 
@@ -116,7 +117,7 @@ export function UsageGuideDialog({
             </Step>
 
             <Step n={3} title="Set environment variable">
-              <CodeBlock code={`export OPENAI_API_KEY=${apiKey}`} />
+              <CodeBlock code={`export OPENAI_API_KEY=${displayKey}`} />
             </Step>
 
             <Step n={4} title="Run">
@@ -136,7 +137,7 @@ export function UsageGuideDialog({
                 add:
               </p>
               <CodeBlock
-                code={`{\n  "$schema": "https://opencode.ai/config.json",\n  "provider": {\n    "anthropic": {\n      "options": {\n        "apiKey": "${apiKey}",\n        "baseURL": "https://code.ai.cs.ac.cn/v1"\n      }\n    },\n    "openai": {\n      "options": {\n        "apiKey": "${apiKey}",\n        "baseURL": "https://code.ai.cs.ac.cn/v1"\n      }\n    }\n  }\n}`}
+                code={`{\n  "$schema": "https://opencode.ai/config.json",\n  "provider": {\n    "anthropic": {\n      "options": {\n        "apiKey": "${displayKey}",\n        "baseURL": "https://code.ai.cs.ac.cn/v1"\n      }\n    },\n    "openai": {\n      "options": {\n        "apiKey": "${displayKey}",\n        "baseURL": "https://code.ai.cs.ac.cn/v1"\n      }\n    }\n  }\n}`}
               />
             </Step>
 
@@ -157,7 +158,7 @@ export function UsageGuideDialog({
                 add:
               </p>
               <CodeBlock
-                code={`{\n  "models": {\n    "providers": {\n      "modelserver": {\n        "baseUrl": "https://code.ai.cs.ac.cn",\n        "apiKey": "${apiKey}",\n        "api": "anthropic-messages"\n      }\n    }\n  }\n}`}
+                code={`{\n  "models": {\n    "providers": {\n      "modelserver": {\n        "baseUrl": "https://code.ai.cs.ac.cn",\n        "apiKey": "${displayKey}",\n        "api": "anthropic-messages"\n      }\n    }\n  }\n}`}
               />
             </Step>
 

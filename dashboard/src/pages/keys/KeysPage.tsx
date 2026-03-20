@@ -169,10 +169,16 @@ export function KeysPage() {
         title="API Keys"
         description="Manage API keys for this project"
         actions={
-          <Button onClick={() => setShowCreate(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Create Key
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setShowGuide(true)}>
+              <BookOpen className="mr-2 h-4 w-4" />
+              Usage Guide
+            </Button>
+            <Button onClick={() => setShowCreate(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Create Key
+            </Button>
+          </div>
         }
       />
 
@@ -258,7 +264,7 @@ export function KeysPage() {
       <UsageGuideDialog
         open={showGuide}
         onOpenChange={setShowGuide}
-        apiKey={revealedKey ?? ""}
+        apiKey={revealedKey ?? undefined}
       />
     </div>
   );
