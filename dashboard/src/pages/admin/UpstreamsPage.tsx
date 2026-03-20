@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import {
   useUpstreams,
   useCreateUpstream,
@@ -39,8 +39,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { Upstream } from "@/api/types";
-import { Plus, MoreHorizontal, Pencil, Trash2, Loader2, Zap, RefreshCw, ExternalLink, KeyRound, Clock } from "lucide-react";
+import type { Upstream, UpstreamTestResult } from "@/api/types";
+import { Plus, MoreHorizontal, Pencil, Trash2, Loader2, Zap, RefreshCw, ExternalLink, KeyRound, Clock, Check, X } from "lucide-react";
 import { toast } from "sonner";
 
 function TokenStatusBadge({ upstreamId }: { upstreamId: string }) {
@@ -86,6 +86,25 @@ export function UpstreamsPage() {
   const oauthStart = useClaudeCodeOAuthStart();
   const oauthExchange = useClaudeCodeOAuthExchange();
   const oauthRefresh = useUpstreamOAuthRefresh();
+
+  const [testStates, setTestStates] = useState<Record<string, { status: "loading" | "success" | "error"; result?: UpstreamTestResult }>>({});
+
+  const handleTest = useCallback(async (upstreamId: string) => {
+    setTestStates((prev) => ({ ...prev, [upstreamId]: { status: "loading" } }));
+    try {
+      const res = await testUpstream.mutateAsync(upstreamId);
+      const r = res.data;
+      setTestStates((prev) => ({
+        ...prev,
+        [upstreamId]: { status: r.success ? "success" : "error", result: r },
+      }));
+    } catch {
+      setTestStates((prev) => ({
+        ...prev,
+        [upstreamId]: { status: "error", result: { success: false, error: "connection failed" } },
+      }));
+    }
+  }, [testUpstream]);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -219,19 +238,6 @@ export function UpstreamsPage() {
     setDeleteTarget(null);
   }
 
-  async function handleTest(upstreamId: string, upstreamName: string) {
-    try {
-      const res = await testUpstream.mutateAsync(upstreamId);
-      const r = res.data;
-      if (r.success) {
-        toast.success(`${upstreamName}: OK (${r.latency_ms}ms, model: ${r.model})`);
-      } else {
-        toast.error(`${upstreamName}: ${r.error ?? "test failed"}${r.latency_ms ? ` (${r.latency_ms}ms)` : ""}`);
-      }
-    } catch {
-      toast.error(`${upstreamName}: connection test failed`);
-    }
-  }
 
   async function handleOAuthStart() {
     try {
@@ -311,6 +317,41 @@ export function UpstreamsPage() {
       className: "text-right",
     },
     {
+      header: "Test",
+      accessor: (u) => {
+        const ts = testStates[u.id];
+        if (!u.test_model) {
+          return <span className="text-xs text-muted-foreground">—</span>;
+        }
+        if (ts?.status === "loading") {
+          return <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />;
+        }
+        if (ts?.status === "success") {
+          return (
+            <button className="inline-flex items-center gap-1 text-xs text-green-600 hover:underline cursor-pointer" onClick={() => handleTest(u.id)}>
+              <Check className="h-3.5 w-3.5" />
+              {ts.result?.latency_ms != null ? `${ts.result.latency_ms}ms` : "OK"}
+            </button>
+          );
+        }
+        if (ts?.status === "error") {
+          return (
+            <button className="inline-flex items-center gap-1 text-xs text-destructive hover:underline cursor-pointer" onClick={() => handleTest(u.id)} title={ts.result?.error ?? "test failed"}>
+              <X className="h-3.5 w-3.5" />
+              Fail
+            </button>
+          );
+        }
+        return (
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => handleTest(u.id)}>
+            <Zap className="mr-1 h-3.5 w-3.5" />
+            Test
+          </Button>
+        );
+      },
+      className: "w-28",
+    },
+    {
       header: "",
       accessor: (u) => (
         <DropdownMenu>
@@ -323,13 +364,6 @@ export function UpstreamsPage() {
             <DropdownMenuItem onClick={() => openEdit(u)}>
               <Pencil className="mr-2 h-4 w-4" />
               Edit
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => handleTest(u.id, u.name)}
-              disabled={testUpstream.isPending}
-            >
-              <Zap className="mr-2 h-4 w-4" />
-              Test Connection
             </DropdownMenuItem>
             {u.provider === "claudecode" && (
               <DropdownMenuItem

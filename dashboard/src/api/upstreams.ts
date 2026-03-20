@@ -158,6 +158,15 @@ export function useCreateRoutingRoute() {
   });
 }
 
+export function useUpdateRoutingRoute() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<RoutingRoute> & { id: string }) =>
+      api.put<DataResponse<RoutingRoute>>(`/api/v1/routing/routes/${id}`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "routing-routes"] }),
+  });
+}
+
 export function useDeleteRoutingRoute() {
   const qc = useQueryClient();
   return useMutation({

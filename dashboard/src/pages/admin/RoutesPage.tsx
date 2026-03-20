@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import {
   useRoutingRoutes,
   useCreateRoutingRoute,
+  useUpdateRoutingRoute,
   useDeleteRoutingRoute,
   useUpstreamGroups,
 } from "@/api/upstreams";
@@ -35,7 +36,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { RoutingRoute, UpstreamGroupWithMembers, Project } from "@/api/types";
-import { Plus, MoreHorizontal, Trash2, Loader2 } from "lucide-react";
+import { Plus, MoreHorizontal, Pencil, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 export function RoutesPage() {
@@ -43,9 +44,11 @@ export function RoutesPage() {
   const { data: groupsData } = useUpstreamGroups();
   const { data: projectsData } = useAllProjects();
   const createRoute = useCreateRoutingRoute();
+  const updateRoute = useUpdateRoutingRoute();
   const deleteRoute = useDeleteRoutingRoute();
 
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RoutingRoute | null>(null);
   const [form, setForm] = useState({
     model_pattern: "",
@@ -72,17 +75,35 @@ export function RoutesPage() {
   }, [projects]);
 
   function openCreate() {
+    setEditingId(null);
     setForm({ model_pattern: "", upstream_group_id: "", match_priority: 0, status: "active", project_id: "" });
     setDialogOpen(true);
   }
 
-  async function handleCreate() {
+  function openEdit(route: RoutingRoute) {
+    setEditingId(route.id);
+    setForm({
+      model_pattern: route.model_pattern,
+      upstream_group_id: route.upstream_group_id,
+      match_priority: route.match_priority,
+      status: route.status,
+      project_id: route.project_id ?? "",
+    });
+    setDialogOpen(true);
+  }
+
+  async function handleSave() {
     try {
-      await createRoute.mutateAsync(form);
-      toast.success("Route created");
+      if (editingId) {
+        await updateRoute.mutateAsync({ id: editingId, ...form });
+        toast.success("Route updated");
+      } else {
+        await createRoute.mutateAsync(form);
+        toast.success("Route created");
+      }
       setDialogOpen(false);
     } catch {
-      toast.error("Failed to create route");
+      toast.error(editingId ? "Failed to update route" : "Failed to create route");
     }
   }
 
@@ -97,7 +118,7 @@ export function RoutesPage() {
     setDeleteTarget(null);
   }
 
-  const isSaving = createRoute.isPending;
+  const isSaving = createRoute.isPending || updateRoute.isPending;
 
   const columns: Column<RoutingRoute>[] = [
     {
@@ -160,6 +181,10 @@ export function RoutesPage() {
             <MoreHorizontal className="h-4 w-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => openEdit(r)}>
+              <Pencil className="mr-2 h-4 w-4" />
+              Edit
+            </DropdownMenuItem>
             <DropdownMenuItem
               className="text-destructive-foreground"
               onClick={() => setDeleteTarget(r)}
@@ -209,7 +234,7 @@ export function RoutesPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Create Route</DialogTitle>
+            <DialogTitle>{editingId ? "Edit Route" : "Create Route"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
@@ -301,10 +326,10 @@ export function RoutesPage() {
               Cancel
             </Button>
             <Button
-              onClick={handleCreate}
+              onClick={handleSave}
               disabled={!form.model_pattern || !form.upstream_group_id || isSaving}
             >
-              {isSaving ? "Saving..." : "Create"}
+              {isSaving ? "Saving..." : editingId ? "Save" : "Create"}
             </Button>
           </DialogFooter>
         </DialogContent>
