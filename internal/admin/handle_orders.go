@@ -262,7 +262,7 @@ func handleSubscriptionUsage(st *store.Store) http.HandlerFunc {
 				Percentage: percentage,
 			}
 			// Only calendar windows have a meaningful reset time.
-			if rule.WindowType == "calendar" {
+			if rule.WindowType == types.WindowTypeCalendar {
 				resetDur := ratelimit.WindowResetDuration(rule.Window, rule.WindowType, rule.AnchorTime)
 				s.ResetsAt = time.Now().UTC().Add(resetDur).Format(time.RFC3339)
 			}
