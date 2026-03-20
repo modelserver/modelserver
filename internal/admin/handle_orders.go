@@ -243,8 +243,10 @@ func handleSubscriptionUsage(st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		statuses := make([]ratelimit.CreditWindowStatus, 0, len(plan.CreditRules))
-		for _, rule := range plan.CreditRules {
+		policy := plan.ToPolicy(projectID, &activeSub.StartsAt)
+
+		statuses := make([]ratelimit.CreditWindowStatus, 0, len(policy.CreditRules))
+		for _, rule := range policy.CreditRules {
 			windowStart := ratelimit.WindowStartTime(rule.Window, rule.WindowType, rule.AnchorTime)
 			used, err := st.SumCreditsInWindowByProject(projectID, windowStart)
 			if err != nil {
@@ -261,8 +263,7 @@ func handleSubscriptionUsage(st *store.Store) http.HandlerFunc {
 				Window:     rule.Window,
 				Percentage: percentage,
 			}
-			// Only calendar windows have a meaningful reset time.
-			if rule.WindowType == types.WindowTypeCalendar {
+			if rule.WindowType == types.WindowTypeCalendar || rule.WindowType == types.WindowTypeFixed {
 				resetDur := ratelimit.WindowResetDuration(rule.Window, rule.WindowType, rule.AnchorTime)
 				s.ResetsAt = time.Now().UTC().Add(resetDur).Format(time.RFC3339)
 			}
