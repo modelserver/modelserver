@@ -154,7 +154,7 @@ export function OverviewPage() {
                 <div className="flex justify-between text-sm">
                   <span className="capitalize">{w.window}</span>
                   <span className="text-muted-foreground">
-                    {w.used} / {w.limit}
+                    {Math.round(w.used).toLocaleString()} / {w.limit.toLocaleString()}
                   </span>
                 </div>
                 <div className="h-2 w-full overflow-hidden rounded-full bg-muted">

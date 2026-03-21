@@ -24,12 +24,7 @@ func NewCreditCache(ttl time.Duration) *creditCache {
 	}
 }
 
-// newCreditCache is kept for internal use as an alias.
-func newCreditCache(ttl time.Duration) *creditCache {
-	return NewCreditCache(ttl)
-}
-
-// Get retrieves a cached value.
+// Get retrieves a cached value. Returns (value, true) on hit, (0, false) on miss/expired.
 func (c *creditCache) Get(key string) (float64, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -41,12 +36,7 @@ func (c *creditCache) Get(key string) (float64, bool) {
 	return entry.value, true
 }
 
-// get is an alias for Get for internal use.
-func (c *creditCache) get(key string) (float64, bool) {
-	return c.Get(key)
-}
-
-// Set stores a value in the cache.
+// Set stores a value in the cache with the configured TTL.
 func (c *creditCache) Set(key string, value float64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -55,11 +45,6 @@ func (c *creditCache) Set(key string, value float64) {
 		value:     value,
 		expiresAt: time.Now().Add(c.ttl),
 	}
-}
-
-// set is an alias for Set for internal use.
-func (c *creditCache) set(key string, value float64) {
-	c.Set(key, value)
 }
 
 func (c *creditCache) invalidatePrefix(prefix string) {

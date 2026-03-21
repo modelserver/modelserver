@@ -79,7 +79,7 @@ export function MembersPage() {
     if (removeQuota) {
       await updateMember.mutateAsync({ userId: quotaTarget.user_id, clear_quota: true });
     } else {
-      const parsed = parseInt(quotaValue, 10);
+      const parsed = parseFloat(quotaValue);
       if (isNaN(parsed) || parsed < 0 || parsed > 100) return;
       await updateMember.mutateAsync({ userId: quotaTarget.user_id, credit_quota_percent: parsed });
     }

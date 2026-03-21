@@ -23,7 +23,7 @@ func NewCompositeRateLimiter(st *store.Store, logger *slog.Logger) *CompositeRat
 	return &CompositeRateLimiter{
 		classic: NewClassicLimiter(),
 		store:   st,
-		cache:   newCreditCache(10 * time.Second),
+		cache:   NewCreditCache(10 * time.Second),
 		logger:  logger,
 	}
 }
@@ -43,7 +43,7 @@ func (c *CompositeRateLimiter) PreCheck(ctx context.Context, projectID, apiKeyID
 		}
 
 		var used float64
-		if cached, ok := c.cache.get(cacheKey); ok {
+		if cached, ok := c.cache.Get(cacheKey); ok {
 			used = cached
 		} else {
 			var err error
@@ -56,7 +56,7 @@ func (c *CompositeRateLimiter) PreCheck(ctx context.Context, projectID, apiKeyID
 				c.logger.Error("credit check query failed", "error", err)
 				return true, 0, nil // Fail open.
 			}
-			c.cache.set(cacheKey, used)
+			c.cache.Set(cacheKey, used)
 		}
 
 		if used >= float64(rule.MaxCredits) {
@@ -90,7 +90,7 @@ func (c *CompositeRateLimiter) CheckUserQuota(ctx context.Context, projectID, us
 
 		cacheKey := fmt.Sprintf("u:%s:%s|%s|%s", projectID, userID, rule.Window, rule.WindowType)
 		var used float64
-		if cached, ok := c.cache.get(cacheKey); ok {
+		if cached, ok := c.cache.Get(cacheKey); ok {
 			used = cached
 		} else {
 			var err error
@@ -99,7 +99,7 @@ func (c *CompositeRateLimiter) CheckUserQuota(ctx context.Context, projectID, us
 				c.logger.Error("user quota check query failed", "error", err)
 				return true, 0, nil // Fail open.
 			}
-			c.cache.set(cacheKey, used)
+			c.cache.Set(cacheKey, used)
 		}
 
 		if used >= userLimit {
