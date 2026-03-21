@@ -2,6 +2,7 @@ import { useCurrentProject } from "@/hooks/useCurrentProject";
 import { useProject } from "@/api/projects";
 import { useUsageOverview, useDailyUsage } from "@/api/usage";
 import { useRequests } from "@/api/requests";
+import { useMyQuota } from "@/api/members";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatCard } from "@/components/shared/StatCard";
 import { DataTable, type Column } from "@/components/shared/DataTable";
@@ -45,10 +46,12 @@ export function OverviewPage() {
   const { data: usage } = useUsageOverview(projectId);
   const { data: daily } = useDailyUsage(projectId);
   const { data: recentData } = useRequests(projectId, { per_page: 5 });
+  const { data: myQuotaData } = useMyQuota(projectId);
 
   const overview = usage?.data;
   const dailyData = daily?.data ?? [];
   const recentRequests = recentData?.data ?? [];
+  const myQuota = myQuotaData?.data;
 
   return (
     <div className="space-y-6">
@@ -136,6 +139,37 @@ export function OverviewPage() {
           />
         </CardContent>
       </Card>
+
+      {myQuota && myQuota.credit_quota_percent !== null && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">My Quota</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              {myQuota.credit_quota_percent}% of project credits
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {myQuota.windows.map((w) => (
+              <div key={w.window} className="space-y-1">
+                <div className="flex justify-between text-sm">
+                  <span className="capitalize">{w.window}</span>
+                  <span className="text-muted-foreground">
+                    {w.used} / {w.limit}
+                  </span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full bg-primary transition-all"
+                    style={{
+                      width: `${Math.min(w.percentage, 100)}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
