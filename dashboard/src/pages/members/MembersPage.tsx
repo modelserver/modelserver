@@ -31,7 +31,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import type { ProjectMember } from "@/api/types";
-import { Plus, MoreHorizontal } from "lucide-react";
+import { Plus, MoreHorizontal, Pencil } from "lucide-react";
 
 const roles = ["owner", "maintainer", "developer"] as const;
 
@@ -120,7 +120,26 @@ export function MembersPage() {
     },
     {
       header: "Quota",
-      accessor: (m) => `${m.credit_quota_percent ?? 100}%`,
+      accessor: (m) => {
+        const pct = m.credit_quota_percent ?? 100;
+        const editable =
+          canManageQuota &&
+          m.role !== "owner" &&
+          m.user_id !== currentUser?.id;
+        if (editable) {
+          return (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-sm hover:bg-muted transition-colors"
+              onClick={() => openQuotaDialog(m)}
+            >
+              {pct}%
+              <Pencil className="h-3 w-3 text-muted-foreground" />
+            </button>
+          );
+        }
+        return `${pct}%`;
+      },
     },
     {
       header: "Joined",
