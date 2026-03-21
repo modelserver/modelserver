@@ -14,14 +14,14 @@ func (s *Store) CreateRequest(r *types.Request) error {
 	return s.pool.QueryRow(context.Background(), `
 		INSERT INTO requests (project_id, api_key_id, upstream_id, trace_id, msg_id, provider, model, streaming,
 			status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-			credits_consumed, latency_ms, ttft_ms, error_message, client_ip)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+			credits_consumed, latency_ms, ttft_ms, error_message, client_ip, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 		RETURNING id, created_at`,
 		r.ProjectID, r.APIKeyID, nullString(r.UpstreamID),
 		nullString(r.TraceID), nullString(r.MsgID),
 		r.Provider, r.Model, r.Streaming, r.Status,
 		r.InputTokens, r.OutputTokens, r.CacheCreationTokens, r.CacheReadTokens,
-		r.CreditsConsumed, r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP,
+		r.CreditsConsumed, r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP, nullString(r.CreatedBy),
 	).Scan(&r.ID, &r.CreatedAt)
 }
 
@@ -64,14 +64,14 @@ func (s *Store) BatchCreateRequests(requests []types.Request) error {
 		err := tx.QueryRow(ctx, `
 			INSERT INTO requests (project_id, api_key_id, upstream_id, trace_id, msg_id, provider, model, streaming,
 				status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-				credits_consumed, latency_ms, ttft_ms, error_message, client_ip)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+				credits_consumed, latency_ms, ttft_ms, error_message, client_ip, created_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 			RETURNING id, created_at`,
 			r.ProjectID, r.APIKeyID, nullString(r.UpstreamID),
 			nullString(r.TraceID), nullString(r.MsgID),
 			r.Provider, r.Model, r.Streaming, r.Status,
 			r.InputTokens, r.OutputTokens, r.CacheCreationTokens, r.CacheReadTokens,
-			r.CreditsConsumed, r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP,
+			r.CreditsConsumed, r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP, nullString(r.CreatedBy),
 		).Scan(&r.ID, &r.CreatedAt)
 		if err != nil {
 			tx.Rollback(ctx)

@@ -169,10 +169,10 @@ func (s *Store) AddProjectMember(projectID, userID, role string) error {
 func (s *Store) GetProjectMember(projectID, userID string) (*types.ProjectMember, error) {
 	m := &types.ProjectMember{}
 	err := s.pool.QueryRow(context.Background(), `
-		SELECT user_id, project_id, role, created_at
+		SELECT user_id, project_id, role, created_at, credit_quota_percent
 		FROM project_members WHERE project_id = $1 AND user_id = $2`,
 		projectID, userID,
-	).Scan(&m.UserID, &m.ProjectID, &m.Role, &m.CreatedAt)
+	).Scan(&m.UserID, &m.ProjectID, &m.Role, &m.CreatedAt, &m.CreditQuotaPct)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -185,7 +185,7 @@ func (s *Store) GetProjectMember(projectID, userID string) (*types.ProjectMember
 // ListProjectMembers returns all members of a project with user info.
 func (s *Store) ListProjectMembers(projectID string) ([]types.ProjectMember, error) {
 	rows, err := s.pool.Query(context.Background(), `
-		SELECT pm.user_id, pm.project_id, pm.role, pm.created_at,
+		SELECT pm.user_id, pm.project_id, pm.role, pm.credit_quota_percent, pm.created_at,
 			u.id, u.email, u.nickname, COALESCE(u.picture, '')
 		FROM project_members pm
 		JOIN users u ON pm.user_id = u.id
@@ -200,7 +200,7 @@ func (s *Store) ListProjectMembers(projectID string) ([]types.ProjectMember, err
 	for rows.Next() {
 		var m types.ProjectMember
 		var u types.User
-		if err := rows.Scan(&m.UserID, &m.ProjectID, &m.Role, &m.CreatedAt,
+		if err := rows.Scan(&m.UserID, &m.ProjectID, &m.Role, &m.CreditQuotaPct, &m.CreatedAt,
 			&u.ID, &u.Email, &u.Nickname, &u.Picture); err != nil {
 			return nil, fmt.Errorf("scan member: %w", err)
 		}
@@ -218,6 +218,43 @@ func (s *Store) UpdateProjectMemberRole(projectID, userID, role string) error {
 	_, err := s.pool.Exec(context.Background(), `
 		UPDATE project_members SET role = $1
 		WHERE project_id = $2 AND user_id = $3`, role, projectID, userID)
+	return err
+}
+
+// UpdateProjectMember updates a member's role and/or credit quota.
+// Pass nil pointers to leave fields unchanged.
+// If role is set to "owner", credit_quota_percent is forced to NULL.
+func (s *Store) UpdateProjectMember(projectID, userID string, role *string, creditQuotaPct **float64) error {
+	if role == nil && creditQuotaPct == nil {
+		return nil
+	}
+
+	// If promoting to owner, clear quota.
+	if role != nil && *role == types.RoleOwner {
+		_, err := s.pool.Exec(context.Background(), `
+			UPDATE project_members SET role = $1, credit_quota_percent = NULL
+			WHERE project_id = $2 AND user_id = $3`, *role, projectID, userID)
+		return err
+	}
+
+	if role != nil && creditQuotaPct != nil {
+		_, err := s.pool.Exec(context.Background(), `
+			UPDATE project_members SET role = $1, credit_quota_percent = $2
+			WHERE project_id = $3 AND user_id = $4`, *role, *creditQuotaPct, projectID, userID)
+		return err
+	}
+
+	if role != nil {
+		_, err := s.pool.Exec(context.Background(), `
+			UPDATE project_members SET role = $1
+			WHERE project_id = $2 AND user_id = $3`, *role, projectID, userID)
+		return err
+	}
+
+	// creditQuotaPct only
+	_, err := s.pool.Exec(context.Background(), `
+		UPDATE project_members SET credit_quota_percent = $1
+		WHERE project_id = $2 AND user_id = $3`, *creditQuotaPct, projectID, userID)
 	return err
 }
 

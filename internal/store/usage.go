@@ -276,6 +276,19 @@ func (s *Store) CountRequestsInWindowByProject(projectID string, windowStart tim
 	return count, err
 }
 
+// SumCreditsInWindowByUser sums credits consumed by a user within a project
+// during a time window. Uses the denormalized created_by column on requests.
+func (s *Store) SumCreditsInWindowByUser(projectID, userID string, windowStart time.Time) (float64, error) {
+	var total float64
+	err := s.pool.QueryRow(context.Background(), `
+		SELECT COALESCE(SUM(credits_consumed), 0)
+		FROM requests
+		WHERE project_id = $1 AND created_by = $2 AND created_at >= $3`,
+		projectID, userID, windowStart,
+	).Scan(&total)
+	return total, err
+}
+
 // SumTokensInWindowByProject returns total tokens for all keys in a project within a time window.
 func (s *Store) SumTokensInWindowByProject(projectID string, windowStart time.Time) (int64, error) {
 	var total int64
