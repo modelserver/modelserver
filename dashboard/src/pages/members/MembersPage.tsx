@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useCurrentProject } from "@/hooks/useCurrentProject";
+import { useAuth } from "@/hooks/useAuth";
 import { useMembers, useAddMember, useUpdateMember, useRemoveMember } from "@/api/members";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
@@ -36,6 +37,7 @@ const roles = ["owner", "maintainer", "developer"] as const;
 
 export function MembersPage() {
   const projectId = useCurrentProject();
+  const { user: currentUser } = useAuth();
   const { data, isLoading } = useMembers(projectId);
   const addMember = useAddMember(projectId);
   const updateMember = useUpdateMember(projectId);
@@ -45,13 +47,44 @@ export function MembersPage() {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<string>("developer");
 
+  // Quota dialog state
+  const [showQuota, setShowQuota] = useState(false);
+  const [quotaTarget, setQuotaTarget] = useState<ProjectMember | null>(null);
+  const [quotaValue, setQuotaValue] = useState<string>("100");
+  const [removeQuota, setRemoveQuota] = useState(false);
+
   const members = data?.data ?? [];
+
+  // Determine current user's role in this project
+  const currentMember = members.find((m) => m.user_id === currentUser?.id);
+  const currentRole = currentMember?.role;
+  const canManageQuota = currentRole === "owner" || currentRole === "maintainer";
 
   async function handleAdd() {
     await addMember.mutateAsync({ email, role });
     setShowAdd(false);
     setEmail("");
     setRole("developer");
+  }
+
+  function openQuotaDialog(m: ProjectMember) {
+    setQuotaTarget(m);
+    setQuotaValue(String(m.credit_quota_percent ?? 100));
+    setRemoveQuota(false);
+    setShowQuota(true);
+  }
+
+  async function handleSetQuota() {
+    if (!quotaTarget) return;
+    if (removeQuota) {
+      await updateMember.mutateAsync({ userId: quotaTarget.user_id, clear_quota: true });
+    } else {
+      const parsed = parseInt(quotaValue, 10);
+      if (isNaN(parsed) || parsed < 0 || parsed > 100) return;
+      await updateMember.mutateAsync({ userId: quotaTarget.user_id, credit_quota_percent: parsed });
+    }
+    setShowQuota(false);
+    setQuotaTarget(null);
   }
 
   const columns: Column<ProjectMember>[] = [
@@ -86,6 +119,10 @@ export function MembersPage() {
       ),
     },
     {
+      header: "Quota",
+      accessor: (m) => `${m.credit_quota_percent ?? 100}%`,
+    },
+    {
       header: "Joined",
       accessor: (m) => new Date(m.created_at).toLocaleDateString(),
     },
@@ -111,6 +148,13 @@ export function MembersPage() {
                   Change to {r}
                 </DropdownMenuItem>
               ))}
+            {canManageQuota &&
+              m.role !== "owner" &&
+              m.user_id !== currentUser?.id && (
+                <DropdownMenuItem onClick={() => openQuotaDialog(m)}>
+                  Set Quota
+                </DropdownMenuItem>
+              )}
             <DropdownMenuItem
               className="text-destructive-foreground"
               onClick={() => removeMember.mutate(m.user_id)}
@@ -152,6 +196,7 @@ export function MembersPage() {
         </CardContent>
       </Card>
 
+      {/* Add Member Dialog */}
       <Dialog open={showAdd} onOpenChange={setShowAdd}>
         <DialogContent>
           <DialogHeader>
@@ -190,6 +235,55 @@ export function MembersPage() {
               disabled={!email || addMember.isPending}
             >
               {addMember.isPending ? "Adding..." : "Add Member"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Set Quota Dialog */}
+      <Dialog open={showQuota} onOpenChange={setShowQuota}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Set Quota for{" "}
+              {quotaTarget?.user?.nickname ||
+                quotaTarget?.user?.email ||
+                quotaTarget?.user_id}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="quota-value">Credit Quota (%)</Label>
+              <Input
+                id="quota-value"
+                type="number"
+                min={0}
+                max={100}
+                value={quotaValue}
+                onChange={(e) => setQuotaValue(e.target.value)}
+                disabled={removeQuota}
+                placeholder="0–100"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                id="remove-quota"
+                type="checkbox"
+                checked={removeQuota}
+                onChange={(e) => setRemoveQuota(e.target.checked)}
+                className="h-4 w-4 rounded border border-input accent-primary"
+              />
+              <Label htmlFor="remove-quota">
+                Remove quota (reset to 100%)
+              </Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              onClick={handleSetQuota}
+              disabled={updateMember.isPending}
+            >
+              {updateMember.isPending ? "Saving..." : "Save Quota"}
             </Button>
           </DialogFooter>
         </DialogContent>
