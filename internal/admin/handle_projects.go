@@ -2,10 +2,12 @@ package admin
 
 import (
 	"log"
+	"math"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/modelserver/modelserver/internal/ratelimit"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
@@ -210,15 +212,73 @@ func handleUpdateMember(st *store.Store) http.HandlerFunc {
 		}
 		projectID := chi.URLParam(r, "projectID")
 		userID := chi.URLParam(r, "userID")
+
 		var body struct {
-			Role string `json:"role"`
+			Role           *string  `json:"role"`
+			CreditQuotaPct *float64 `json:"credit_quota_percent"`
+			ClearQuota     bool     `json:"clear_quota"`
 		}
-		if err := decodeBody(r, &body); err != nil || body.Role == "" {
-			writeError(w, http.StatusBadRequest, "bad_request", "role is required")
+		if err := decodeBody(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
 			return
 		}
-		if err := st.UpdateProjectMemberRole(projectID, userID, body.Role); err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "failed to update member role")
+
+		// At least one field must be provided.
+		if body.Role == nil && body.CreditQuotaPct == nil && !body.ClearQuota {
+			writeError(w, http.StatusBadRequest, "bad_request", "at least one of role, credit_quota_percent, or clear_quota must be provided")
+			return
+		}
+
+		// Validate credit_quota_percent range.
+		if body.CreditQuotaPct != nil && (*body.CreditQuotaPct < 0 || *body.CreditQuotaPct > 100) {
+			writeError(w, http.StatusBadRequest, "bad_request", "credit_quota_percent must be between 0 and 100")
+			return
+		}
+
+		caller := UserFromContext(r.Context())
+		callerMember := MemberFromContext(r.Context())
+
+		// Cannot set quota on yourself.
+		if (body.CreditQuotaPct != nil || body.ClearQuota) && userID == caller.ID {
+			writeError(w, http.StatusBadRequest, "bad_request", "cannot set quota on yourself")
+			return
+		}
+
+		// Load target member to check their role.
+		targetMember, err := st.GetProjectMember(projectID, userID)
+		if err != nil || targetMember == nil {
+			writeError(w, http.StatusNotFound, "not_found", "member not found")
+			return
+		}
+
+		// Cannot set quota on an owner.
+		if (body.CreditQuotaPct != nil || body.ClearQuota) && targetMember.Role == types.RoleOwner {
+			writeError(w, http.StatusForbidden, "forbidden", "cannot set quota on an owner")
+			return
+		}
+
+		// Maintainers cannot set quota on other maintainers.
+		if callerMember != nil && callerMember.Role == types.RoleMaintainer &&
+			(body.CreditQuotaPct != nil || body.ClearQuota) &&
+			targetMember.Role == types.RoleMaintainer {
+			writeError(w, http.StatusForbidden, "forbidden", "maintainers cannot set quota on other maintainers")
+			return
+		}
+
+		// Build quota pointer argument (**float64).
+		// nil = don't change; &nilPtr = set NULL; &valuePtr = set value.
+		var quotaArg **float64
+		if body.ClearQuota {
+			var nilPtr *float64
+			quotaArg = &nilPtr
+		} else if body.CreditQuotaPct != nil {
+			// body.CreditQuotaPct is *float64; take its address to get **float64.
+			quotaArg = &body.CreditQuotaPct
+		}
+
+		// If promoting to owner, quota is auto-cleared in the store layer.
+		if err := st.UpdateProjectMember(projectID, userID, body.Role, quotaArg); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to update member")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -237,6 +297,136 @@ func handleRemoveMember(st *store.Store) http.HandlerFunc {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// quotaWindowStatus holds per-window quota usage for a user.
+type quotaWindowStatus struct {
+	Window         string  `json:"window"`
+	WindowType     string  `json:"window_type"`
+	Limit          int64   `json:"limit"`
+	Used           float64 `json:"used"`
+	Percentage     float64 `json:"percentage"`
+	ResetsAt       string  `json:"resets_at,omitempty"`
+}
+
+// serveQuotaUsage is the shared core logic for quota usage responses.
+func serveQuotaUsage(st *store.Store, w http.ResponseWriter, projectID, userID string) {
+	member, err := st.GetProjectMember(projectID, userID)
+	if err != nil || member == nil {
+		writeError(w, http.StatusNotFound, "not_found", "member not found")
+		return
+	}
+
+	// Determine effective quota percent (nil → 100%).
+	effectiveQuotaPct := 100.0
+	if member.CreditQuotaPct != nil {
+		effectiveQuotaPct = *member.CreditQuotaPct
+	}
+
+	activeSub, err := st.GetActiveSubscription(projectID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "failed to get active subscription")
+		return
+	}
+
+	type response struct {
+		UserID         string              `json:"user_id"`
+		CreditQuotaPct *float64            `json:"credit_quota_percent"`
+		Windows        []quotaWindowStatus `json:"windows"`
+	}
+
+	resp := response{
+		UserID:         userID,
+		CreditQuotaPct: member.CreditQuotaPct,
+		Windows:        []quotaWindowStatus{},
+	}
+
+	if activeSub == nil {
+		writeData(w, http.StatusOK, resp)
+		return
+	}
+
+	plan, err := st.GetPlanBySlug(activeSub.PlanName)
+	if err != nil || plan == nil {
+		writeData(w, http.StatusOK, resp)
+		return
+	}
+
+	policy := plan.ToPolicy(projectID, &activeSub.StartsAt)
+
+	for _, rule := range policy.CreditRules {
+		if rule.EffectiveScope() != types.CreditScopeProject {
+			continue
+		}
+
+		userLimit := int64(math.Round(float64(rule.MaxCredits) * (effectiveQuotaPct / 100.0)))
+		windowStart := ratelimit.WindowStartTime(rule.Window, rule.WindowType, rule.AnchorTime)
+
+		used, err := st.SumCreditsInWindowByUser(projectID, userID, windowStart)
+		if err != nil {
+			used = 0
+		}
+
+		var percentage float64
+		if userLimit == 0 {
+			// quota is 0% → already at limit
+			percentage = 100
+		} else {
+			percentage = (used / float64(userLimit)) * 100
+			if percentage > 100 {
+				percentage = 100
+			}
+		}
+
+		// Round to 2 decimal places.
+		percentage = math.Round(percentage*100) / 100
+
+		ws := quotaWindowStatus{
+			Window:     rule.Window,
+			WindowType: rule.WindowType,
+			Limit:      userLimit,
+			Used:       used,
+			Percentage: percentage,
+		}
+
+		if rule.WindowType == types.WindowTypeCalendar || rule.WindowType == types.WindowTypeFixed {
+			resetDur := ratelimit.WindowResetDuration(rule.Window, rule.WindowType, rule.AnchorTime)
+			ws.ResetsAt = time.Now().UTC().Add(resetDur).Format(time.RFC3339)
+		}
+
+		resp.Windows = append(resp.Windows, ws)
+	}
+
+	writeData(w, http.StatusOK, resp)
+}
+
+func handleQuotaUsage(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		projectID := chi.URLParam(r, "projectID")
+		userID := chi.URLParam(r, "userID")
+		caller := UserFromContext(r.Context())
+		callerMember := MemberFromContext(r.Context())
+
+		// Allow access if: caller is the target user, owner, maintainer, or superadmin.
+		isSelf := caller.ID == userID
+		isPrivileged := caller.IsSuperadmin ||
+			(callerMember != nil && (callerMember.Role == types.RoleOwner || callerMember.Role == types.RoleMaintainer))
+
+		if !isSelf && !isPrivileged {
+			writeError(w, http.StatusForbidden, "forbidden", "access denied")
+			return
+		}
+
+		serveQuotaUsage(st, w, projectID, userID)
+	}
+}
+
+func handleMyQuota(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		projectID := chi.URLParam(r, "projectID")
+		caller := UserFromContext(r.Context())
+		serveQuotaUsage(st, w, projectID, caller.ID)
 	}
 }
 

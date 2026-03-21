@@ -97,6 +97,8 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 					r.Post("/members", handleAddMember(st))
 					r.Put("/members/{userID}", handleUpdateMember(st))
 					r.Delete("/members/{userID}", handleRemoveMember(st))
+					r.Get("/members/{userID}/quota-usage", handleQuotaUsage(st))
+					r.Get("/my-quota", handleMyQuota(st))
 
 					// API Keys.
 					r.Get("/keys", handleListKeys(st))
