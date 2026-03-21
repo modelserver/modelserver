@@ -41,6 +41,7 @@ type Request struct {
 	TTFTMs              int64     `json:"ttft_ms"`
 	ClientIP            string    `json:"client_ip,omitempty"`
 	ErrorMessage        string    `json:"error_message,omitempty"`
+	CreatedBy           string    `json:"created_by,omitempty"`
 	// Routing observability fields (populated by the new routing pipeline).
 	UpstreamID  string  `json:"upstream_id,omitempty"`
 	RouteID     string  `json:"route_id,omitempty"`

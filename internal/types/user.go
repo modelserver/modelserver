@@ -41,10 +41,11 @@ type OAuthConnection struct {
 
 // ProjectMember links a User to a Project with an assigned role.
 type ProjectMember struct {
-	UserID    string    `json:"user_id"`
-	ProjectID string    `json:"project_id"`
-	Role      string    `json:"role"`
-	CreatedAt time.Time `json:"created_at"`
+	UserID         string    `json:"user_id"`
+	ProjectID      string    `json:"project_id"`
+	Role           string    `json:"role"`
+	CreditQuotaPct *float64  `json:"credit_quota_percent"` // nil = no limit (effective 100%)
+	CreatedAt      time.Time `json:"created_at"`
 
 	// User is populated when the record is fetched with a join.
 	User *User `json:"user,omitempty"`
