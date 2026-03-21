@@ -76,11 +76,48 @@ func (c *CompositeRateLimiter) PreCheck(ctx context.Context, projectID, apiKeyID
 	return true, 0, nil
 }
 
+// CheckUserQuota validates per-user credit quota against project-scope rules.
+func (c *CompositeRateLimiter) CheckUserQuota(ctx context.Context, projectID, userID string, quotaPct float64, policy *types.RateLimitPolicy) (bool, time.Duration, error) {
+	if policy == nil {
+		return true, 0, nil
+	}
+	for _, rule := range policy.CreditRules {
+		if rule.EffectiveScope() != types.CreditScopeProject {
+			continue
+		}
+		windowStart := WindowStartTime(rule.Window, rule.WindowType, rule.AnchorTime)
+		userLimit := float64(rule.MaxCredits) * (quotaPct / 100.0)
+
+		cacheKey := fmt.Sprintf("u:%s:%s|%s|%s", projectID, userID, rule.Window, rule.WindowType)
+		var used float64
+		if cached, ok := c.cache.get(cacheKey); ok {
+			used = cached
+		} else {
+			var err error
+			used, err = c.store.SumCreditsInWindowByUser(projectID, userID, windowStart)
+			if err != nil {
+				c.logger.Error("user quota check query failed", "error", err)
+				return true, 0, nil // Fail open.
+			}
+			c.cache.set(cacheKey, used)
+		}
+
+		if used >= userLimit {
+			retryAfter := WindowResetDuration(rule.Window, rule.WindowType, rule.AnchorTime)
+			return false, retryAfter, nil
+		}
+	}
+	return true, 0, nil
+}
+
 // PostRecord records actual usage and invalidates caches.
-func (c *CompositeRateLimiter) PostRecord(ctx context.Context, projectID, apiKeyID, model string, usage types.TokenUsage) {
+func (c *CompositeRateLimiter) PostRecord(ctx context.Context, projectID, apiKeyID, userID, model string, usage types.TokenUsage) {
 	c.classic.Record(apiKeyID, model, usage)
 	c.cache.invalidatePrefix(apiKeyID)
 	c.cache.invalidatePrefix("p:" + projectID)
+	if userID != "" {
+		c.cache.invalidatePrefix("u:" + projectID + ":" + userID)
+	}
 }
 
 // WindowStartTimeAt is the testable core that accepts an explicit now.

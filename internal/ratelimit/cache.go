@@ -16,14 +16,21 @@ type cacheEntry struct {
 	expiresAt time.Time
 }
 
-func newCreditCache(ttl time.Duration) *creditCache {
+// NewCreditCache creates a new credit cache with the given TTL.
+func NewCreditCache(ttl time.Duration) *creditCache {
 	return &creditCache{
 		entries: make(map[string]*cacheEntry),
 		ttl:     ttl,
 	}
 }
 
-func (c *creditCache) get(key string) (float64, bool) {
+// newCreditCache is kept for internal use as an alias.
+func newCreditCache(ttl time.Duration) *creditCache {
+	return NewCreditCache(ttl)
+}
+
+// Get retrieves a cached value.
+func (c *creditCache) Get(key string) (float64, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -34,7 +41,13 @@ func (c *creditCache) get(key string) (float64, bool) {
 	return entry.value, true
 }
 
-func (c *creditCache) set(key string, value float64) {
+// get is an alias for Get for internal use.
+func (c *creditCache) get(key string) (float64, bool) {
+	return c.Get(key)
+}
+
+// Set stores a value in the cache.
+func (c *creditCache) Set(key string, value float64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -42,6 +55,11 @@ func (c *creditCache) set(key string, value float64) {
 		value:     value,
 		expiresAt: time.Now().Add(c.ttl),
 	}
+}
+
+// set is an alias for Set for internal use.
+func (c *creditCache) set(key string, value float64) {
+	c.Set(key, value)
 }
 
 func (c *creditCache) invalidatePrefix(prefix string) {
