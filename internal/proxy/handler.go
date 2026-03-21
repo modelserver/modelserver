@@ -100,6 +100,7 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, all
 	pendingReq := &types.Request{
 		ProjectID: project.ID,
 		APIKeyID:  apiKey.ID,
+		CreatedBy: apiKey.CreatedBy,
 		TraceID:   traceID,
 		Model:     reqShape.Model,
 		Streaming: reqShape.Stream,
@@ -114,6 +115,7 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, all
 	reqCtx := &RequestContext{
 		ProjectID:        project.ID,
 		APIKeyID:         apiKey.ID,
+		UserID:           apiKey.CreatedBy,
 		Model:            reqShape.Model,
 		IsStream:         reqShape.Stream,
 		AllowedProviders: allowedProviders,

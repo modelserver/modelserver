@@ -9,9 +9,14 @@ import (
 	"time"
 
 	"github.com/modelserver/modelserver/internal/crypto"
+	"github.com/modelserver/modelserver/internal/ratelimit"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
+
+// quotaCache caches per-user credit quota lookups (10s TTL).
+// Uses -1 as sentinel for "no quota set" since 0 is a valid quota value.
+var quotaCache = ratelimit.NewCreditCache(10 * time.Second)
 
 type contextKey string
 
@@ -20,6 +25,7 @@ const (
 	ctxProject      contextKey = "project"
 	ctxPolicy       contextKey = "policy"
 	ctxSubscription contextKey = "subscription"
+	ctxUserQuotaPct contextKey = "user_quota_pct"
 )
 
 // APIKeyFromContext returns the API key from the request context.
@@ -50,6 +56,15 @@ func PolicyFromContext(ctx context.Context) *types.RateLimitPolicy {
 func SubscriptionFromContext(ctx context.Context) *types.Subscription {
 	if s, ok := ctx.Value(ctxSubscription).(*types.Subscription); ok {
 		return s
+	}
+	return nil
+}
+
+// UserQuotaPctFromContext returns the user's credit quota percentage from the context.
+// Returns nil if no quota is set (user has full access).
+func UserQuotaPctFromContext(ctx context.Context) *float64 {
+	if p, ok := ctx.Value(ctxUserQuotaPct).(*float64); ok {
+		return p
 	}
 	return nil
 }
@@ -136,6 +151,26 @@ func AuthMiddleware(st *store.Store, encKey []byte) func(http.Handler) http.Hand
 				policy = nil
 			}
 
+			// Load per-user credit quota (cached 10s).
+			var userQuotaPct *float64
+			quotaCacheKey := project.ID + ":" + apiKey.CreatedBy
+			if cached, ok := quotaCache.Get(quotaCacheKey); ok {
+				if cached >= 0 { // -1 sentinel = no quota
+					v := cached
+					userQuotaPct = &v
+				}
+			} else {
+				member, memberErr := st.GetProjectMember(project.ID, apiKey.CreatedBy)
+				if memberErr != nil {
+					// Fail open: proceed without quota enforcement.
+				} else if member != nil && member.CreditQuotaPct != nil {
+					userQuotaPct = member.CreditQuotaPct
+					quotaCache.Set(quotaCacheKey, *member.CreditQuotaPct)
+				} else {
+					quotaCache.Set(quotaCacheKey, -1) // sentinel: no quota
+				}
+			}
+
 			go st.UpdateAPIKeyLastUsed(apiKey.ID)
 
 			ctx := context.WithValue(r.Context(), ctxAPIKey, apiKey)
@@ -145,6 +180,9 @@ func AuthMiddleware(st *store.Store, encKey []byte) func(http.Handler) http.Hand
 			}
 			if subscription != nil {
 				ctx = context.WithValue(ctx, ctxSubscription, subscription)
+			}
+			if userQuotaPct != nil {
+				ctx = context.WithValue(ctx, ctxUserQuotaPct, userQuotaPct)
 			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

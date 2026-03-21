@@ -56,6 +56,7 @@ func RateLimitMiddleware(limiter ratelimit.RateLimiter, st *store.Store, logger 
 				req := &types.Request{
 					ProjectID:    project.ID,
 					APIKeyID:     apiKey.ID,
+					CreatedBy:    apiKey.CreatedBy,
 					TraceID:      traceID,
 					Provider:     "",
 					Model:        model,
@@ -67,6 +68,42 @@ func RateLimitMiddleware(limiter ratelimit.RateLimiter, st *store.Store, logger 
 
 				writeRateLimitError(w, retryAfter)
 				return
+			}
+
+			// Per-user credit quota check.
+			if quotaPct := UserQuotaPctFromContext(r.Context()); quotaPct != nil {
+				uAllowed, uRetryAfter, uErr := limiter.CheckUserQuota(r.Context(), project.ID, apiKey.CreatedBy, *quotaPct, policy)
+				if uErr != nil {
+					logger.Error("user quota check error", "error", uErr)
+					// Fail open.
+				} else if !uAllowed {
+					logger.Warn("user quota exceeded",
+						"project_id", project.ID,
+						"api_key_id", apiKey.ID,
+						"user_id", apiKey.CreatedBy,
+						"quota_pct", *quotaPct,
+					)
+
+					model := peekModel(r)
+					traceID := TraceIDFromContext(r.Context())
+					clientIP := r.RemoteAddr
+					errMsg := fmt.Sprintf("user quota exceeded, retry after %ds", int(uRetryAfter.Seconds()))
+
+					req := &types.Request{
+						ProjectID:    project.ID,
+						APIKeyID:     apiKey.ID,
+						CreatedBy:    apiKey.CreatedBy,
+						TraceID:      traceID,
+						Model:        model,
+						Status:       types.RequestStatusRateLimited,
+						ClientIP:     clientIP,
+						ErrorMessage: errMsg,
+					}
+					go st.CreateRequest(req)
+
+					writeRateLimitError(w, uRetryAfter)
+					return
+				}
 			}
 
 			next.ServeHTTP(w, r)

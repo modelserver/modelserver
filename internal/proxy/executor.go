@@ -23,6 +23,7 @@ import (
 type RequestContext struct {
 	ProjectID        string
 	APIKeyID         string
+	UserID           string
 	Model            string   // Original model name from the client request
 	ActualModel      string   // After ModelMap resolution (set per-attempt by Executor)
 	IsStream         bool
@@ -637,7 +638,7 @@ func (e *Executor) commitStreamingResponse(
 		)
 
 		if e.rateLimiter != nil {
-			e.rateLimiter.PostRecord(context.Background(), reqCtx.Project.ID, reqCtx.APIKeyID, model, types.TokenUsage{
+			e.rateLimiter.PostRecord(context.Background(), reqCtx.Project.ID, reqCtx.APIKeyID, reqCtx.UserID, model, types.TokenUsage{
 				InputTokens:         metrics.InputTokens,
 				OutputTokens:        metrics.OutputTokens,
 				CacheCreationTokens: metrics.CacheCreationTokens,
@@ -750,7 +751,7 @@ func (e *Executor) commitNonStreamingResponse(
 	)
 
 	if e.rateLimiter != nil {
-		e.rateLimiter.PostRecord(context.Background(), reqCtx.Project.ID, reqCtx.APIKeyID, model, types.TokenUsage{
+		e.rateLimiter.PostRecord(context.Background(), reqCtx.Project.ID, reqCtx.APIKeyID, reqCtx.UserID, model, types.TokenUsage{
 			InputTokens:         metrics.InputTokens,
 			OutputTokens:        metrics.OutputTokens,
 			CacheCreationTokens: metrics.CacheCreationTokens,
