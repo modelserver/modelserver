@@ -65,8 +65,24 @@ export interface ProjectMember {
   user_id: string;
   project_id: string;
   role: "owner" | "maintainer" | "developer";
+  credit_quota_percent: number | null;
   created_at: string;
   user?: User;
+}
+
+export interface QuotaWindowStatus {
+  window: string;
+  window_type: string;
+  limit: number;
+  used: number;
+  percentage: number;
+  resets_at?: string;
+}
+
+export interface QuotaUsageResponse {
+  user_id: string;
+  credit_quota_percent: number | null;
+  windows: QuotaWindowStatus[];
 }
 
 // --- API Key ---
