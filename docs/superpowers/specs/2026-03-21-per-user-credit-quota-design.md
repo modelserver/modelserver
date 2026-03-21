@@ -177,14 +177,22 @@ if quotaPct := UserQuotaPctFromContext(r.Context()); quotaPct != nil {
             "user_id", apiKey.CreatedBy,
             "quota_pct", *quotaPct,
         )
-        // Log rejected request and return rate limit error
-        // Uses same writeRateLimitError as existing PreCheck rejection
-        ...
+        // Log rejected request (with CreatedBy set for consistency) and return rate limit error
+        model := peekModel(r)
+        req := &types.Request{
+            ProjectID: project.ID, APIKeyID: apiKey.ID,
+            CreatedBy: apiKey.CreatedBy,  // set for denormalized column consistency
+            Model: model, Status: types.RequestStatusRateLimited,
+            ErrorMessage: "user quota exceeded", ClientIP: r.RemoteAddr,
+        }
+        go st.CreateRequest(req)
+        writeRateLimitError(w, retryAfter)
+        return
     }
 }
 ```
 
-Note: The existing `writeRateLimitError` returns HTTP 400 (matching Anthropic API convention for rate limits). User quota rejections use the same response format for consistency.
+Note: The existing `writeRateLimitError` returns HTTP 400 (matching Anthropic API convention for rate limits). User quota rejections use the same response format for consistency. The existing PreCheck rejection path should also be updated to set `CreatedBy` on the logged request for data consistency.
 
 ### 3.4 Auth Middleware — Load User Quota into Context
 
@@ -206,7 +214,9 @@ if err != nil {
 // This is correct — orphaned keys operate without per-user quota.
 ```
 
-This query is cached (10s TTL) using the same `creditCache` pattern as the credit limiter: cache key `uq:{projectID}:{userID}`, value is the quota percent (0 sentinel for "no quota / nil"). This reuses the existing cache infrastructure with TTL support rather than introducing a separate `sync.Map`.
+This query is cached (10s TTL) using the same `creditCache` pattern as the credit limiter: cache key `uq:{projectID}:{userID}`, value is the quota percent. Use **-1 as sentinel** for "no quota set (nil)" since 0 is a valid quota value meaning "block user". This reuses the existing cache infrastructure with TTL support.
+
+Note: The current `AuthMiddleware` signature does not accept a logger. Either add a `*slog.Logger` parameter, or use `slog.Default()` for the error log.
 
 ### 3.5 RequestContext — Add UserID
 
@@ -328,7 +338,7 @@ Implementation follows the same pattern as `handleSubscriptionUsage` in `handle_
 For each project-scope credit rule:
 - `limit` = `rule.MaxCredits * (quotaPct / 100)`
 - `used` = `SumCreditsInWindowByUser(projectID, userID, windowStart)`
-- `percentage` = `used / limit * 100`
+- `percentage` = if `limit > 0` then `used / limit * 100`, else `100.0` (quota is 0% → fully blocked)
 
 ### 4.4 My Quota (Self-View)
 
