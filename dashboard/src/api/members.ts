@@ -15,7 +15,7 @@ export function useMembers(projectId: string) {
 export function useAddMember(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { email: string; role: string }) =>
+    mutationFn: (body: { email: string; role: string; credit_quota_percent?: number }) =>
       api.post(`/api/v1/projects/${projectId}/members`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["members", projectId] }),
   });

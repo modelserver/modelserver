@@ -46,6 +46,7 @@ export function MembersPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<string>("developer");
+  const [addQuota, setAddQuota] = useState<string>("");
 
   // Quota dialog state
   const [showQuota, setShowQuota] = useState(false);
@@ -61,10 +62,18 @@ export function MembersPage() {
   const canManageQuota = currentRole === "owner" || currentRole === "maintainer";
 
   async function handleAdd() {
-    await addMember.mutateAsync({ email, role });
+    const params: { email: string; role: string; credit_quota_percent?: number } = { email, role };
+    if (addQuota !== "" && role !== "owner") {
+      const parsed = parseFloat(addQuota);
+      if (!isNaN(parsed) && parsed >= 0 && parsed <= 100) {
+        params.credit_quota_percent = parsed;
+      }
+    }
+    await addMember.mutateAsync(params);
     setShowAdd(false);
     setEmail("");
     setRole("developer");
+    setAddQuota("");
   }
 
   function openQuotaDialog(m: ProjectMember) {
@@ -247,6 +256,20 @@ export function MembersPage() {
                 </SelectContent>
               </Select>
             </div>
+            {role !== "owner" && (
+              <div className="space-y-2">
+                <Label htmlFor="add-quota">Credit Quota % (optional)</Label>
+                <Input
+                  id="add-quota"
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={addQuota}
+                  onChange={(e) => setAddQuota(e.target.value)}
+                  placeholder="Leave empty for 100%"
+                />
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button

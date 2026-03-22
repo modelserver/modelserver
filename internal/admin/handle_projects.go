@@ -186,21 +186,53 @@ func handleAddMember(st *store.Store) http.HandlerFunc {
 		}
 		projectID := chi.URLParam(r, "projectID")
 		var body struct {
-			UserID string `json:"user_id"`
-			Role   string `json:"role"`
+			Email          string   `json:"email"`
+			Role           string   `json:"role"`
+			CreditQuotaPct *float64 `json:"credit_quota_percent"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
 			return
 		}
-		if body.UserID == "" || body.Role == "" {
-			writeError(w, http.StatusBadRequest, "bad_request", "user_id and role are required")
+		if body.Email == "" || body.Role == "" {
+			writeError(w, http.StatusBadRequest, "bad_request", "email and role are required")
 			return
 		}
-		if err := st.AddProjectMember(projectID, body.UserID, body.Role); err != nil {
+
+		// Resolve email to user ID. Generic error to avoid leaking registration status.
+		user, err := st.GetUserByEmail(body.Email)
+		if err != nil || user == nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "failed to add member")
+			return
+		}
+		userID := user.ID
+
+		// Validate quota if provided.
+		if body.CreditQuotaPct != nil {
+			if *body.CreditQuotaPct < 0 || *body.CreditQuotaPct > 100 {
+				writeError(w, http.StatusBadRequest, "bad_request", "credit_quota_percent must be between 0 and 100")
+				return
+			}
+			if body.Role == types.RoleOwner {
+				writeError(w, http.StatusBadRequest, "bad_request", "cannot set quota on an owner")
+				return
+			}
+		}
+
+		if err := st.AddProjectMember(projectID, userID, body.Role); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to add member")
 			return
 		}
+
+		// Set quota if provided.
+		if body.CreditQuotaPct != nil {
+			quotaPtr := &body.CreditQuotaPct
+			if err := st.UpdateProjectMember(projectID, userID, nil, quotaPtr); err != nil {
+				writeError(w, http.StatusInternalServerError, "internal", "failed to set member quota")
+				return
+			}
+		}
+
 		w.WriteHeader(http.StatusCreated)
 	}
 }
