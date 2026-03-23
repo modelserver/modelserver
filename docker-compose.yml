@@ -6,11 +6,32 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./init-hydra-db.sql:/docker-entrypoint-initdb.d/init-hydra-db.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U modelserver"]
       interval: 5s
       timeout: 5s
       retries: 5
+
+  hydra:
+    image: oryd/hydra:v26.2.0
+    command: serve all --dev
+    env_file: .env.hydra
+    expose:
+      - "4444"
+      - "4445"
+    depends_on:
+      hydra-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  hydra-migrate:
+    image: oryd/hydra:v26.2.0
+    command: migrate sql up -e --yes
+    env_file: .env.hydra
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   modelserver:
     build: .
@@ -21,6 +42,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      hydra:
+        condition: service_started
 
   payserver:
     build: ./services/payserver
@@ -45,6 +68,7 @@ services:
     depends_on:
       - modelserver
       - payserver
+      - hydra
 
 volumes:
   pgdata:
