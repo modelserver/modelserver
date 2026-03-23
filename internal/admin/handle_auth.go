@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"log"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/modelserver/modelserver/internal/auth"
@@ -13,6 +15,8 @@ import (
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
+
+const oauthReturnToCookie = "oauth-return-to"
 
 func handleRefresh(st *store.Store, jwtMgr *auth.JWTManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +48,7 @@ func handleRefresh(st *store.Store, jwtMgr *auth.JWTManager) http.HandlerFunc {
 	}
 }
 
-func handleOAuthCallback(st *store.Store, jwtMgr *auth.JWTManager, cfg *config.Config, provider string) http.HandlerFunc {
+func handleOAuthCallback(st *store.Store, jwtMgr *auth.JWTManager, cfg *config.Config, encKey []byte, provider string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Code string `json:"code"`
@@ -174,6 +178,38 @@ func handleOAuthCallback(st *store.Store, jwtMgr *auth.JWTManager, cfg *config.C
 			return
 		}
 
+		// Check for oauth-return-to cookie (Hydra login flow).
+		// When present, set the session cookie for Hydra's "skip" check and
+		// return a redirect_to URL instead of issuing JWT tokens.
+		if cookie, err := r.Cookie(oauthReturnToCookie); err == nil && cookie.Value != "" {
+			returnTo := cookie.Value
+			if isValidReturnTo(returnTo) {
+				// Set the OAuth session cookie so the Hydra login handler
+				// can skip re-authentication on the next visit.
+				if err := setOAuthSessionCookie(w, encKey, user.ID); err != nil {
+					log.Printf("WARN: failed to set OAuth session cookie for user %s: %v", user.ID, err)
+				}
+
+				// Clear the return-to cookie.
+				http.SetCookie(w, &http.Cookie{
+					Name:     oauthReturnToCookie,
+					Value:    "",
+					HttpOnly: true,
+					Secure:   true,
+					SameSite: http.SameSiteLaxMode,
+					MaxAge:   -1,
+					Path:     "/",
+				})
+
+				// Return redirect_to instead of tokens — the frontend
+				// will navigate to this URL to complete the Hydra flow.
+				writeJSON(w, http.StatusOK, map[string]interface{}{
+					"redirect_to": returnTo,
+				})
+				return
+			}
+		}
+
 		issueTokens(w, jwtMgr, user)
 	}
 }
@@ -244,6 +280,22 @@ func handleUpdateUser(st *store.Store) http.HandlerFunc {
 
 func handleOAuthRedirect(cfg *config.Config, provider string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// If return_to is present (Hydra login flow), store it in a cookie so
+		// the callback handler can redirect back after authentication.
+		if returnTo := r.URL.Query().Get("return_to"); returnTo != "" {
+			if isValidReturnTo(returnTo) {
+				http.SetCookie(w, &http.Cookie{
+					Name:     oauthReturnToCookie,
+					Value:    returnTo,
+					HttpOnly: true,
+					Secure:   true,
+					SameSite: http.SameSiteLaxMode,
+					MaxAge:   600, // 10 minutes
+					Path:     "/",
+				})
+			}
+		}
+
 		// Build the callback URL pointing to the frontend's /auth/callback page.
 		// Prefer explicit config; fall back to inferring from request headers.
 		var callbackURL string
@@ -304,6 +356,22 @@ func handleOAuthRedirect(cfg *config.Config, provider string) http.HandlerFunc {
 
 		http.Redirect(w, r, authURL, http.StatusFound)
 	}
+}
+
+// isValidReturnTo validates the return_to URL to prevent open redirects.
+// Only URLs whose path starts with /oauth/login are allowed (Hydra login flow).
+func isValidReturnTo(raw string) bool {
+	// Relative path — must start with /oauth/login.
+	if strings.HasPrefix(raw, "/oauth/login") {
+		return true
+	}
+	// Absolute URL — parse and check the path component.
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return (parsed.Scheme == "http" || parsed.Scheme == "https") &&
+		strings.HasPrefix(parsed.Path, "/oauth/login")
 }
 
 func handleAuthConfig(cfg *config.Config) http.HandlerFunc {

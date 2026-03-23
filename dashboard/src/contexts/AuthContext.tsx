@@ -17,7 +17,7 @@ import {
 export interface AuthContextValue {
   user: User | null;
   loading: boolean;
-  oauthLogin: (provider: string, code: string) => Promise<void>;
+  oauthLogin: (provider: string, code: string) => Promise<string | undefined>;
   logout: () => void;
   refreshUser: () => Promise<void>;
 }
@@ -69,12 +69,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [handleAuthResponse, refreshUser]);
 
   const oauthLogin = useCallback(
-    async (provider: string, code: string) => {
-      const res = await api.post<AuthResponse>(
+    async (provider: string, code: string): Promise<string | undefined> => {
+      const res = await api.post<AuthResponse & { redirect_to?: string }>(
         `/api/v1/auth/oauth/${provider}`,
         { code },
       );
+      // Hydra login flow: server returns redirect_to instead of tokens.
+      if (res.redirect_to) {
+        return res.redirect_to;
+      }
       handleAuthResponse(res);
+      return undefined;
     },
     [handleAuthResponse],
   );
