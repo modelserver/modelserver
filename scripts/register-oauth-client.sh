@@ -22,12 +22,10 @@ curl -s -o /dev/null -w "" -X DELETE \
 curl -s -X POST "${HYDRA_ADMIN_URL}/admin/clients" \
   -H "Content-Type: application/json" \
   -d "{
-    \"client_id\": \"${CLIENT_ID}\",
-    \"client_secret\": \"${CLIENT_SECRET}\",
     \"redirect_uris\": [\"${AGENTSERVER_REDIRECT_URI}\"],
     \"grant_types\": [\"authorization_code\", \"refresh_token\"],
     \"response_types\": [\"code\"],
-    \"scope\": \"project:llm offline_access\",
+    \"scope\": \"project:inference offline_access\",
     \"token_endpoint_auth_method\": \"client_secret_post\"
   }" | python3 -m json.tool 2>/dev/null || cat
 
