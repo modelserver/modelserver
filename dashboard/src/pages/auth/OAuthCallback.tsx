@@ -15,13 +15,14 @@ export function OAuthCallback() {
     called.current = true;
 
     const code = searchParams.get("code");
+    const state = searchParams.get("state");
 
     if (!code || !provider) {
       setError("Missing authorization code");
       return;
     }
 
-    oauthLogin(provider, code)
+    oauthLogin(provider, code, state ?? undefined)
       .then((redirectTo) => {
         if (redirectTo) {
           // Hydra flow: navigate to the login URL to complete the OAuth handshake.
