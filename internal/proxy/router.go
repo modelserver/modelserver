@@ -12,9 +12,11 @@ import (
 )
 
 // MountRoutes mounts all proxy routes onto the given router.
-func MountRoutes(r chi.Router, st *store.Store, handler *Handler, traceCfg config.TraceConfig, limiter ratelimit.RateLimiter, encKey []byte, logger *slog.Logger) {
+// introspector may be nil; if set, OAuth token introspection (e.g. via Hydra)
+// is used as a fallback when API key validation fails.
+func MountRoutes(r chi.Router, st *store.Store, handler *Handler, traceCfg config.TraceConfig, limiter ratelimit.RateLimiter, encKey []byte, logger *slog.Logger, introspector TokenIntrospector) {
 	r.Route("/v1", func(r chi.Router) {
-		r.Use(AuthMiddleware(st, encKey))
+		r.Use(AuthMiddleware(st, encKey, introspector))
 		r.Use(TraceMiddleware(traceCfg))
 		if limiter != nil {
 			r.Use(RateLimitMiddleware(limiter, st, logger))

@@ -24,6 +24,24 @@ import (
 	"github.com/modelserver/modelserver/internal/store"
 )
 
+// hydraIntrospectorAdapter adapts admin.HydraClient to the proxy.TokenIntrospector
+// interface, bridging the two packages without creating an import cycle.
+type hydraIntrospectorAdapter struct {
+	client *admin.HydraClient
+}
+
+func (a *hydraIntrospectorAdapter) IntrospectToken(ctx context.Context, token string) (*proxy.TokenIntrospectResult, error) {
+	res, err := a.client.IntrospectToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	return &proxy.TokenIntrospectResult{
+		Active: res.Active,
+		Sub:    res.Sub,
+		Ext:    res.Ext,
+	}, nil
+}
+
 func main() {
 	configPath := flag.String("config", "", "path to config file (default: config.yml)")
 	flag.Parse()
@@ -177,8 +195,17 @@ func main() {
 		w.Write([]byte("ok"))
 	})
 
+	// Create Hydra client for token introspection on the proxy if configured.
+	var proxyIntrospector proxy.TokenIntrospector
+	if cfg.Auth.OAuth.Hydra.AdminURL != "" {
+		proxyIntrospector = &hydraIntrospectorAdapter{
+			client: admin.NewHydraClient(cfg.Auth.OAuth.Hydra.AdminURL),
+		}
+		logger.Info("hydra token introspection enabled for proxy", "admin_url", cfg.Auth.OAuth.Hydra.AdminURL)
+	}
+
 	// Mount proxy routes.
-	proxy.MountRoutes(proxyRouter, st, proxyHandler, cfg.Trace, rateLimiter, encryptionKey, logger)
+	proxy.MountRoutes(proxyRouter, st, proxyHandler, cfg.Trace, rateLimiter, encryptionKey, logger, proxyIntrospector)
 
 	proxyServer := &http.Server{
 		Addr:    cfg.Server.ProxyAddr,
