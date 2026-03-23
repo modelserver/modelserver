@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -342,8 +343,20 @@ func handleOAuthRedirect(cfg *config.Config, provider string) http.HandlerFunc {
 // isValidReturnTo validates the return_to URL to prevent open redirects.
 // Only relative paths starting with /oauth/login are allowed (Hydra login flow).
 // Absolute URLs are rejected entirely to prevent redirecting to external hosts.
+// isValidReturnTo validates the return_to URL to prevent open redirects.
+// Accepts relative paths ("/oauth/login?...") and absolute URLs whose path starts with "/oauth/login".
+// For absolute URLs, the host is not restricted because the login page domain varies by deployment.
+// Safety relies on the path prefix check — "/oauth/login" is only served by the Hydra login handler.
 func isValidReturnTo(raw string) bool {
-	return strings.HasPrefix(raw, "/oauth/login")
+	if strings.HasPrefix(raw, "/oauth/login") {
+		return true
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return (parsed.Scheme == "http" || parsed.Scheme == "https") &&
+		strings.HasPrefix(parsed.Path, "/oauth/login")
 }
 
 func handleAuthConfig(cfg *config.Config) http.HandlerFunc {

@@ -174,17 +174,16 @@ func (h *LoginHandler) buildProviders(r *http.Request, returnTo string) []loginP
 	return providers
 }
 
-// buildReturnToURL constructs the login page URL including the login_challenge,
-// so OAuth providers can redirect back here after successful authentication.
-// Returns a relative path (e.g. "/oauth/login?login_challenge=...") so that
-// isValidReturnTo can safely validate it without needing the request host.
+// buildReturnToURL constructs an absolute login page URL including the login_challenge.
+// Must be absolute because the frontend (code.cs.ac.cn) navigates to this URL,
+// and it needs to land on the admin API domain (codeapi.cs.ac.cn), not the frontend domain.
 func buildReturnToURL(r *http.Request, challenge string) string {
 	if r == nil {
 		return ""
 	}
 	q := url.Values{}
 	q.Set("login_challenge", challenge)
-	return "/oauth/login?" + q.Encode()
+	return baseURL(r) + "/oauth/login?" + q.Encode()
 }
 
 // baseURL returns the scheme+host of the request (e.g. "https://example.com").
