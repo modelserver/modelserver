@@ -40,6 +40,8 @@ auth:
       issuer_url: ""
       client_id: ""
       client_secret: ""
+    hydra:
+      admin_url: "http://hydra:4445"
 
 encryption:
   # REQUIRED — 32-byte (base64 or hex) key used for at-rest encryption.

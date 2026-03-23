@@ -50,6 +50,7 @@ type OAuthConfig struct {
 	GitHub OAuthProviderConfig `yaml:"github" mapstructure:"github"`
 	Google OAuthProviderConfig `yaml:"google" mapstructure:"google"`
 	OIDC   OIDCConfig          `yaml:"oidc"   mapstructure:"oidc"`
+	Hydra  HydraConfig         `yaml:"hydra"  mapstructure:"hydra"`
 }
 
 // OAuthProviderConfig holds client credentials for a standard OAuth provider.
@@ -65,6 +66,11 @@ type OIDCConfig struct {
 	ClientSecret string `yaml:"client_secret" mapstructure:"client_secret"`
 	RedirectURI  string `yaml:"redirect_uri"  mapstructure:"redirect_uri"`
 	DisplayName  string `yaml:"display_name"  mapstructure:"display_name"`
+}
+
+// HydraConfig holds settings for an Ory Hydra OAuth2 server.
+type HydraConfig struct {
+	AdminURL string `yaml:"admin_url" mapstructure:"admin_url"`
 }
 
 // EncryptionConfig holds the encryption key used for at-rest data.
@@ -142,6 +148,7 @@ func setDefaults(v *viper.Viper) {
 	_ = v.BindEnv("auth.oauth.oidc.client_secret", "MODELSERVER_AUTH_OIDC_CLIENT_SECRET")
 	_ = v.BindEnv("auth.oauth.oidc.redirect_uri", "MODELSERVER_AUTH_OIDC_REDIRECT_URI")
 	_ = v.BindEnv("auth.oauth.oidc.display_name", "MODELSERVER_AUTH_OIDC_DISPLAY_NAME")
+	_ = v.BindEnv("auth.oauth.hydra.admin_url", "HYDRA_ADMIN_URL")
 	_ = v.BindEnv("auth.login_description")
 	_ = v.BindEnv("auth.login_footer_html")
 	_ = v.BindEnv("auth.github_url")
