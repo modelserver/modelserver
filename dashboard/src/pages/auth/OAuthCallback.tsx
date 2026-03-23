@@ -22,7 +22,14 @@ export function OAuthCallback() {
     }
 
     oauthLogin(provider, code)
-      .then(() => navigate("/"))
+      .then((redirectTo) => {
+        if (redirectTo) {
+          // Hydra flow: navigate to the login URL to complete the OAuth handshake.
+          window.location.href = redirectTo;
+        } else {
+          navigate("/");
+        }
+      })
       .catch(() => setError("OAuth login failed"));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

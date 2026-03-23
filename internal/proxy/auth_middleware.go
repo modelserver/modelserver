@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelserver/modelserver/internal/crypto"
@@ -27,6 +28,59 @@ const (
 	ctxSubscription contextKey = "subscription"
 	ctxUserQuotaPct contextKey = "user_quota_pct"
 )
+
+// TokenIntrospectResult holds the result of a token introspection call.
+type TokenIntrospectResult struct {
+	// Active indicates whether the token is currently valid.
+	Active bool
+	// Sub is the subject (user) the token was issued to.
+	Sub string
+	// Ext contains arbitrary extension claims embedded in the token
+	// (e.g. "project_id", "user_id").
+	Ext map[string]interface{}
+}
+
+// TokenIntrospector is implemented by anything that can introspect an OAuth
+// access token. Passing an implementation to AuthMiddleware enables the Hydra
+// fallback path without creating an import cycle between the proxy and admin
+// packages.
+type TokenIntrospector interface {
+	IntrospectToken(ctx context.Context, token string) (*TokenIntrospectResult, error)
+}
+
+// introspectCacheEntry holds a cached introspection result.
+type introspectCacheEntry struct {
+	result   *TokenIntrospectResult
+	cachedAt time.Time
+}
+
+// introspectCache is a simple in-memory cache for token introspection results.
+// Keys are SHA256 hashes of the raw token; values are introspectCacheEntry.
+var introspectCache sync.Map
+
+const introspectCacheTTL = 30 * time.Second
+
+// getIntrospectCache returns a cached result if it exists and has not expired.
+func getIntrospectCache(tokenHash string) (*TokenIntrospectResult, bool) {
+	v, ok := introspectCache.Load(tokenHash)
+	if !ok {
+		return nil, false
+	}
+	entry := v.(introspectCacheEntry)
+	if time.Since(entry.cachedAt) > introspectCacheTTL {
+		introspectCache.Delete(tokenHash)
+		return nil, false
+	}
+	return entry.result, true
+}
+
+// setIntrospectCache stores an introspection result in the cache.
+func setIntrospectCache(tokenHash string, result *TokenIntrospectResult) {
+	introspectCache.Store(tokenHash, introspectCacheEntry{
+		result:   result,
+		cachedAt: time.Now(),
+	})
+}
 
 // APIKeyFromContext returns the API key from the request context.
 func APIKeyFromContext(ctx context.Context) *types.APIKey {
@@ -74,7 +128,12 @@ func UserQuotaPctFromContext(ctx context.Context) *float64 {
 // to reject malformed keys without hitting the database.
 //
 // Supported key format: "ms-" + 49 base62 chars (32 random + 4 checksum bytes).
-func AuthMiddleware(st *store.Store, encKey []byte) func(http.Handler) http.Handler {
+//
+// If introspector is non-nil and the token fails API key validation, it falls back
+// to OAuth token introspection (e.g. via Hydra). On success the token's project_id
+// and user_id extension claims are used to load the project and build an equivalent
+// auth context.
+func AuthMiddleware(st *store.Store, encKey []byte, introspector TokenIntrospector) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rawKey := extractAPIKey(r)
@@ -84,16 +143,34 @@ func AuthMiddleware(st *store.Store, encKey []byte) func(http.Handler) http.Hand
 			}
 
 			// Pre-DB validation: verify format and embedded HMAC checksum.
+			isValidAPIKeyFormat := true
 			if len(encKey) > 0 && strings.HasPrefix(rawKey, types.APIKeyPrefix) {
 				keyBody := rawKey[len(types.APIKeyPrefix):]
 				if len(keyBody) != crypto.APIKeyBodyLen || !isBase62(keyBody) {
+					isValidAPIKeyFormat = false
+				} else if !crypto.ValidateAPIKeyChecksum(encKey, keyBody) {
+					isValidAPIKeyFormat = false
+				}
+			}
+
+			if !isValidAPIKeyFormat {
+				// HMAC check failed — try token introspection as fallback.
+				if introspector == nil {
 					writeProxyError(w, http.StatusUnauthorized, "invalid api key")
 					return
 				}
-				if !crypto.ValidateAPIKeyChecksum(encKey, keyBody) {
-					writeProxyError(w, http.StatusUnauthorized, "invalid api key")
+				handleTokenIntrospectionAuth(w, r, next, st, rawKey, introspector)
+				return
+			}
+
+			// Token doesn't look like an API key at all — skip DB lookup, try introspection directly.
+			if !strings.HasPrefix(rawKey, types.APIKeyPrefix) {
+				if introspector != nil {
+					handleTokenIntrospectionAuth(w, r, next, st, rawKey, introspector)
 					return
 				}
+				writeProxyError(w, http.StatusUnauthorized, "invalid api key")
+				return
 			}
 
 			hash := sha256.Sum256([]byte(rawKey))
@@ -105,7 +182,12 @@ func AuthMiddleware(st *store.Store, encKey []byte) func(http.Handler) http.Hand
 				return
 			}
 			if apiKey == nil {
-				writeProxyError(w, http.StatusUnauthorized, "invalid api key")
+				// Hash not found in DB — try token introspection as fallback.
+				if introspector == nil {
+					writeProxyError(w, http.StatusUnauthorized, "invalid api key")
+					return
+				}
+				handleTokenIntrospectionAuth(w, r, next, st, rawKey, introspector)
 				return
 			}
 
@@ -187,6 +269,115 @@ func AuthMiddleware(st *store.Store, encKey []byte) func(http.Handler) http.Hand
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// handleTokenIntrospectionAuth authenticates a request via token introspection.
+// It writes an error response and returns if authentication fails.
+func handleTokenIntrospectionAuth(w http.ResponseWriter, r *http.Request, next http.Handler, st *store.Store, rawToken string, introspector TokenIntrospector) {
+	// Use a SHA256 hash of the token as the cache key to avoid storing raw tokens.
+	h := sha256.Sum256([]byte(rawToken))
+	tokenHash := hex.EncodeToString(h[:])
+
+	var result *TokenIntrospectResult
+
+	if cached, ok := getIntrospectCache(tokenHash); ok {
+		result = cached
+	} else {
+		var err error
+		result, err = introspector.IntrospectToken(r.Context(), rawToken)
+		if err != nil {
+			writeProxyError(w, http.StatusUnauthorized, "invalid token")
+			return
+		}
+		setIntrospectCache(tokenHash, result)
+	}
+
+	if !result.Active {
+		writeProxyError(w, http.StatusUnauthorized, "token is not active")
+		return
+	}
+
+	// Extract project_id and user_id from the token's extension claims.
+	projectID, _ := result.Ext["project_id"].(string)
+	userID, _ := result.Ext["user_id"].(string)
+
+	if projectID == "" {
+		writeProxyError(w, http.StatusUnauthorized, "token missing project_id claim")
+		return
+	}
+
+	project, err := st.GetProjectByID(projectID)
+	if err != nil || project == nil {
+		writeProxyError(w, http.StatusUnauthorized, "project not found")
+		return
+	}
+	if project.Status != types.ProjectStatusActive {
+		writeProxyError(w, http.StatusForbidden, "project is suspended")
+		return
+	}
+
+	// Build a synthetic APIKey so the rest of the pipeline (handler, rate limit,
+	// usage tracking) can operate without special-casing the Hydra path.
+	syntheticKey := &types.APIKey{
+		ID:        "hydra:" + result.Sub,
+		ProjectID: project.ID,
+		CreatedBy: userID,
+		Name:      "hydra-token",
+		Status:    types.APIKeyStatusActive,
+	}
+
+	// Resolve rate limit policy: subscription > project default.
+	var policy *types.RateLimitPolicy
+	var subscription *types.Subscription
+
+	subscription, _ = st.GetActiveSubscription(project.ID)
+	if subscription != nil && subscription.PlanID != "" {
+		plan, _ := st.GetPlanByID(subscription.PlanID)
+		if plan != nil {
+			policy = plan.ToPolicy(project.ID, &subscription.StartsAt)
+		}
+	}
+	if policy == nil {
+		policy, _ = st.GetDefaultPolicy(project.ID)
+	}
+	if policy != nil && !policy.IsActive() {
+		policy = nil
+	}
+
+	// Load per-user credit quota (cached 10s).
+	var userQuotaPct *float64
+	if userID != "" {
+		quotaCacheKey := project.ID + ":" + userID
+		if cached, ok := quotaCache.Get(quotaCacheKey); ok {
+			if cached >= 0 {
+				v := cached
+				userQuotaPct = &v
+			}
+		} else {
+			member, memberErr := st.GetProjectMember(project.ID, userID)
+			if memberErr != nil {
+				// Fail open.
+			} else if member != nil && member.CreditQuotaPct != nil {
+				userQuotaPct = member.CreditQuotaPct
+				quotaCache.Set(quotaCacheKey, *member.CreditQuotaPct)
+			} else {
+				quotaCache.Set(quotaCacheKey, -1)
+			}
+		}
+	}
+
+	ctx := context.WithValue(r.Context(), ctxAPIKey, syntheticKey)
+	ctx = context.WithValue(ctx, ctxProject, project)
+	if policy != nil {
+		ctx = context.WithValue(ctx, ctxPolicy, policy)
+	}
+	if subscription != nil {
+		ctx = context.WithValue(ctx, ctxSubscription, subscription)
+	}
+	if userQuotaPct != nil {
+		ctx = context.WithValue(ctx, ctxUserQuotaPct, userQuotaPct)
+	}
+	next.ServeHTTP(w, r.WithContext(ctx))
 }
 
 func extractAPIKey(r *http.Request) string {

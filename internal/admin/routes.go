@@ -19,15 +19,35 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 		payClient = billing.NewHTTPPaymentClient(cfg.Billing.PaymentAPIURL, cfg.Billing.PaymentAPIKey)
 	}
 
+	// Mount Hydra OAuth login/consent endpoints (public — no JWT auth required).
+	// These are called by Hydra redirects from the user's browser.
+	if cfg.Auth.OAuth.Hydra.AdminURL != "" {
+		hydraClient := NewHydraClient(cfg.Auth.OAuth.Hydra.AdminURL)
+
+		loginHandler, err := NewLoginHandler(hydraClient, st, encKey, cfg)
+		if err != nil {
+			panic("admin: failed to create Hydra login handler: " + err.Error())
+		}
+
+		consentHandler, err := NewConsentHandler(hydraClient, st)
+		if err != nil {
+			panic("admin: failed to create Hydra consent handler: " + err.Error())
+		}
+
+		r.Get("/oauth/login", loginHandler.ServeHTTP)
+		r.Get("/oauth/consent", consentHandler.ServeHTTP)
+		r.Post("/oauth/consent", consentHandler.ServeHTTP)
+	}
+
 	r.Route("/api/v1", func(r chi.Router) {
 		// Public auth endpoints.
 		r.Get("/auth/config", handleAuthConfig(cfg))
 		r.Post("/auth/refresh", handleRefresh(st, jwtMgr))
 
 		// OAuth callbacks (public).
-		r.Post("/auth/oauth/github", handleOAuthCallback(st, jwtMgr, cfg, "github"))
-		r.Post("/auth/oauth/google", handleOAuthCallback(st, jwtMgr, cfg, "google"))
-		r.Post("/auth/oauth/oidc", handleOAuthCallback(st, jwtMgr, cfg, "oidc"))
+		r.Post("/auth/oauth/github", handleOAuthCallback(st, jwtMgr, cfg, encKey, "github"))
+		r.Post("/auth/oauth/google", handleOAuthCallback(st, jwtMgr, cfg, encKey, "google"))
+		r.Post("/auth/oauth/oidc", handleOAuthCallback(st, jwtMgr, cfg, encKey, "oidc"))
 
 		// OAuth redirects — send user to provider's authorization page.
 		r.Get("/auth/oauth/github/redirect", handleOAuthRedirect(cfg, "github"))
