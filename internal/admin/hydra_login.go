@@ -90,10 +90,27 @@ func (h *LoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 3: Check for an existing modelserver session cookie.
+	// Step 3: Check for auth_token (from OAuth callback redirect).
+	// This bypasses the session cookie which doesn't work cross-domain.
+	if authToken := r.URL.Query().Get("auth_token"); authToken != "" {
+		if userID, ok := verifyAuthToken(h.encKey, authToken); ok {
+			// Set session cookie for future visits (same-domain, will work).
+			setOAuthSessionCookie(w, h.encKey, userID)
+
+			redirect, err := h.hydra.AcceptLogin(ctx, challenge, userID)
+			if err != nil {
+				log.Printf("ERROR hydra_login: AcceptLogin (auth_token) challenge=%s userID=%s: %v", challenge, userID, err)
+				h.renderError(w, challenge, "Failed to complete login. Please try again.")
+				return
+			}
+			http.Redirect(w, r, redirect.RedirectTo, http.StatusFound)
+			return
+		}
+	}
+
+	// Step 4: Check for an existing modelserver session cookie.
 	userID, ok := getOAuthSession(r, h.encKey)
 	if ok && userID != "" {
-		// Step 4: Accept the Hydra login with the session's user.
 		redirect, err := h.hydra.AcceptLogin(ctx, challenge, userID)
 		if err != nil {
 			log.Printf("ERROR hydra_login: AcceptLogin challenge=%s userID=%s: %v", challenge, userID, err)

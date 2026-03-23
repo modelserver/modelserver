@@ -3,15 +3,20 @@ package admin
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/modelserver/modelserver/internal/auth"
 	"github.com/modelserver/modelserver/internal/config"
+	"github.com/modelserver/modelserver/internal/crypto"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
@@ -183,16 +188,17 @@ func handleOAuthCallback(st *store.Store, jwtMgr *auth.JWTManager, cfg *config.C
 			if idx := strings.Index(body.State, "|"); idx >= 0 {
 				returnTo := body.State[idx+1:]
 				if isValidReturnTo(returnTo) {
-					// Set the OAuth session cookie so the Hydra login handler
-					// can skip re-authentication on the next visit.
-					if err := setOAuthSessionCookie(w, encKey, user.ID); err != nil {
-						log.Printf("WARN: failed to set OAuth session cookie for user %s: %v", user.ID, err)
-					}
+					// Build an auth_token: encrypted user_id that the login handler
+					// can use to accept the Hydra login without a session cookie.
+					// This bypasses the cross-domain cookie problem (fetch from
+					// code.cs.ac.cn to codeapi.cs.ac.cn won't store Set-Cookie).
+					authToken := buildAuthToken(encKey, user.ID)
 
-					// Return redirect_to instead of tokens — the frontend
-					// will navigate to this URL to complete the Hydra flow.
+					// Append auth_token to the return_to URL.
+					redirectURL := appendQueryParam(returnTo, "auth_token", authToken)
+
 					writeJSON(w, http.StatusOK, map[string]interface{}{
-						"redirect_to": returnTo,
+						"redirect_to": redirectURL,
 					})
 					return
 				}
@@ -357,6 +363,56 @@ func isValidReturnTo(raw string) bool {
 	}
 	return (parsed.Scheme == "http" || parsed.Scheme == "https") &&
 		strings.HasPrefix(parsed.Path, "/oauth/login")
+}
+
+// buildAuthToken creates an encrypted token containing the user ID and timestamp.
+// The login handler can decrypt it to accept the Hydra login without a session cookie.
+func buildAuthToken(encKey []byte, userID string) string {
+	payload := fmt.Sprintf("%s|%d", userID, time.Now().Unix())
+	ciphertext, err := crypto.Encrypt(encKey, []byte(payload))
+	if err != nil {
+		log.Printf("WARN: failed to build auth token: %v", err)
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(ciphertext)
+}
+
+// verifyAuthToken decrypts and validates an auth token. Returns the user ID if valid.
+// Tokens expire after 5 minutes.
+func verifyAuthToken(encKey []byte, token string) (string, bool) {
+	ciphertext, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return "", false
+	}
+	plaintext, err := crypto.Decrypt(encKey, ciphertext)
+	if err != nil {
+		return "", false
+	}
+	parts := strings.SplitN(string(plaintext), "|", 2)
+	if len(parts) != 2 {
+		return "", false
+	}
+	ts, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return "", false
+	}
+	// Expire after 5 minutes.
+	if time.Now().Unix()-ts > 300 {
+		return "", false
+	}
+	return parts[0], true
+}
+
+// appendQueryParam adds a query parameter to a URL string.
+func appendQueryParam(rawURL, key, value string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	q := parsed.Query()
+	q.Set(key, value)
+	parsed.RawQuery = q.Encode()
+	return parsed.String()
 }
 
 func handleAuthConfig(cfg *config.Config) http.HandlerFunc {
