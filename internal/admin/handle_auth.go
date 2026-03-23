@@ -15,8 +15,6 @@ import (
 	"github.com/modelserver/modelserver/internal/types"
 )
 
-const oauthReturnToCookie = "oauth-return-to"
-
 func handleRefresh(st *store.Store, jwtMgr *auth.JWTManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -50,7 +48,8 @@ func handleRefresh(st *store.Store, jwtMgr *auth.JWTManager) http.HandlerFunc {
 func handleOAuthCallback(st *store.Store, jwtMgr *auth.JWTManager, cfg *config.Config, encKey []byte, provider string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Code string `json:"code"`
+			Code  string `json:"code"`
+			State string `json:"state"`
 		}
 		if err := decodeBody(r, &body); err != nil || body.Code == "" {
 			writeError(w, http.StatusBadRequest, "bad_request", "code is required")
@@ -177,35 +176,25 @@ func handleOAuthCallback(st *store.Store, jwtMgr *auth.JWTManager, cfg *config.C
 			return
 		}
 
-		// Check for oauth-return-to cookie (Hydra login flow).
-		// When present, set the session cookie for Hydra's "skip" check and
-		// return a redirect_to URL instead of issuing JWT tokens.
-		if cookie, err := r.Cookie(oauthReturnToCookie); err == nil && cookie.Value != "" {
-			returnTo := cookie.Value
-			if isValidReturnTo(returnTo) {
-				// Set the OAuth session cookie so the Hydra login handler
-				// can skip re-authentication on the next visit.
-				if err := setOAuthSessionCookie(w, encKey, user.ID); err != nil {
-					log.Printf("WARN: failed to set OAuth session cookie for user %s: %v", user.ID, err)
+		// Check for return_to encoded in the OAuth state parameter (Hydra login flow).
+		// State format: "<random_hex>|<return_to>" when return_to is present.
+		if body.State != "" {
+			if idx := strings.Index(body.State, "|"); idx >= 0 {
+				returnTo := body.State[idx+1:]
+				if isValidReturnTo(returnTo) {
+					// Set the OAuth session cookie so the Hydra login handler
+					// can skip re-authentication on the next visit.
+					if err := setOAuthSessionCookie(w, encKey, user.ID); err != nil {
+						log.Printf("WARN: failed to set OAuth session cookie for user %s: %v", user.ID, err)
+					}
+
+					// Return redirect_to instead of tokens — the frontend
+					// will navigate to this URL to complete the Hydra flow.
+					writeJSON(w, http.StatusOK, map[string]interface{}{
+						"redirect_to": returnTo,
+					})
+					return
 				}
-
-				// Clear the return-to cookie.
-				http.SetCookie(w, &http.Cookie{
-					Name:     oauthReturnToCookie,
-					Value:    "",
-					HttpOnly: true,
-					Secure:   true,
-					SameSite: http.SameSiteLaxMode,
-					MaxAge:   -1,
-					Path:     "/",
-				})
-
-				// Return redirect_to instead of tokens — the frontend
-				// will navigate to this URL to complete the Hydra flow.
-				writeJSON(w, http.StatusOK, map[string]interface{}{
-					"redirect_to": returnTo,
-				})
-				return
 			}
 		}
 
@@ -279,22 +268,6 @@ func handleUpdateUser(st *store.Store) http.HandlerFunc {
 
 func handleOAuthRedirect(cfg *config.Config, provider string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// If return_to is present (Hydra login flow), store it in a cookie so
-		// the callback handler can redirect back after authentication.
-		if returnTo := r.URL.Query().Get("return_to"); returnTo != "" {
-			if isValidReturnTo(returnTo) {
-				http.SetCookie(w, &http.Cookie{
-					Name:     oauthReturnToCookie,
-					Value:    returnTo,
-					HttpOnly: true,
-					Secure:   true,
-					SameSite: http.SameSiteLaxMode,
-					MaxAge:   600, // 10 minutes
-					Path:     "/",
-				})
-			}
-		}
-
 		// Build the callback URL pointing to the frontend's /auth/callback page.
 		// Prefer explicit config; fall back to inferring from request headers.
 		var callbackURL string
@@ -315,9 +288,18 @@ func handleOAuthRedirect(cfg *config.Config, provider string) http.HandlerFunc {
 		}
 
 		// Generate a random state parameter.
+		// If return_to is present (Hydra login flow), encode it into the state
+		// so it survives the cross-domain redirect chain. The cookie-based
+		// approach doesn't work when the admin API and frontend are on different
+		// domains (SameSite=Lax cookies are not sent with cross-origin POST).
 		stateBytes := make([]byte, 16)
 		_, _ = rand.Read(stateBytes)
 		state := hex.EncodeToString(stateBytes)
+		if returnTo := r.URL.Query().Get("return_to"); returnTo != "" {
+			if isValidReturnTo(returnTo) {
+				state = state + "|" + returnTo
+			}
+		}
 
 		ctx := r.Context()
 		var authURL string
