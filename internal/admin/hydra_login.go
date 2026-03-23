@@ -132,8 +132,18 @@ func (h *LoginHandler) renderLoginPage(w http.ResponseWriter, r *http.Request, c
 }
 
 // renderError renders the login page with an error message.
+// It does not attempt to build provider links (no request available) but
+// includes a relative retry URL so the user can try again.
 func (h *LoginHandler) renderError(w http.ResponseWriter, challenge, errMsg string) {
-	h.renderLoginPage(w, nil, challenge, errMsg)
+	data := loginTemplateData{
+		Challenge: challenge,
+		Error:     errMsg,
+		RetryURL:  "/oauth/login?login_challenge=" + url.QueryEscape(challenge),
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.templates.ExecuteTemplate(w, "login.html", data); err != nil {
+		log.Printf("ERROR hydra_login: render template: %v", err)
+	}
 }
 
 // buildProviders returns the list of configured OAuth providers as login links.
@@ -166,21 +176,15 @@ func (h *LoginHandler) buildProviders(r *http.Request, returnTo string) []loginP
 
 // buildReturnToURL constructs the login page URL including the login_challenge,
 // so OAuth providers can redirect back here after successful authentication.
+// Returns a relative path (e.g. "/oauth/login?login_challenge=...") so that
+// isValidReturnTo can safely validate it without needing the request host.
 func buildReturnToURL(r *http.Request, challenge string) string {
 	if r == nil {
 		return ""
 	}
-	u := *r.URL
-	if u.Host == "" {
-		u.Host = r.Host
-	}
-	if u.Scheme == "" {
-		u.Scheme = scheme(r)
-	}
-	q := u.Query()
+	q := url.Values{}
 	q.Set("login_challenge", challenge)
-	u.RawQuery = q.Encode()
-	return u.String()
+	return "/oauth/login?" + q.Encode()
 }
 
 // baseURL returns the scheme+host of the request (e.g. "https://example.com").

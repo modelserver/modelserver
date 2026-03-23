@@ -163,6 +163,16 @@ func AuthMiddleware(st *store.Store, encKey []byte, introspector TokenIntrospect
 				return
 			}
 
+			// Token doesn't look like an API key at all — skip DB lookup, try introspection directly.
+			if !strings.HasPrefix(rawKey, types.APIKeyPrefix) {
+				if introspector != nil {
+					handleTokenIntrospectionAuth(w, r, next, st, rawKey, introspector)
+					return
+				}
+				writeProxyError(w, http.StatusUnauthorized, "invalid api key")
+				return
+			}
+
 			hash := sha256.Sum256([]byte(rawKey))
 			keyHash := hex.EncodeToString(hash[:])
 
