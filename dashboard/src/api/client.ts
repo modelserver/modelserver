@@ -106,7 +106,12 @@ async function request<T>(
     );
   }
 
-  if (res.status === 204) return undefined as T;
+  if (res.status === 204 || res.status === 201) {
+    // 201 Created and 204 No Content may have no body
+    const text = await res.text();
+    if (!text) return undefined as T;
+    return JSON.parse(text);
+  }
   return res.json();
 }
 
