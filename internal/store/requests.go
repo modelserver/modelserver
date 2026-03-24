@@ -87,17 +87,21 @@ func (s *Store) ListRequests(projectID string, p types.PaginationParams, filters
 	where, args, argN := buildRequestFilters(projectID, filters)
 
 	var total int
-	if err := s.pool.QueryRow(ctx, fmt.Sprintf("SELECT COUNT(*) FROM requests %s", where), args...).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, fmt.Sprintf("SELECT COUNT(*) FROM requests r %s", where), args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
 	args = append(args, p.Limit(), p.Offset())
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
-		SELECT id, project_id, api_key_id, COALESCE(upstream_id::text, ''), COALESCE(trace_id::text, ''), COALESCE(msg_id, ''),
-			provider, model, streaming, status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-			credits_consumed, latency_ms, ttft_ms, COALESCE(error_message, ''), client_ip, created_at
-		FROM requests %s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
-		where, sanitizeSort(p.Sort, "created_at"), sanitizeOrder(p.Order), argN, argN+1),
+		SELECT r.id, r.project_id, COALESCE(r.api_key_id::text, ''), COALESCE(r.oauth_grant_id::text, ''),
+			COALESCE(r.upstream_id::text, ''), COALESCE(r.trace_id::text, ''), COALESCE(r.msg_id, ''),
+			r.provider, r.model, r.streaming, r.status, r.input_tokens, r.output_tokens, r.cache_creation_tokens, r.cache_read_tokens,
+			r.credits_consumed, r.latency_ms, r.ttft_ms, COALESCE(r.error_message, ''), r.client_ip, r.created_at,
+			COALESCE(og.client_name, '') as oauth_grant_client_name
+		FROM requests r
+		LEFT JOIN oauth_grants og ON og.id = r.oauth_grant_id
+		%s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
+		where, sanitizeSort(p.Sort, "r.created_at"), sanitizeOrder(p.Order), argN, argN+1),
 		args...,
 	)
 	if err != nil {
@@ -108,10 +112,11 @@ func (s *Store) ListRequests(projectID string, p types.PaginationParams, filters
 	var requests []types.Request
 	for rows.Next() {
 		var r types.Request
-		if err := rows.Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.UpstreamID, &r.TraceID, &r.MsgID,
+		if err := rows.Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.OAuthGrantID, &r.UpstreamID, &r.TraceID, &r.MsgID,
 			&r.Provider, &r.Model, &r.Streaming, &r.Status,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
-			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt); err != nil {
+			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt,
+			&r.OAuthGrantClientName); err != nil {
 			return nil, 0, err
 		}
 		requests = append(requests, r)
@@ -132,32 +137,32 @@ type RequestFilters struct {
 }
 
 func buildRequestFilters(projectID string, f RequestFilters) (string, []interface{}, int) {
-	conditions := []string{"project_id = $1"}
+	conditions := []string{"r.project_id = $1"}
 	args := []interface{}{projectID}
 	n := 2
 
 	if f.Model != "" {
-		conditions = append(conditions, fmt.Sprintf("model = $%d", n))
+		conditions = append(conditions, fmt.Sprintf("r.model = $%d", n))
 		args = append(args, f.Model)
 		n++
 	}
 	if f.Status != "" {
-		conditions = append(conditions, fmt.Sprintf("status = $%d", n))
+		conditions = append(conditions, fmt.Sprintf("r.status = $%d", n))
 		args = append(args, f.Status)
 		n++
 	}
 	if f.APIKeyID != "" {
-		conditions = append(conditions, fmt.Sprintf("api_key_id = $%d", n))
+		conditions = append(conditions, fmt.Sprintf("r.api_key_id = $%d", n))
 		args = append(args, f.APIKeyID)
 		n++
 	}
 	if !f.Since.IsZero() {
-		conditions = append(conditions, fmt.Sprintf("created_at >= $%d", n))
+		conditions = append(conditions, fmt.Sprintf("r.created_at >= $%d", n))
 		args = append(args, f.Since)
 		n++
 	}
 	if !f.Until.IsZero() {
-		conditions = append(conditions, fmt.Sprintf("created_at <= $%d", n))
+		conditions = append(conditions, fmt.Sprintf("r.created_at <= $%d", n))
 		args = append(args, f.Until)
 		n++
 	}
@@ -172,17 +177,21 @@ func (s *Store) ListAllRequests(p types.PaginationParams, filters RequestFilters
 	where, args, argN := buildGlobalRequestFilters(filters)
 
 	var total int
-	if err := s.pool.QueryRow(ctx, fmt.Sprintf("SELECT COUNT(*) FROM requests %s", where), args...).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, fmt.Sprintf("SELECT COUNT(*) FROM requests r %s", where), args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
 	args = append(args, p.Limit(), p.Offset())
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
-		SELECT id, project_id, api_key_id, COALESCE(upstream_id::text, ''), COALESCE(trace_id::text, ''), COALESCE(msg_id, ''),
-			provider, model, streaming, status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-			credits_consumed, latency_ms, ttft_ms, COALESCE(error_message, ''), client_ip, created_at
-		FROM requests %s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
-		where, sanitizeSort(p.Sort, "created_at"), sanitizeOrder(p.Order), argN, argN+1),
+		SELECT r.id, r.project_id, COALESCE(r.api_key_id::text, ''), COALESCE(r.oauth_grant_id::text, ''),
+			COALESCE(r.upstream_id::text, ''), COALESCE(r.trace_id::text, ''), COALESCE(r.msg_id, ''),
+			r.provider, r.model, r.streaming, r.status, r.input_tokens, r.output_tokens, r.cache_creation_tokens, r.cache_read_tokens,
+			r.credits_consumed, r.latency_ms, r.ttft_ms, COALESCE(r.error_message, ''), r.client_ip, r.created_at,
+			COALESCE(og.client_name, '') as oauth_grant_client_name
+		FROM requests r
+		LEFT JOIN oauth_grants og ON og.id = r.oauth_grant_id
+		%s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
+		where, sanitizeSort(p.Sort, "r.created_at"), sanitizeOrder(p.Order), argN, argN+1),
 		args...,
 	)
 	if err != nil {
@@ -193,10 +202,11 @@ func (s *Store) ListAllRequests(p types.PaginationParams, filters RequestFilters
 	var requests []types.Request
 	for rows.Next() {
 		var r types.Request
-		if err := rows.Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.UpstreamID, &r.TraceID, &r.MsgID,
+		if err := rows.Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.OAuthGrantID, &r.UpstreamID, &r.TraceID, &r.MsgID,
 			&r.Provider, &r.Model, &r.Streaming, &r.Status,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
-			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt); err != nil {
+			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt,
+			&r.OAuthGrantClientName); err != nil {
 			return nil, 0, err
 		}
 		requests = append(requests, r)
@@ -213,27 +223,27 @@ func buildGlobalRequestFilters(f RequestFilters) (string, []interface{}, int) {
 	n := 1
 
 	if f.Model != "" {
-		conditions = append(conditions, fmt.Sprintf("model = $%d", n))
+		conditions = append(conditions, fmt.Sprintf("r.model = $%d", n))
 		args = append(args, f.Model)
 		n++
 	}
 	if f.Status != "" {
-		conditions = append(conditions, fmt.Sprintf("status = $%d", n))
+		conditions = append(conditions, fmt.Sprintf("r.status = $%d", n))
 		args = append(args, f.Status)
 		n++
 	}
 	if f.APIKeyID != "" {
-		conditions = append(conditions, fmt.Sprintf("api_key_id = $%d", n))
+		conditions = append(conditions, fmt.Sprintf("r.api_key_id = $%d", n))
 		args = append(args, f.APIKeyID)
 		n++
 	}
 	if !f.Since.IsZero() {
-		conditions = append(conditions, fmt.Sprintf("created_at >= $%d", n))
+		conditions = append(conditions, fmt.Sprintf("r.created_at >= $%d", n))
 		args = append(args, f.Since)
 		n++
 	}
 	if !f.Until.IsZero() {
-		conditions = append(conditions, fmt.Sprintf("created_at <= $%d", n))
+		conditions = append(conditions, fmt.Sprintf("r.created_at <= $%d", n))
 		args = append(args, f.Until)
 		n++
 	}
@@ -248,10 +258,14 @@ func buildGlobalRequestFilters(f RequestFilters) (string, []interface{}, int) {
 // ListRequestsByTraceID returns all request logs associated with a trace ID.
 func (s *Store) ListRequestsByTraceID(traceID string) ([]types.Request, error) {
 	rows, err := s.pool.Query(context.Background(), `
-		SELECT id, project_id, api_key_id, COALESCE(upstream_id::text, ''), COALESCE(trace_id::text, ''), COALESCE(msg_id, ''),
-			provider, model, streaming, status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-			credits_consumed, latency_ms, ttft_ms, COALESCE(error_message, ''), client_ip, created_at
-		FROM requests WHERE trace_id = $1 ORDER BY created_at ASC`, traceID)
+		SELECT r.id, r.project_id, COALESCE(r.api_key_id::text, ''), COALESCE(r.oauth_grant_id::text, ''),
+			COALESCE(r.upstream_id::text, ''), COALESCE(r.trace_id::text, ''), COALESCE(r.msg_id, ''),
+			r.provider, r.model, r.streaming, r.status, r.input_tokens, r.output_tokens, r.cache_creation_tokens, r.cache_read_tokens,
+			r.credits_consumed, r.latency_ms, r.ttft_ms, COALESCE(r.error_message, ''), r.client_ip, r.created_at,
+			COALESCE(og.client_name, '') as oauth_grant_client_name
+		FROM requests r
+		LEFT JOIN oauth_grants og ON og.id = r.oauth_grant_id
+		WHERE r.trace_id = $1 ORDER BY r.created_at ASC`, traceID)
 	if err != nil {
 		return nil, err
 	}
@@ -260,10 +274,11 @@ func (s *Store) ListRequestsByTraceID(traceID string) ([]types.Request, error) {
 	var requests []types.Request
 	for rows.Next() {
 		var r types.Request
-		if err := rows.Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.UpstreamID, &r.TraceID, &r.MsgID,
+		if err := rows.Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.OAuthGrantID, &r.UpstreamID, &r.TraceID, &r.MsgID,
 			&r.Provider, &r.Model, &r.Streaming, &r.Status,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
-			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt); err != nil {
+			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt,
+			&r.OAuthGrantClientName); err != nil {
 			return nil, err
 		}
 		requests = append(requests, r)

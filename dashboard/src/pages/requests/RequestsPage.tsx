@@ -122,8 +122,16 @@ export function RequestsPage() {
       className: "text-right",
     },
     {
-      header: "Key",
-      accessor: (r) => keyName(r.api_key_id),
+      header: "Auth",
+      accessor: (r) => {
+        if (r.api_key_id) {
+          return keyName(r.api_key_id);
+        }
+        if (r.oauth_grant_client_name) {
+          return <span className="text-xs">{r.oauth_grant_client_name}</span>;
+        }
+        return <span className="text-muted-foreground">-</span>;
+      },
     },
     {
       header: "Client IP",
@@ -243,7 +251,11 @@ export function RequestsPage() {
               <DetailRow label="Provider" value={selected.provider} />
               <DetailRow label="Status" value={selected.status} />
               <DetailRow label="Streaming" value={selected.streaming ? "Yes" : "No"} />
-              <DetailRow label="API Key" value={keyName(selected.api_key_id)} />
+              {selected.api_key_id ? (
+                <DetailRow label="API Key" value={keyName(selected.api_key_id)} />
+              ) : selected.oauth_grant_client_name ? (
+                <DetailRow label="OAuth App" value={selected.oauth_grant_client_name} />
+              ) : null}
               <DetailRow label="Input Tokens" value={formatTokens(selected.input_tokens)} />
               <DetailRow label="Output Tokens" value={formatTokens(selected.output_tokens)} />
               <DetailRow label="Cache Creation" value={formatTokens(selected.cache_creation_tokens)} />

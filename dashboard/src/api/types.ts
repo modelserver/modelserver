@@ -140,6 +140,8 @@ export interface Request {
   id: string;
   project_id: string;
   api_key_id: string;
+  oauth_grant_id?: string;
+  oauth_grant_client_name?: string;
   upstream_id?: string;
   trace_id?: string;
   msg_id?: string;
