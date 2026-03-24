@@ -202,6 +202,18 @@ func (h *ConsentHandler) handlePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Record the OAuth grant so project owners can see and revoke it later.
+	grant := &types.OAuthGrant{
+		ProjectID: project.ID,
+		UserID:    subject,
+		ClientID:  consentReq.Client.ClientID,
+		Scopes:    consentReq.RequestedScope,
+	}
+	if err := h.store.CreateOAuthGrant(grant); err != nil {
+		log.Printf("WARN hydra_consent: failed to record grant: %v", err)
+		// Non-fatal: don't block the consent flow.
+	}
+
 	// Step 6: Redirect to the Hydra-provided URL.
 	http.Redirect(w, r, redirect.RedirectTo, http.StatusFound)
 }

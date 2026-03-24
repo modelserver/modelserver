@@ -225,6 +225,28 @@ func (c *HydraClient) IntrospectToken(ctx context.Context, token string) (*Intro
 	return &result, nil
 }
 
+// RevokeConsent revokes all consent sessions for the given subject and client in Hydra.
+func (c *HydraClient) RevokeConsent(ctx context.Context, subject, clientID string) error {
+	endpoint := fmt.Sprintf("%s/admin/oauth2/auth/sessions/consent?subject=%s&client=%s",
+		c.adminURL, url.QueryEscape(subject), url.QueryEscape(clientID))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("hydra: build revoke consent request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("hydra: revoke consent: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if err := checkStatus(resp); err != nil {
+		return fmt.Errorf("hydra: revoke consent: %w", err)
+	}
+	return nil
+}
+
 // checkStatus returns an error if the HTTP response status is not 2xx.
 // It reads and includes the response body in the error message for context.
 func checkStatus(resp *http.Response) error {

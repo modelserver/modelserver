@@ -19,11 +19,16 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 		payClient = billing.NewHTTPPaymentClient(cfg.Billing.PaymentAPIURL, cfg.Billing.PaymentAPIKey)
 	}
 
+	// Hoist hydraClient so it can be used both in the Hydra public endpoints
+	// and in the authenticated OAuth grants revocation route below.
+	var hydraClient *HydraClient
+	if cfg.Auth.OAuth.Hydra.AdminURL != "" {
+		hydraClient = NewHydraClient(cfg.Auth.OAuth.Hydra.AdminURL)
+	}
+
 	// Mount Hydra OAuth login/consent endpoints (public — no JWT auth required).
 	// These are called by Hydra redirects from the user's browser.
-	if cfg.Auth.OAuth.Hydra.AdminURL != "" {
-		hydraClient := NewHydraClient(cfg.Auth.OAuth.Hydra.AdminURL)
-
+	if hydraClient != nil {
 		loginHandler, err := NewLoginHandler(hydraClient, st, encKey, cfg)
 		if err != nil {
 			panic("admin: failed to create Hydra login handler: " + err.Error())
@@ -128,6 +133,10 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 						r.Put("/", handleUpdateKey(st))
 						r.Delete("/", handleDeleteKey(st))
 					})
+
+					// OAuth grants.
+					r.Get("/oauth-grants", handleListOAuthGrants(st))
+					r.Delete("/oauth-grants/{grantID}", handleRevokeOAuthGrant(st, hydraClient))
 
 					// Policies.
 					r.Get("/policies", handleListPolicies(st))
