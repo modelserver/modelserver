@@ -204,10 +204,11 @@ func (h *ConsentHandler) handlePost(w http.ResponseWriter, r *http.Request) {
 
 	// Record the OAuth grant so project owners can see and revoke it later.
 	grant := &types.OAuthGrant{
-		ProjectID: project.ID,
-		UserID:    subject,
-		ClientID:  consentReq.Client.ClientID,
-		Scopes:    consentReq.RequestedScope,
+		ProjectID:  project.ID,
+		UserID:     subject,
+		ClientID:   consentReq.Client.ClientID,
+		ClientName: consentReq.Client.ClientName,
+		Scopes:     consentReq.RequestedScope,
 	}
 	if err := h.store.CreateOAuthGrant(grant); err != nil {
 		log.Printf("WARN hydra_consent: failed to record grant: %v", err)

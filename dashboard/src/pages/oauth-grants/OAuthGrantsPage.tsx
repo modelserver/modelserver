@@ -45,7 +45,12 @@ export function OAuthGrantsPage() {
     {
       header: "Application",
       accessor: (g) => (
-        <span className="font-mono text-sm">{g.client_id}</span>
+        <div>
+          <span className="font-medium">{g.client_name || g.client_id}</span>
+          {g.client_name && (
+            <span className="block text-xs text-muted-foreground font-mono">{g.client_id}</span>
+          )}
+        </div>
       ),
     },
     {
@@ -89,7 +94,7 @@ export function OAuthGrantsPage() {
           <Button
             variant="ghost"
             size="sm"
-            className="text-destructive-foreground hover:text-destructive-foreground"
+            className="text-destructive hover:text-destructive"
             onClick={() => setConfirmGrant(g)}
           >
             Revoke

@@ -10,6 +10,7 @@ type OAuthGrant struct {
 	UserNickname string    `json:"user_nickname,omitempty"`
 	UserPicture  string    `json:"user_picture,omitempty"`
 	ClientID     string    `json:"client_id"`
+	ClientName   string    `json:"client_name"`
 	Scopes       []string  `json:"scopes"`
 	CreatedAt    time.Time `json:"created_at"`
 }

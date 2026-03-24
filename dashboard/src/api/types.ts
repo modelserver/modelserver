@@ -293,6 +293,7 @@ export interface OAuthGrant {
   user_nickname?: string;
   user_picture?: string;
   client_id: string;
+  client_name?: string;
   scopes: string[];
   created_at: string;
 }

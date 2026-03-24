@@ -80,6 +80,25 @@
     .fallback a {
       color: #0066cc;
     }
+    @media (prefers-color-scheme: dark) {
+      body { background: #1a1a1a; }
+      .card { background: #2a2a2a; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
+      h1 { color: #f0f0f0; }
+      p.subtitle { color: #aaa; }
+      .error { background: #3a1515; border-color: #6b2a2a; color: #f5a0a0; }
+      .provider-btn {
+        background: #333;
+        color: #e0e0e0;
+        border-color: #555;
+      }
+      .provider-btn:hover {
+        background: #3a3a3a;
+        border-color: #777;
+      }
+      .divider { border-top-color: #444; }
+      .fallback { color: #999; }
+      .fallback a { color: #6bb5ff; }
+    }
   </style>
 </head>
 <body>

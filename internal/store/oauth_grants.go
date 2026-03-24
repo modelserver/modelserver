@@ -12,13 +12,14 @@ import (
 // On re-authorization (same project + user + client), the scopes and timestamp are refreshed.
 func (s *Store) CreateOAuthGrant(g *types.OAuthGrant) error {
 	return s.pool.QueryRow(context.Background(), `
-		INSERT INTO oauth_grants (project_id, user_id, client_id, scopes)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO oauth_grants (project_id, user_id, client_id, client_name, scopes)
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (project_id, user_id, client_id) DO UPDATE SET
+			client_name = EXCLUDED.client_name,
 			scopes = EXCLUDED.scopes,
 			created_at = NOW()
 		RETURNING id, created_at`,
-		g.ProjectID, g.UserID, g.ClientID, g.Scopes,
+		g.ProjectID, g.UserID, g.ClientID, g.ClientName, g.Scopes,
 	).Scan(&g.ID, &g.CreatedAt)
 }
 
@@ -27,7 +28,7 @@ func (s *Store) ListOAuthGrants(projectID string) ([]types.OAuthGrant, error) {
 	rows, err := s.pool.Query(context.Background(), `
 		SELECT g.id, g.project_id, g.user_id,
 			COALESCE(u.nickname, ''), COALESCE(u.picture, ''),
-			g.client_id, g.scopes, g.created_at
+			g.client_id, g.client_name, g.scopes, g.created_at
 		FROM oauth_grants g
 		LEFT JOIN users u ON u.id = g.user_id
 		WHERE g.project_id = $1
@@ -42,7 +43,7 @@ func (s *Store) ListOAuthGrants(projectID string) ([]types.OAuthGrant, error) {
 		var g types.OAuthGrant
 		if err := rows.Scan(&g.ID, &g.ProjectID, &g.UserID,
 			&g.UserNickname, &g.UserPicture,
-			&g.ClientID, &g.Scopes, &g.CreatedAt); err != nil {
+			&g.ClientID, &g.ClientName, &g.Scopes, &g.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan oauth grant: %w", err)
 		}
 		grants = append(grants, g)
@@ -59,13 +60,13 @@ func (s *Store) GetOAuthGrantByID(id string) (*types.OAuthGrant, error) {
 	err := s.pool.QueryRow(context.Background(), `
 		SELECT g.id, g.project_id, g.user_id,
 			COALESCE(u.nickname, ''), COALESCE(u.picture, ''),
-			g.client_id, g.scopes, g.created_at
+			g.client_id, g.client_name, g.scopes, g.created_at
 		FROM oauth_grants g
 		LEFT JOIN users u ON u.id = g.user_id
 		WHERE g.id = $1`, id,
 	).Scan(&g.ID, &g.ProjectID, &g.UserID,
 		&g.UserNickname, &g.UserPicture,
-		&g.ClientID, &g.Scopes, &g.CreatedAt)
+		&g.ClientID, &g.ClientName, &g.Scopes, &g.CreatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}

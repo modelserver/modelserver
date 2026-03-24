@@ -24,7 +24,8 @@ type HydraLoginRequest struct {
 	Subject    string `json:"subject"`
 	Skip       bool   `json:"skip"`
 	Client     struct {
-		ClientID string `json:"client_id"`
+		ClientID   string `json:"client_id"`
+		ClientName string `json:"client_name"`
 	} `json:"client"`
 	RequestURL string `json:"request_url"`
 }
@@ -40,7 +41,8 @@ type HydraConsentRequest struct {
 	Subject        string   `json:"subject"`
 	RequestedScope []string `json:"requested_scope"`
 	Client         struct {
-		ClientID string `json:"client_id"`
+		ClientID   string `json:"client_id"`
+		ClientName string `json:"client_name"`
 	} `json:"client"`
 }
 
