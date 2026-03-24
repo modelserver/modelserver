@@ -8,11 +8,15 @@ import (
 	"github.com/modelserver/modelserver/internal/types"
 )
 
-// CreateOAuthGrant inserts a new OAuth grant record.
+// CreateOAuthGrant inserts or updates an OAuth grant record.
+// On re-authorization (same project + user + client), the scopes and timestamp are refreshed.
 func (s *Store) CreateOAuthGrant(g *types.OAuthGrant) error {
 	return s.pool.QueryRow(context.Background(), `
 		INSERT INTO oauth_grants (project_id, user_id, client_id, scopes)
 		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (project_id, user_id, client_id) DO UPDATE SET
+			scopes = EXCLUDED.scopes,
+			created_at = NOW()
 		RETURNING id, created_at`,
 		g.ProjectID, g.UserID, g.ClientID, g.Scopes,
 	).Scan(&g.ID, &g.CreatedAt)

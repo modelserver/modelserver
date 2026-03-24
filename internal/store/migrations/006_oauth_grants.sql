@@ -4,6 +4,7 @@ CREATE TABLE oauth_grants (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     client_id TEXT NOT NULL,
     scopes TEXT[] NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (project_id, user_id, client_id)
 );
 CREATE INDEX idx_oauth_grants_project ON oauth_grants(project_id);

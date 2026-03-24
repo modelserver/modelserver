@@ -7,6 +7,9 @@ config.yml
 !config.example.yml
 .env*
 
+# Credentials
+*.secret.json
+
 # IDE
 .idea/
 .vscode/

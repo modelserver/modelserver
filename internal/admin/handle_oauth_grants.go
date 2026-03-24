@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -58,8 +59,7 @@ func handleRevokeOAuthGrant(st *store.Store, hydra *HydraClient) http.HandlerFun
 		// Revoke the Hydra consent session if Hydra is configured.
 		if hydra != nil {
 			if err := hydra.RevokeConsent(r.Context(), grant.UserID, grant.ClientID); err != nil {
-				// Log but do not block — the DB deletion is the source of truth for us.
-				_ = err
+				log.Printf("WARN oauth_grants: failed to revoke Hydra consent for user=%s client=%s: %v", grant.UserID, grant.ClientID, err)
 			}
 		}
 
