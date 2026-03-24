@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"log"
 	"net/http"
 	"time"
 
@@ -32,6 +33,7 @@ func handleListRequests(st *store.Store) http.HandlerFunc {
 
 		requests, total, err := st.ListRequests(projectID, p, filters)
 		if err != nil {
+			log.Printf("ListRequests error: project=%s filters=%+v err=%v", projectID, filters, err)
 			writeError(w, http.StatusInternalServerError, "internal", "failed to list requests")
 			return
 		}
@@ -61,6 +63,7 @@ func handleListAllRequests(st *store.Store) http.HandlerFunc {
 
 		requests, total, err := st.ListAllRequests(p, filters)
 		if err != nil {
+			log.Printf("ListAllRequests error: filters=%+v err=%v", filters, err)
 			writeError(w, http.StatusInternalServerError, "internal", "failed to list requests")
 			return
 		}
