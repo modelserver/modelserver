@@ -285,6 +285,18 @@ export interface Trace {
   updated_at: string;
 }
 
+// --- OAuth Grant ---
+export interface OAuthGrant {
+  id: string;
+  project_id: string;
+  user_id: string;
+  user_nickname?: string;
+  user_picture?: string;
+  client_id: string;
+  scopes: string[];
+  created_at: string;
+}
+
 // --- Upstream (new routing system) ---
 export interface Upstream {
   id: string;

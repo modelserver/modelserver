@@ -19,6 +19,9 @@ import { OverviewPage } from "@/pages/dashboard/OverviewPage";
 // Keys
 import { KeysPage } from "@/pages/keys/KeysPage";
 
+// OAuth Grants
+import { OAuthGrantsPage } from "@/pages/oauth-grants/OAuthGrantsPage";
+
 // Members
 import { MembersPage } from "@/pages/members/MembersPage";
 
@@ -82,6 +85,7 @@ export function App() {
                 <Route path="projects/new" element={<CreateProjectPage />} />
                 <Route path="projects/:projectId" element={<OverviewPage />} />
                 <Route path="projects/:projectId/keys" element={<KeysPage />} />
+                <Route path="projects/:projectId/oauth-grants" element={<OAuthGrantsPage />} />
                 <Route path="projects/:projectId/members" element={<MembersPage />} />
                 <Route path="projects/:projectId/requests" element={<RequestsPage />} />
                 <Route path="projects/:projectId/traces" element={<TracesPage />} />

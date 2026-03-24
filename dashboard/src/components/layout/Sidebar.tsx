@@ -20,6 +20,7 @@ import {
   Server,
   Network,
   Activity,
+  Lock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -95,6 +96,9 @@ export function Sidebar() {
             </SidebarLink>
             <SidebarLink to={`/projects/${projectId}/keys`} icon={Key}>
               API Keys
+            </SidebarLink>
+            <SidebarLink to={`/projects/${projectId}/oauth-grants`} icon={Lock}>
+              Authorized Apps
             </SidebarLink>
             <SidebarLink to={`/projects/${projectId}/members`} icon={Users}>
               Members
