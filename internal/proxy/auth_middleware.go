@@ -27,6 +27,7 @@ const (
 	ctxPolicy       contextKey = "policy"
 	ctxSubscription contextKey = "subscription"
 	ctxUserQuotaPct contextKey = "user_quota_pct"
+	ctxOAuthGrantID contextKey = "oauth_grant_id"
 )
 
 // TokenIntrospectResult holds the result of a token introspection call.
@@ -38,6 +39,8 @@ type TokenIntrospectResult struct {
 	// Ext contains arbitrary extension claims embedded in the token
 	// (e.g. "project_id", "user_id").
 	Ext map[string]interface{}
+	// ClientID is the OAuth client that was issued this token.
+	ClientID string
 }
 
 // TokenIntrospector is implemented by anything that can introspect an OAuth
@@ -121,6 +124,15 @@ func UserQuotaPctFromContext(ctx context.Context) *float64 {
 		return p
 	}
 	return nil
+}
+
+// OAuthGrantIDFromContext returns the OAuth grant ID from the request context.
+// Returns empty string if the request was not authenticated via an OAuth access token.
+func OAuthGrantIDFromContext(ctx context.Context) string {
+	if id, ok := ctx.Value(ctxOAuthGrantID).(string); ok {
+		return id
+	}
+	return ""
 }
 
 // AuthMiddleware validates the API key and loads the associated project, policy, and subscription.
@@ -319,7 +331,7 @@ func handleTokenIntrospectionAuth(w http.ResponseWriter, r *http.Request, next h
 	// Build a synthetic APIKey so the rest of the pipeline (handler, rate limit,
 	// usage tracking) can operate without special-casing the Hydra path.
 	syntheticKey := &types.APIKey{
-		ID:        "hydra:" + result.Sub,
+		ID:        "", // empty → NULL in requests table (no real API key for token auth)
 		ProjectID: project.ID,
 		CreatedBy: userID,
 		Name:      "hydra-token",
@@ -366,6 +378,15 @@ func handleTokenIntrospectionAuth(w http.ResponseWriter, r *http.Request, next h
 		}
 	}
 
+	// Look up the OAuth grant so we can record oauth_grant_id on the request row.
+	var oauthGrantID string
+	if result.ClientID != "" {
+		grant, err := st.GetOAuthGrantByProjectUserClient(project.ID, userID, result.ClientID)
+		if err == nil && grant != nil {
+			oauthGrantID = grant.ID
+		}
+	}
+
 	ctx := context.WithValue(r.Context(), ctxAPIKey, syntheticKey)
 	ctx = context.WithValue(ctx, ctxProject, project)
 	if policy != nil {
@@ -376,6 +397,9 @@ func handleTokenIntrospectionAuth(w http.ResponseWriter, r *http.Request, next h
 	}
 	if userQuotaPct != nil {
 		ctx = context.WithValue(ctx, ctxUserQuotaPct, userQuotaPct)
+	}
+	if oauthGrantID != "" {
+		ctx = context.WithValue(ctx, ctxOAuthGrantID, oauthGrantID)
 	}
 	next.ServeHTTP(w, r.WithContext(ctx))
 }

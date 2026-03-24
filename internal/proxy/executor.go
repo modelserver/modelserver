@@ -23,6 +23,7 @@ import (
 type RequestContext struct {
 	ProjectID        string
 	APIKeyID         string
+	OAuthGrantID     string
 	UserID           string
 	Model            string   // Original model name from the client request
 	ActualModel      string   // After ModelMap resolution (set per-attempt by Executor)
@@ -377,6 +378,7 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 	if reqCtx.RequestID != "" {
 		duration := time.Since(startTime).Milliseconds()
 		req := types.Request{
+			OAuthGrantID: reqCtx.OAuthGrantID,
 			Status:       types.RequestStatusError,
 			LatencyMs:    duration,
 			ErrorMessage: "all upstreams exhausted",
@@ -521,6 +523,7 @@ func (e *Executor) commitErrorResponse(
 	req := types.Request{
 		ProjectID:    reqCtx.Project.ID,
 		APIKeyID:     reqCtx.APIKeyID,
+		OAuthGrantID: reqCtx.OAuthGrantID,
 		UpstreamID:   candidate.Upstream.ID,
 		TraceID:      reqCtx.TraceID,
 		Provider:     candidate.Upstream.Provider,
@@ -598,6 +601,7 @@ func (e *Executor) commitStreamingResponse(
 		req := types.Request{
 			ProjectID:           reqCtx.Project.ID,
 			APIKeyID:            reqCtx.APIKeyID,
+			OAuthGrantID:        reqCtx.OAuthGrantID,
 			UpstreamID:          candidate.Upstream.ID,
 			TraceID:             reqCtx.TraceID,
 			MsgID:               metrics.MsgID,
@@ -713,6 +717,7 @@ func (e *Executor) commitNonStreamingResponse(
 	req := types.Request{
 		ProjectID:           reqCtx.Project.ID,
 		APIKeyID:            reqCtx.APIKeyID,
+		OAuthGrantID:        reqCtx.OAuthGrantID,
 		UpstreamID:          candidate.Upstream.ID,
 		TraceID:             reqCtx.TraceID,
 		MsgID:               metrics.MsgID,

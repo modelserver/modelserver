@@ -26,6 +26,7 @@ type Request struct {
 	ID                  string    `json:"id"`
 	ProjectID           string    `json:"project_id"`
 	APIKeyID            string    `json:"api_key_id"`
+	OAuthGrantID        string    `json:"oauth_grant_id,omitempty"`
 	TraceID             string    `json:"trace_id,omitempty"`
 	MsgID               string    `json:"msg_id,omitempty"`
 	Provider            string    `json:"provider"`

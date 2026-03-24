@@ -36,9 +36,10 @@ func (a *hydraIntrospectorAdapter) IntrospectToken(ctx context.Context, token st
 		return nil, err
 	}
 	return &proxy.TokenIntrospectResult{
-		Active: res.Active,
-		Sub:    res.Sub,
-		Ext:    res.Ext,
+		Active:   res.Active,
+		Sub:      res.Sub,
+		Ext:      res.Ext,
+		ClientID: res.ClientID,
 	}, nil
 }
 

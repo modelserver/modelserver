@@ -76,6 +76,25 @@ func (s *Store) GetOAuthGrantByID(id string) (*types.OAuthGrant, error) {
 	return g, nil
 }
 
+// GetOAuthGrantByProjectUserClient returns the OAuth grant matching a specific
+// project, user, and OAuth client combination. Returns nil, nil if not found.
+func (s *Store) GetOAuthGrantByProjectUserClient(projectID, userID, clientID string) (*types.OAuthGrant, error) {
+	g := &types.OAuthGrant{}
+	err := s.pool.QueryRow(context.Background(), `
+		SELECT id, project_id, user_id, client_id, client_name, scopes, created_at
+		FROM oauth_grants
+		WHERE project_id = $1 AND user_id = $2 AND client_id = $3`,
+		projectID, userID, clientID,
+	).Scan(&g.ID, &g.ProjectID, &g.UserID, &g.ClientID, &g.ClientName, &g.Scopes, &g.CreatedAt)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get oauth grant by project/user/client: %w", err)
+	}
+	return g, nil
+}
+
 // DeleteOAuthGrant hard-deletes an OAuth grant by its ID.
 func (s *Store) DeleteOAuthGrant(id string) error {
 	_, err := s.pool.Exec(context.Background(), "DELETE FROM oauth_grants WHERE id = $1", id)

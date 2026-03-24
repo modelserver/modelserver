@@ -96,16 +96,19 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, all
 		}
 	}
 
+	oauthGrantID := OAuthGrantIDFromContext(r.Context())
+
 	// Insert a pending request record before proxying.
 	pendingReq := &types.Request{
-		ProjectID: project.ID,
-		APIKeyID:  apiKey.ID,
-		CreatedBy: apiKey.CreatedBy,
-		TraceID:   traceID,
-		Model:     reqShape.Model,
-		Streaming: reqShape.Stream,
-		Status:    types.RequestStatusProcessing,
-		ClientIP:  r.RemoteAddr,
+		ProjectID:    project.ID,
+		APIKeyID:     apiKey.ID,
+		OAuthGrantID: oauthGrantID,
+		CreatedBy:    apiKey.CreatedBy,
+		TraceID:      traceID,
+		Model:        reqShape.Model,
+		Streaming:    reqShape.Stream,
+		Status:       types.RequestStatusProcessing,
+		ClientIP:     r.RemoteAddr,
 	}
 	if err := h.store.CreateRequest(pendingReq); err != nil {
 		h.logger.Warn("failed to insert pending request", "error", err)
@@ -115,6 +118,7 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, all
 	reqCtx := &RequestContext{
 		ProjectID:        project.ID,
 		APIKeyID:         apiKey.ID,
+		OAuthGrantID:     oauthGrantID,
 		UserID:           apiKey.CreatedBy,
 		Model:            reqShape.Model,
 		IsStream:         reqShape.Stream,
