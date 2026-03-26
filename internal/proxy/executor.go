@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -300,12 +301,12 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 		attemptStart := time.Now()
 		resp, doErr := e.httpClient.Do(outReq)
 
-		if cancelFn != nil {
-			// For streaming: we defer cancel until the stream is fully consumed.
-			// For non-streaming or errors: cancel immediately after reading.
-			if doErr != nil || !reqCtx.IsStream {
-				cancelFn()
-			}
+		if cancelFn != nil && doErr != nil {
+			// On error, cancel immediately – there is no body to read.
+			// On success (both streaming and non-streaming), defer cancel
+			// to commitResponse so the timeout context stays alive while
+			// the response body is being read/streamed.
+			cancelFn()
 		}
 
 		// 6h. Evaluate the response for retryability.
@@ -396,10 +397,6 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 // retry policy and the response status/error.
 func (e *Executor) evaluateResponse(resp *http.Response, err error, policy *types.RetryPolicy) proxyResult {
 	if policy == nil {
-		// No retry policy: commit whatever we got (success or error).
-		if err != nil {
-			return proxyResultCommit
-		}
 		return proxyResultCommit
 	}
 
@@ -686,7 +683,12 @@ func (e *Executor) commitNonStreamingResponse(
 
 	if err != nil {
 		logger.Error("failed to read response body", "error", err)
-		w.WriteHeader(resp.StatusCode)
+		// Clear upstream headers already copied by commitResponse and
+		// return a proper error so the client doesn't see 200 + empty body.
+		for k := range w.Header() {
+			w.Header().Del(k)
+		}
+		writeProxyError(w, http.StatusBadGateway, "failed to read upstream response body")
 		return
 	}
 
@@ -794,20 +796,16 @@ func copyWithFlush(src io.Reader, dst io.Writer, flusher http.Flusher) (int64, e
 	}
 }
 
-// upstreamTimeout returns the appropriate timeout for the upstream. Streaming
-// requests use ReadTimeout (default 300s); non-streaming use DialTimeout
-// (default 30s) as a more aggressive timeout.
+// upstreamTimeout returns the appropriate timeout for the upstream.
+// This timeout covers the entire round-trip: dial, TLS, request send,
+// upstream processing, and response read. Non-streaming LLM calls can
+// take well over 30s for large outputs, so the default is 5 minutes
+// (same as streaming).
 func upstreamTimeout(upstream *types.Upstream, isStream bool) time.Duration {
-	if isStream {
-		if upstream.ReadTimeout > 0 {
-			return upstream.ReadTimeout
-		}
-		return 5 * time.Minute // default streaming timeout
-	}
 	if upstream.ReadTimeout > 0 {
 		return upstream.ReadTimeout
 	}
-	return 30 * time.Second // default non-streaming timeout
+	return 5 * time.Minute
 }
 
 // isConnectionError returns true if the error is a network connection error
@@ -818,12 +816,11 @@ func isConnectionError(err error) bool {
 	}
 	// Check for net.Error (includes dial and DNS errors).
 	var netErr net.Error
-	if ok := errorAs(err, &netErr); ok {
+	if errors.As(err, &netErr) {
 		return !netErr.Timeout()
 	}
-	// Check for net.OpError (connection refused, etc.).
 	var opErr *net.OpError
-	if ok := errorAs(err, &opErr); ok {
+	if errors.As(err, &opErr) {
 		return true
 	}
 	return false
@@ -835,10 +832,7 @@ func isTimeoutError(err error) bool {
 		return false
 	}
 	var netErr net.Error
-	if ok := errorAs(err, &netErr); ok {
-		return netErr.Timeout()
-	}
-	return false
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 // hopByHopHeaders are headers that must not be forwarded by proxies (RFC 7230 §6.1).
@@ -857,24 +851,6 @@ func isHopByHopHeader(key string) bool {
 	return hopByHopHeaders[http.CanonicalHeaderKey(key)]
 }
 
-// errorAs is a thin wrapper around errors.As to avoid a top-level import cycle
-// concern (there is none, but this keeps the helper testable).
-func errorAs(err error, target interface{}) bool {
-	// Use type assertion chain to avoid importing errors package for this simple case.
-	switch t := target.(type) {
-	case *net.Error:
-		if ne, ok := err.(net.Error); ok {
-			*t = ne
-			return true
-		}
-	case **net.OpError:
-		if oe, ok := err.(*net.OpError); ok {
-			*t = oe
-			return true
-		}
-	}
-	return false
-}
 
 // sanitizeOutboundHeaders returns a new header map containing only headers
 // that are safe to send to upstream AI providers. Applied as a defensive
