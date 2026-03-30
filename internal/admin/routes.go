@@ -120,6 +120,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 					// Project members.
 					r.Get("/members", handleListMembers(st))
 					r.Post("/members", handleAddMember(st))
+					r.Get("/members/usage", handleMembersUsage(st))
 					r.Put("/members/{userID}", handleUpdateMember(st))
 					r.Delete("/members/{userID}", handleRemoveMember(st))
 					r.Get("/members/{userID}/quota-usage", handleQuotaUsage(st))

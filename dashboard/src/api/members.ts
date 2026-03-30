@@ -1,14 +1,25 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
-import type { ListResponse, DataResponse, ProjectMember, QuotaUsageResponse } from "./types";
+import type { ListResponse, DataResponse, ProjectMember, QuotaUsageResponse, MemberUsage } from "./types";
 
-export function useMembers(projectId: string) {
+export function useMembers(projectId: string, page = 1, perPage = 20) {
   return useQuery({
-    queryKey: ["members", projectId],
+    queryKey: ["members", projectId, page, perPage],
     queryFn: () =>
       api.get<ListResponse<ProjectMember>>(
-        `/api/v1/projects/${projectId}/members?per_page=100`,
+        `/api/v1/projects/${projectId}/members?page=${page}&per_page=${perPage}`,
       ),
+  });
+}
+
+export function useMembersUsage(projectId: string, userIds: string[]) {
+  return useQuery({
+    queryKey: ["members-usage", projectId, userIds],
+    queryFn: () =>
+      api.get<DataResponse<MemberUsage[]>>(
+        `/api/v1/projects/${projectId}/members/usage?user_ids=${userIds.join(",")}`,
+      ),
+    enabled: userIds.length > 0,
   });
 }
 

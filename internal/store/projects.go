@@ -213,6 +213,48 @@ func (s *Store) ListProjectMembers(projectID string) ([]types.ProjectMember, err
 	return members, nil
 }
 
+// ListProjectMembersPaginated returns a paginated list of project members with user info.
+func (s *Store) ListProjectMembersPaginated(projectID string, p types.PaginationParams) ([]types.ProjectMember, int, error) {
+	ctx := context.Background()
+	var total int
+	if err := s.pool.QueryRow(ctx,
+		"SELECT COUNT(*) FROM project_members WHERE project_id = $1", projectID,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count members: %w", err)
+	}
+
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
+		SELECT pm.user_id, pm.project_id, pm.role, pm.credit_quota_percent, pm.created_at,
+			u.id, u.email, u.nickname, COALESCE(u.picture, '')
+		FROM project_members pm
+		JOIN users u ON pm.user_id = u.id
+		WHERE pm.project_id = $1
+		ORDER BY %s %s LIMIT $2 OFFSET $3`,
+		sanitizeSort(p.Sort, "pm.created_at"), sanitizeOrder(p.Order)),
+		projectID, p.Limit(), p.Offset(),
+	)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list members paginated: %w", err)
+	}
+	defer rows.Close()
+
+	var members []types.ProjectMember
+	for rows.Next() {
+		var m types.ProjectMember
+		var u types.User
+		if err := rows.Scan(&m.UserID, &m.ProjectID, &m.Role, &m.CreditQuotaPct, &m.CreatedAt,
+			&u.ID, &u.Email, &u.Nickname, &u.Picture); err != nil {
+			return nil, 0, fmt.Errorf("scan member: %w", err)
+		}
+		m.User = &u
+		members = append(members, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate members: %w", err)
+	}
+	return members, total, nil
+}
+
 // UpdateProjectMemberRole updates a member's role.
 func (s *Store) UpdateProjectMemberRole(projectID, userID, role string) error {
 	_, err := s.pool.Exec(context.Background(), `

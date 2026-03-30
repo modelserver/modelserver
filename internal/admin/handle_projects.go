@@ -4,6 +4,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -170,12 +171,13 @@ func handleUnarchiveProject(st *store.Store) http.HandlerFunc {
 func handleListMembers(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "projectID")
-		members, err := st.ListProjectMembers(projectID)
+		p := parsePagination(r)
+		members, total, err := st.ListProjectMembersPaginated(projectID, p)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to list members")
 			return
 		}
-		writeData(w, http.StatusOK, members)
+		writeList(w, members, total, p.Page, p.Limit())
 	}
 }
 
@@ -459,6 +461,109 @@ func handleMyQuota(st *store.Store) http.HandlerFunc {
 		projectID := chi.URLParam(r, "projectID")
 		caller := UserFromContext(r.Context())
 		serveQuotaUsage(st, w, projectID, caller.ID)
+	}
+}
+
+// handleMembersUsage returns quota usage for multiple members in a single request.
+// Accepts ?user_ids=id1,id2,... query parameter.
+func handleMembersUsage(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		projectID := chi.URLParam(r, "projectID")
+
+		raw := r.URL.Query().Get("user_ids")
+		if raw == "" {
+			writeData(w, http.StatusOK, map[string]interface{}{})
+			return
+		}
+		userIDs := strings.Split(raw, ",")
+
+		activeSub, err := st.GetActiveSubscription(projectID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to get subscription")
+			return
+		}
+
+		var policy *types.RateLimitPolicy
+		if activeSub != nil {
+			plan, err := st.GetPlanBySlug(activeSub.PlanName)
+			if err == nil && plan != nil {
+				policy = plan.ToPolicy(projectID, &activeSub.StartsAt)
+			}
+		}
+
+		type memberUsage struct {
+			UserID  string              `json:"user_id"`
+			Windows []quotaWindowStatus `json:"windows"`
+		}
+
+		result := make([]memberUsage, 0, len(userIDs))
+		for _, uid := range userIDs {
+			uid = strings.TrimSpace(uid)
+			if uid == "" {
+				continue
+			}
+
+			mu := memberUsage{UserID: uid, Windows: []quotaWindowStatus{}}
+
+			if policy == nil {
+				result = append(result, mu)
+				continue
+			}
+
+			member, err := st.GetProjectMember(projectID, uid)
+			if err != nil || member == nil {
+				result = append(result, mu)
+				continue
+			}
+
+			effectiveQuotaPct := 100.0
+			if member.CreditQuotaPct != nil {
+				effectiveQuotaPct = *member.CreditQuotaPct
+			}
+
+			for _, rule := range policy.CreditRules {
+				if rule.EffectiveScope() != types.CreditScopeProject {
+					continue
+				}
+
+				userLimit := int64(math.Round(float64(rule.MaxCredits) * (effectiveQuotaPct / 100.0)))
+				windowStart := ratelimit.WindowStartTime(rule.Window, rule.WindowType, rule.AnchorTime)
+
+				used, err := st.SumCreditsInWindowByUser(projectID, uid, windowStart)
+				if err != nil {
+					used = 0
+				}
+
+				var percentage float64
+				if userLimit == 0 {
+					percentage = 100
+				} else {
+					percentage = (used / float64(userLimit)) * 100
+					if percentage > 100 {
+						percentage = 100
+					}
+				}
+				percentage = math.Round(percentage*100) / 100
+
+				ws := quotaWindowStatus{
+					Window:     rule.Window,
+					WindowType: rule.WindowType,
+					Limit:      userLimit,
+					Used:       used,
+					Percentage: percentage,
+				}
+
+				if rule.WindowType == types.WindowTypeCalendar || rule.WindowType == types.WindowTypeFixed {
+					resetDur := ratelimit.WindowResetDuration(rule.Window, rule.WindowType, rule.AnchorTime)
+					ws.ResetsAt = time.Now().UTC().Add(resetDur).Format(time.RFC3339)
+				}
+
+				mu.Windows = append(mu.Windows, ws)
+			}
+			result = append(result, mu)
+		}
+
+		writeData(w, http.StatusOK, result)
 	}
 }
 

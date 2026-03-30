@@ -85,6 +85,11 @@ export interface QuotaUsageResponse {
   windows: QuotaWindowStatus[];
 }
 
+export interface MemberUsage {
+  user_id: string;
+  windows: QuotaWindowStatus[];
+}
+
 // --- API Key ---
 export interface APIKey {
   id: string;

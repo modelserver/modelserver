@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useCurrentProject } from "@/hooks/useCurrentProject";
 import { useAuth } from "@/hooks/useAuth";
-import { useMembers, useAddMember, useUpdateMember, useRemoveMember } from "@/api/members";
+import { useMembers, useAddMember, useUpdateMember, useRemoveMember, useMembersUsage } from "@/api/members";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
+import { Pagination } from "@/components/shared/Pagination";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,15 +31,17 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
-import type { ProjectMember } from "@/api/types";
+import type { ProjectMember, MemberUsage } from "@/api/types";
 import { Plus, MoreHorizontal, Pencil } from "lucide-react";
 
 const roles = ["owner", "maintainer", "developer"] as const;
+const PER_PAGE = 20;
 
 export function MembersPage() {
   const projectId = useCurrentProject();
   const { user: currentUser } = useAuth();
-  const { data, isLoading } = useMembers(projectId);
+  const [page, setPage] = useState(1);
+  const { data, isLoading } = useMembers(projectId, page, PER_PAGE);
   const addMember = useAddMember(projectId);
   const updateMember = useUpdateMember(projectId);
   const removeMember = useRemoveMember(projectId);
@@ -55,6 +58,18 @@ export function MembersPage() {
   const [removeQuota, setRemoveQuota] = useState(false);
 
   const members = data?.data ?? [];
+  const meta = data?.meta;
+
+  // Fetch usage for current page members
+  const userIds = useMemo(() => members.map((m) => m.user_id), [members]);
+  const { data: usageData } = useMembersUsage(projectId, userIds);
+  const usageMap = useMemo(() => {
+    const m = new Map<string, MemberUsage>();
+    for (const u of usageData?.data ?? []) {
+      m.set(u.user_id, u);
+    }
+    return m;
+  }, [usageData]);
 
   // Determine current user's role in this project
   const currentMember = members.find((m) => m.user_id === currentUser?.id);
@@ -151,6 +166,37 @@ export function MembersPage() {
       },
     },
     {
+      header: "Usage",
+      accessor: (m) => {
+        const usage = usageMap.get(m.user_id);
+        if (!usage || usage.windows.length === 0) {
+          return <span className="text-xs text-muted-foreground">—</span>;
+        }
+        return (
+          <div className="flex flex-col gap-1 min-w-[120px]">
+            {usage.windows.map((w) => {
+              const pct = Math.min(w.percentage, 100);
+              const isHigh = pct > 80;
+              return (
+                <div key={w.window} className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground w-6 shrink-0">{w.window}</span>
+                  <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${isHigh ? "bg-destructive" : "bg-primary"}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <span className={`text-xs tabular-nums w-12 text-right ${isHigh ? "text-destructive font-medium" : ""}`}>
+                    {pct.toFixed(1)}%
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        );
+      },
+    },
+    {
       header: "Joined",
       accessor: (m) => new Date(m.created_at).toLocaleDateString(),
     },
@@ -222,6 +268,17 @@ export function MembersPage() {
             />
           )}
         </CardContent>
+        {meta && meta.total_pages > 1 && (
+          <div className="border-t px-4 py-3">
+            <Pagination
+              page={meta.page}
+              totalPages={meta.total_pages}
+              total={meta.total}
+              perPage={meta.per_page}
+              onPageChange={setPage}
+            />
+          </div>
+        )}
       </Card>
 
       {/* Add Member Dialog */}
