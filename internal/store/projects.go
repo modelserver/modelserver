@@ -229,8 +229,8 @@ func (s *Store) ListProjectMembersPaginated(projectID string, p types.Pagination
 		FROM project_members pm
 		JOIN users u ON pm.user_id = u.id
 		WHERE pm.project_id = $1
-		ORDER BY %s %s LIMIT $2 OFFSET $3`,
-		sanitizeSort(p.Sort, "pm.created_at"), sanitizeOrder(p.Order)),
+		ORDER BY pm.%s %s LIMIT $2 OFFSET $3`,
+		sanitizeSort(p.Sort, "created_at"), sanitizeOrder(p.Order)),
 		projectID, p.Limit(), p.Offset(),
 	)
 	if err != nil {

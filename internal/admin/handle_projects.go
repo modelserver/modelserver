@@ -468,6 +468,15 @@ func handleMyQuota(st *store.Store) http.HandlerFunc {
 // Accepts ?user_ids=id1,id2,... query parameter.
 func handleMembersUsage(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		caller := UserFromContext(r.Context())
+		callerMember := MemberFromContext(r.Context())
+		isPrivileged := caller.IsSuperadmin ||
+			(callerMember != nil && (callerMember.Role == types.RoleOwner || callerMember.Role == types.RoleMaintainer))
+		if !isPrivileged {
+			writeError(w, http.StatusForbidden, "forbidden", "access denied")
+			return
+		}
+
 		projectID := chi.URLParam(r, "projectID")
 
 		raw := r.URL.Query().Get("user_ids")
