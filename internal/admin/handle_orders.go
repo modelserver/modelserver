@@ -259,6 +259,7 @@ func handleSubscriptionUsage(st *store.Store) http.HandlerFunc {
 					percentage = 100
 				}
 			}
+			percentage = math.Round(percentage*100) / 100
 			s := ratelimit.CreditWindowStatus{
 				Window:     rule.Window,
 				Percentage: percentage,

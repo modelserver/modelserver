@@ -352,7 +352,7 @@ export function SubscriptionPage() {
                           />
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          {pct.toFixed(1)}% used
+                          {pct.toFixed(2)}% used
                         </p>
                       </div>
                     );
