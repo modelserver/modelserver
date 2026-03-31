@@ -73,8 +73,8 @@ export interface ProjectMember {
 export interface QuotaWindowStatus {
   window: string;
   window_type: string;
-  limit: number;
-  used: number;
+  limit?: number;
+  used?: number;
   percentage: number;
   resets_at?: string;
 }

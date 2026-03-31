@@ -7,11 +7,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/modelserver/modelserver/internal/store"
+	"github.com/modelserver/modelserver/internal/types"
 )
 
 func handleListRequests(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "projectID")
+		caller := UserFromContext(r.Context())
+		callerMember := MemberFromContext(r.Context())
 		p := parsePagination(r)
 		q := r.URL.Query()
 
@@ -20,6 +23,13 @@ func handleListRequests(st *store.Store) http.HandlerFunc {
 			Status:   q.Get("status"),
 			APIKeyID: q.Get("api_key_id"),
 		}
+
+		// Developers can only see their own requests.
+		isDeveloper := callerMember != nil && callerMember.Role == types.RoleDeveloper
+		if isDeveloper {
+			filters.CreatedBy = caller.ID
+		}
+
 		if since := q.Get("since"); since != "" {
 			if t, err := time.Parse(time.RFC3339, since); err == nil {
 				filters.Since = t
@@ -37,6 +47,14 @@ func handleListRequests(st *store.Store) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to list requests")
 			return
 		}
+
+		// Strip provider for non-superadmin users.
+		if !caller.IsSuperadmin {
+			for i := range requests {
+				requests[i].Provider = ""
+			}
+		}
+
 		writeList(w, requests, total, p.Page, p.Limit())
 	}
 }

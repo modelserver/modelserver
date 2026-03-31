@@ -30,7 +30,7 @@ type Request struct {
 	OAuthGrantClientName string    `json:"oauth_grant_client_name,omitempty"`
 	TraceID             string    `json:"trace_id,omitempty"`
 	MsgID               string    `json:"msg_id,omitempty"`
-	Provider            string    `json:"provider"`
+	Provider            string    `json:"provider,omitempty"`
 	Model               string    `json:"model"`
 	Streaming           bool      `json:"streaming"`
 	Status              string    `json:"status"`

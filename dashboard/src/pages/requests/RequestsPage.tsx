@@ -248,7 +248,9 @@ export function RequestsPage() {
                 <DetailRow label="Msg ID" value={selected.msg_id} />
               )}
               <DetailRow label="Model" value={selected.model} />
-              <DetailRow label="Provider" value={selected.provider} />
+              {selected.provider && (
+                <DetailRow label="Provider" value={selected.provider} />
+              )}
               <DetailRow label="Status" value={selected.status} />
               <DetailRow label="Streaming" value={selected.streaming ? "Yes" : "No"} />
               {selected.api_key_id ? (

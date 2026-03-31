@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/modelserver/modelserver/internal/store"
+	"github.com/modelserver/modelserver/internal/types"
 )
 
 func handleListTraces(st *store.Store) http.HandlerFunc {
@@ -33,13 +34,31 @@ func handleGetTrace(st *store.Store) http.HandlerFunc {
 
 func handleListTraceRequests(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		caller := UserFromContext(r.Context())
+		callerMember := MemberFromContext(r.Context())
 		traceID := chi.URLParam(r, "traceID")
 		requests, err := st.ListRequestsByTraceID(traceID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to list trace requests")
 			return
 		}
-		writeData(w, http.StatusOK, requests)
+
+		isDeveloper := callerMember != nil && callerMember.Role == types.RoleDeveloper
+
+		filtered := requests[:0]
+		for i := range requests {
+			// Developers can only see their own requests.
+			if isDeveloper && requests[i].CreatedBy != caller.ID {
+				continue
+			}
+			// Strip provider for non-superadmin users.
+			if !caller.IsSuperadmin {
+				requests[i].Provider = ""
+			}
+			filtered = append(filtered, requests[i])
+		}
+
+		writeData(w, http.StatusOK, filtered)
 	}
 }
 
