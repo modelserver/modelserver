@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
-import type { ListResponse, DataResponse, Upstream, UpstreamGroupWithMembers, RoutingRoute, RoutingHealthResponse, UpstreamTestResult, UpstreamUsageSummary } from "./types";
+import type { ListResponse, DataResponse, Upstream, UpstreamGroupWithMembers, RoutingRoute, RoutingHealthResponse, UpstreamTestResult, UpstreamUsageSummary, ClaudeCodeUtilization } from "./types";
 
 // --- Upstreams ---
 export function useUpstreams(page = 1, perPage = 20) {
@@ -48,6 +48,18 @@ export function useUpstreamUsage() {
     queryKey: ["admin", "upstream-usage"],
     queryFn: () =>
       api.get<DataResponse<(UpstreamUsageSummary & { credits_5h: number; credits_7d: number })[]>>("/api/v1/upstreams/usage"),
+  });
+}
+
+export function useClaudeCodeUtilization(upstreamId: string | undefined) {
+  return useQuery({
+    queryKey: ["admin", "upstreams", upstreamId, "utilization"],
+    queryFn: () =>
+      api.get<DataResponse<ClaudeCodeUtilization>>(
+        `/api/v1/upstreams/${upstreamId}/utilization`,
+      ),
+    enabled: !!upstreamId,
+    refetchInterval: 60_000,
   });
 }
 

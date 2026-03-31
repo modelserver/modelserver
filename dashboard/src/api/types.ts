@@ -306,6 +306,27 @@ export interface OAuthGrant {
   created_at: string;
 }
 
+// --- Claude Code Utilization (from Claude AI API /api/oauth/usage) ---
+export interface ClaudeCodeRateLimit {
+  utilization: number | null;
+  resets_at: string | null;
+}
+
+export interface ClaudeCodeExtraUsage {
+  is_enabled: boolean;
+  monthly_limit: number | null;
+  used_credits: number | null;
+  utilization: number | null;
+}
+
+export interface ClaudeCodeUtilization {
+  five_hour?: ClaudeCodeRateLimit | null;
+  seven_day?: ClaudeCodeRateLimit | null;
+  seven_day_opus?: ClaudeCodeRateLimit | null;
+  seven_day_sonnet?: ClaudeCodeRateLimit | null;
+  extra_usage?: ClaudeCodeExtraUsage | null;
+}
+
 // --- Upstream (new routing system) ---
 export interface Upstream {
   id: string;

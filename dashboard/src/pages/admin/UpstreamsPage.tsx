@@ -10,6 +10,7 @@ import {
   useClaudeCodeOAuthExchange,
   useUpstreamOAuthRefresh,
   useUpstreamOAuthStatus,
+  useClaudeCodeUtilization,
 } from "@/api/upstreams";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
@@ -76,6 +77,67 @@ function TokenStatusBadge({ upstreamId }: { upstreamId: string }) {
       <Clock className="h-3 w-3" />
       {text}
     </span>
+  );
+}
+
+function UtilizationBadge({ upstreamId }: { upstreamId: string }) {
+  const { data, isLoading } = useClaudeCodeUtilization(upstreamId);
+
+  if (isLoading) return <span className="text-xs text-muted-foreground">...</span>;
+
+  const util = data?.data;
+  if (!util) return <span className="text-xs text-muted-foreground">N/A</span>;
+
+  function pctColor(pct: number): string {
+    if (pct >= 80) return "text-red-600 dark:text-red-400";
+    if (pct >= 50) return "text-yellow-600 dark:text-yellow-400";
+    return "text-green-600 dark:text-green-400";
+  }
+
+  function formatReset(resetsAt: string | null): string {
+    if (!resetsAt) return "";
+    const d = new Date(resetsAt);
+    if (Number.isNaN(d.getTime())) return "";
+    const now = Date.now();
+    const diffMs = d.getTime() - now;
+    if (diffMs <= 0) return "expired";
+    const hours = Math.floor(diffMs / 3_600_000);
+    const mins = Math.floor((diffMs % 3_600_000) / 60_000);
+    return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+  }
+
+  const pct5h = util.five_hour?.utilization != null ? Math.round(util.five_hour.utilization * 100) : null;
+  const pct7d = util.seven_day?.utilization != null ? Math.round(util.seven_day.utilization * 100) : null;
+  const reset5h = util.five_hour?.resets_at ? formatReset(util.five_hour.resets_at) : "";
+  const reset7d = util.seven_day?.resets_at ? formatReset(util.seven_day.resets_at) : "";
+
+  const extraUsage = util.extra_usage;
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-xs tabular-nums" title={reset5h ? `5h resets in ${reset5h}` : undefined}>
+        5h:{" "}
+        {pct5h != null ? (
+          <span className={pctColor(pct5h)}>{pct5h}%</span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </span>
+      <span className="text-xs tabular-nums" title={reset7d ? `7d resets in ${reset7d}` : undefined}>
+        7d:{" "}
+        {pct7d != null ? (
+          <span className={pctColor(pct7d)}>{pct7d}%</span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </span>
+      {extraUsage?.is_enabled && (
+        <span className="text-xs tabular-nums text-muted-foreground" title={extraUsage.monthly_limit != null ? `Limit: $${extraUsage.monthly_limit}` : "Unlimited"}>
+          Extra: {extraUsage.used_credits != null ? `$${extraUsage.used_credits}` : "on"}
+          {extraUsage.monthly_limit != null ? `/$${extraUsage.monthly_limit}` : ""}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -321,6 +383,15 @@ export function UpstreamsPage() {
       accessor: (u) =>
         u.provider === "claudecode" ? (
           <TokenStatusBadge upstreamId={u.id} />
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        ),
+    },
+    {
+      header: "Utilization",
+      accessor: (u) =>
+        u.provider === "claudecode" ? (
+          <UtilizationBadge upstreamId={u.id} />
         ) : (
           <span className="text-xs text-muted-foreground">—</span>
         ),

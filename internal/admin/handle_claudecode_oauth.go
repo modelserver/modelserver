@@ -190,6 +190,112 @@ func handleClaudeCodeTokenStatus(st *store.Store, encKey []byte) http.HandlerFun
 	}
 }
 
+func handleClaudeCodeUtilization(st *store.Store, encKey []byte) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		upstreamID := chi.URLParam(r, "upstreamID")
+		u, err := st.GetUpstreamByID(upstreamID)
+		if err != nil || u == nil {
+			writeError(w, http.StatusNotFound, "not_found", "upstream not found")
+			return
+		}
+		if u.Provider != "claudecode" {
+			writeError(w, http.StatusBadRequest, "bad_request", "upstream is not a claudecode upstream")
+			return
+		}
+
+		plaintext, err := crypto.Decrypt(encKey, u.APIKeyEncrypted)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to decrypt credentials")
+			return
+		}
+
+		var creds proxy.ClaudeCodeCredentials
+		if err := json.Unmarshal(plaintext, &creds); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to parse credentials")
+			return
+		}
+
+		// If the token is expired, try refreshing it first.
+		accessToken := creds.AccessToken
+		if time.Now().Unix() > creds.ExpiresAt-300 && creds.RefreshToken != "" {
+			clientID := creds.ClientID
+			if clientID == "" {
+				clientID = proxy.ClaudeCodeClientID
+			}
+			refreshBody, _ := json.Marshal(map[string]string{
+				"grant_type":    "refresh_token",
+				"client_id":     clientID,
+				"refresh_token": creds.RefreshToken,
+				"scope":         proxy.ClaudeCodeScopes,
+			})
+			refreshClient := &http.Client{Timeout: 15 * time.Second}
+			refreshResp, err := refreshClient.Post(proxy.ClaudeCodeTokenURL, "application/json", bytes.NewReader(refreshBody))
+			if err == nil {
+				defer refreshResp.Body.Close()
+				if refreshResp.StatusCode == http.StatusOK {
+					var tokenResp struct {
+						AccessToken  string `json:"access_token"`
+						RefreshToken string `json:"refresh_token"`
+						ExpiresIn    int64  `json:"expires_in"`
+					}
+					if rb, _ := io.ReadAll(io.LimitReader(refreshResp.Body, 8192)); json.Unmarshal(rb, &tokenResp) == nil && tokenResp.AccessToken != "" {
+						accessToken = tokenResp.AccessToken
+						// Persist refreshed credentials.
+						newCreds := proxy.ClaudeCodeCredentials{
+							AccessToken:  tokenResp.AccessToken,
+							RefreshToken: tokenResp.RefreshToken,
+							ExpiresAt:    time.Now().Unix() + tokenResp.ExpiresIn,
+							ClientID:     clientID,
+						}
+						if credsJSON, err := json.Marshal(newCreds); err == nil {
+							if encrypted, err := crypto.Encrypt(encKey, credsJSON); err == nil {
+								_ = st.UpdateUpstream(upstreamID, map[string]interface{}{"api_key_encrypted": encrypted})
+							}
+						}
+					}
+				}
+			}
+		}
+
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, "https://api.anthropic.com/api/oauth/usage", nil)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to create request")
+			return
+		}
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("anthropic-beta", "oauth-2025-04-20")
+		req.Header.Set("User-Agent", "claude-cli/2.1.76 (external, cli)")
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			slog.Error("claudecode utilization fetch failed", "upstream_id", upstreamID, "error", err)
+			writeError(w, http.StatusBadGateway, "upstream_error", fmt.Sprintf("utilization fetch failed: %v", err))
+			return
+		}
+		defer resp.Body.Close()
+
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+		if resp.StatusCode != http.StatusOK {
+			slog.Error("claudecode utilization fetch: upstream error", "upstream_id", upstreamID, "status", resp.StatusCode, "body", string(body))
+			writeError(w, http.StatusBadGateway, "upstream_error",
+				fmt.Sprintf("utilization API returned %d", resp.StatusCode))
+			return
+		}
+
+		// Validate that body is valid JSON before wrapping.
+		if !json.Valid(body) {
+			writeError(w, http.StatusBadGateway, "upstream_error", "upstream returned invalid JSON")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{"data":%s}`, string(body))
+	}
+}
+
 func handleClaudeCodeTokenRefresh(st *store.Store, encKey []byte) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		upstreamID := chi.URLParam(r, "upstreamID")
