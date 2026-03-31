@@ -105,7 +105,7 @@ export function OverviewPage() {
                   <span className="capitalize">{w.window}</span>
                   <span className="text-muted-foreground">
                     {user?.is_superadmin
-                      ? `${Math.round(w.used).toLocaleString()} / ${w.limit.toLocaleString()}`
+                      ? `${Math.round(w.used ?? 0).toLocaleString()} / ${(w.limit ?? 0).toLocaleString()}`
                       : `${w.percentage.toFixed(2)}%`}
                   </span>
                 </div>
