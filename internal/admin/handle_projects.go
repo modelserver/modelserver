@@ -336,16 +336,17 @@ func handleRemoveMember(st *store.Store) http.HandlerFunc {
 
 // quotaWindowStatus holds per-window quota usage for a user.
 type quotaWindowStatus struct {
-	Window         string  `json:"window"`
-	WindowType     string  `json:"window_type"`
-	Limit          int64   `json:"limit"`
-	Used           float64 `json:"used"`
-	Percentage     float64 `json:"percentage"`
-	ResetsAt       string  `json:"resets_at,omitempty"`
+	Window         string   `json:"window"`
+	WindowType     string   `json:"window_type"`
+	Limit          *int64   `json:"limit,omitempty"`
+	Used           *float64 `json:"used,omitempty"`
+	Percentage     float64  `json:"percentage"`
+	ResetsAt       string   `json:"resets_at,omitempty"`
 }
 
 // serveQuotaUsage is the shared core logic for quota usage responses.
-func serveQuotaUsage(st *store.Store, w http.ResponseWriter, projectID, userID string) {
+// When showCredits is false, absolute credit values (limit/used) are omitted from the response.
+func serveQuotaUsage(st *store.Store, w http.ResponseWriter, projectID, userID string, showCredits bool) {
 	member, err := st.GetProjectMember(projectID, userID)
 	if err != nil || member == nil {
 		writeError(w, http.StatusNotFound, "not_found", "member not found")
@@ -419,9 +420,11 @@ func serveQuotaUsage(st *store.Store, w http.ResponseWriter, projectID, userID s
 		ws := quotaWindowStatus{
 			Window:     rule.Window,
 			WindowType: rule.WindowType,
-			Limit:      userLimit,
-			Used:       used,
 			Percentage: percentage,
+		}
+		if showCredits {
+			ws.Limit = &userLimit
+			ws.Used = &used
 		}
 
 		if rule.WindowType == types.WindowTypeCalendar || rule.WindowType == types.WindowTypeFixed {
@@ -452,7 +455,7 @@ func handleQuotaUsage(st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		serveQuotaUsage(st, w, projectID, userID)
+		serveQuotaUsage(st, w, projectID, userID, caller.IsSuperadmin)
 	}
 }
 
@@ -460,7 +463,7 @@ func handleMyQuota(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "projectID")
 		caller := UserFromContext(r.Context())
-		serveQuotaUsage(st, w, projectID, caller.ID)
+		serveQuotaUsage(st, w, projectID, caller.ID, caller.IsSuperadmin)
 	}
 }
 
@@ -557,9 +560,11 @@ func handleMembersUsage(st *store.Store) http.HandlerFunc {
 				ws := quotaWindowStatus{
 					Window:     rule.Window,
 					WindowType: rule.WindowType,
-					Limit:      userLimit,
-					Used:       used,
 					Percentage: percentage,
+				}
+				if caller.IsSuperadmin {
+					ws.Limit = &userLimit
+					ws.Used = &used
 				}
 
 				if rule.WindowType == types.WindowTypeCalendar || rule.WindowType == types.WindowTypeFixed {

@@ -9,6 +9,7 @@ import { DataTable, type Column } from "@/components/shared/DataTable";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Request } from "@/api/types";
+import { useAuth } from "@/hooks/useAuth";
 import { Activity, Zap, Clock } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
@@ -47,6 +48,7 @@ export function OverviewPage() {
   const { data: daily } = useDailyUsage(projectId);
   const { data: recentData } = useRequests(projectId, { per_page: 5 });
   const { data: myQuotaData } = useMyQuota(projectId);
+  const { user } = useAuth();
 
   const overview = usage?.data;
   const dailyData = daily?.data ?? [];
@@ -87,6 +89,39 @@ export function OverviewPage() {
           icon={<Clock className="h-4 w-4" />}
         />
       </div>
+
+      {myQuota && myQuota.credit_quota_percent !== null && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">My Quota</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              {myQuota.credit_quota_percent}% of project quota
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {myQuota.windows.map((w) => (
+              <div key={w.window} className="space-y-1">
+                <div className="flex justify-between text-sm">
+                  <span className="capitalize">{w.window}</span>
+                  <span className="text-muted-foreground">
+                    {user?.is_superadmin
+                      ? `${Math.round(w.used).toLocaleString()} / ${w.limit.toLocaleString()}`
+                      : `${w.percentage.toFixed(2)}%`}
+                  </span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full bg-primary transition-all"
+                    style={{
+                      width: `${Math.min(w.percentage, 100)}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
@@ -139,37 +174,6 @@ export function OverviewPage() {
           />
         </CardContent>
       </Card>
-
-      {myQuota && myQuota.credit_quota_percent !== null && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">My Quota</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              {myQuota.credit_quota_percent}% of project credits
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {myQuota.windows.map((w) => (
-              <div key={w.window} className="space-y-1">
-                <div className="flex justify-between text-sm">
-                  <span className="capitalize">{w.window}</span>
-                  <span className="text-muted-foreground">
-                    {Math.round(w.used).toLocaleString()} / {w.limit.toLocaleString()}
-                  </span>
-                </div>
-                <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                  <div
-                    className="h-full bg-primary transition-all"
-                    style={{
-                      width: `${Math.min(w.percentage, 100)}%`,
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }
