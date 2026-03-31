@@ -225,6 +225,9 @@ export function AdminRequestsPage() {
               {selected.client_ip && (
                 <DetailRow label="Client IP" value={selected.client_ip} />
               )}
+              {selected.metadata && Object.entries(selected.metadata).map(([k, v]) => (
+                <DetailRow key={k} label={k.replace(/_/g, "-")} value={v} />
+              ))}
               {selected.error_message && (
                 <div className="space-y-1">
                   <span className="text-muted-foreground">Error</span>

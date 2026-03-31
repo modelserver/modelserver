@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -11,17 +12,22 @@ import (
 // CreateRequest inserts a new request log.
 // UpstreamID may be empty at creation time (set later via CompleteRequest).
 func (s *Store) CreateRequest(r *types.Request) error {
+	metadataJSON := []byte("{}")
+	if r.Metadata != nil {
+		metadataJSON, _ = json.Marshal(r.Metadata)
+	}
 	return s.pool.QueryRow(context.Background(), `
 		INSERT INTO requests (project_id, api_key_id, oauth_grant_id, upstream_id, trace_id, msg_id, provider, model, streaming,
 			status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-			credits_consumed, latency_ms, ttft_ms, error_message, client_ip, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+			credits_consumed, latency_ms, ttft_ms, error_message, client_ip, created_by, metadata)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
 		RETURNING id, created_at`,
 		r.ProjectID, nullString(r.APIKeyID), nullString(r.OAuthGrantID), nullString(r.UpstreamID),
 		nullString(r.TraceID), nullString(r.MsgID),
 		r.Provider, r.Model, r.Streaming, r.Status,
 		r.InputTokens, r.OutputTokens, r.CacheCreationTokens, r.CacheReadTokens,
 		r.CreditsConsumed, r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP, nullString(r.CreatedBy),
+		metadataJSON,
 	).Scan(&r.ID, &r.CreatedAt)
 }
 
@@ -61,17 +67,22 @@ func (s *Store) BatchCreateRequests(requests []types.Request) error {
 	}
 	for i := range requests {
 		r := &requests[i]
+		metadataJSON, _ := json.Marshal(r.Metadata)
+		if metadataJSON == nil {
+			metadataJSON = []byte("{}")
+		}
 		err := tx.QueryRow(ctx, `
 			INSERT INTO requests (project_id, api_key_id, oauth_grant_id, upstream_id, trace_id, msg_id, provider, model, streaming,
 				status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-				credits_consumed, latency_ms, ttft_ms, error_message, client_ip, created_by)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+				credits_consumed, latency_ms, ttft_ms, error_message, client_ip, created_by, metadata)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
 			RETURNING id, created_at`,
 			r.ProjectID, nullString(r.APIKeyID), nullString(r.OAuthGrantID), nullString(r.UpstreamID),
 			nullString(r.TraceID), nullString(r.MsgID),
 			r.Provider, r.Model, r.Streaming, r.Status,
 			r.InputTokens, r.OutputTokens, r.CacheCreationTokens, r.CacheReadTokens,
 			r.CreditsConsumed, r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP, nullString(r.CreatedBy),
+			metadataJSON,
 		).Scan(&r.ID, &r.CreatedAt)
 		if err != nil {
 			tx.Rollback(ctx)
@@ -97,7 +108,8 @@ func (s *Store) ListRequests(projectID string, p types.PaginationParams, filters
 			COALESCE(r.upstream_id::text, ''), COALESCE(r.trace_id::text, ''), COALESCE(r.msg_id, ''),
 			r.provider, r.model, r.streaming, r.status, r.input_tokens, r.output_tokens, r.cache_creation_tokens, r.cache_read_tokens,
 			r.credits_consumed, r.latency_ms, r.ttft_ms, COALESCE(r.error_message, ''), r.client_ip, r.created_at,
-			COALESCE(og.client_name, '') as oauth_grant_client_name
+			COALESCE(og.client_name, '') as oauth_grant_client_name,
+			r.metadata
 		FROM requests r
 		LEFT JOIN oauth_grants og ON og.id = r.oauth_grant_id
 		%s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
@@ -112,13 +124,15 @@ func (s *Store) ListRequests(projectID string, p types.PaginationParams, filters
 	var requests []types.Request
 	for rows.Next() {
 		var r types.Request
+		var metadataJSON []byte
 		if err := rows.Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.OAuthGrantID, &r.UpstreamID, &r.TraceID, &r.MsgID,
 			&r.Provider, &r.Model, &r.Streaming, &r.Status,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
 			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt,
-			&r.OAuthGrantClientName); err != nil {
+			&r.OAuthGrantClientName, &metadataJSON); err != nil {
 			return nil, 0, err
 		}
+		scanMetadata(&r, metadataJSON)
 		requests = append(requests, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -193,7 +207,8 @@ func (s *Store) ListAllRequests(p types.PaginationParams, filters RequestFilters
 			COALESCE(r.upstream_id::text, ''), COALESCE(r.trace_id::text, ''), COALESCE(r.msg_id, ''),
 			r.provider, r.model, r.streaming, r.status, r.input_tokens, r.output_tokens, r.cache_creation_tokens, r.cache_read_tokens,
 			r.credits_consumed, r.latency_ms, r.ttft_ms, COALESCE(r.error_message, ''), r.client_ip, r.created_at,
-			COALESCE(og.client_name, '') as oauth_grant_client_name
+			COALESCE(og.client_name, '') as oauth_grant_client_name,
+			r.metadata
 		FROM requests r
 		LEFT JOIN oauth_grants og ON og.id = r.oauth_grant_id
 		%s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
@@ -208,13 +223,15 @@ func (s *Store) ListAllRequests(p types.PaginationParams, filters RequestFilters
 	var requests []types.Request
 	for rows.Next() {
 		var r types.Request
+		var metadataJSON []byte
 		if err := rows.Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.OAuthGrantID, &r.UpstreamID, &r.TraceID, &r.MsgID,
 			&r.Provider, &r.Model, &r.Streaming, &r.Status,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
 			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt,
-			&r.OAuthGrantClientName); err != nil {
+			&r.OAuthGrantClientName, &metadataJSON); err != nil {
 			return nil, 0, err
 		}
+		scanMetadata(&r, metadataJSON)
 		requests = append(requests, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -268,7 +285,8 @@ func (s *Store) ListRequestsByTraceID(traceID string) ([]types.Request, error) {
 			COALESCE(r.upstream_id::text, ''), COALESCE(r.trace_id::text, ''), COALESCE(r.msg_id, ''),
 			r.provider, r.model, r.streaming, r.status, r.input_tokens, r.output_tokens, r.cache_creation_tokens, r.cache_read_tokens,
 			r.credits_consumed, r.latency_ms, r.ttft_ms, COALESCE(r.error_message, ''), r.client_ip, r.created_at,
-			COALESCE(og.client_name, '') as oauth_grant_client_name
+			COALESCE(og.client_name, '') as oauth_grant_client_name,
+			r.metadata
 		FROM requests r
 		LEFT JOIN oauth_grants og ON og.id = r.oauth_grant_id
 		WHERE r.trace_id = $1 ORDER BY r.created_at ASC`, traceID)
@@ -280,14 +298,23 @@ func (s *Store) ListRequestsByTraceID(traceID string) ([]types.Request, error) {
 	var requests []types.Request
 	for rows.Next() {
 		var r types.Request
+		var metadataJSON []byte
 		if err := rows.Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.OAuthGrantID, &r.UpstreamID, &r.TraceID, &r.MsgID,
 			&r.Provider, &r.Model, &r.Streaming, &r.Status,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
 			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt,
-			&r.OAuthGrantClientName); err != nil {
+			&r.OAuthGrantClientName, &metadataJSON); err != nil {
 			return nil, err
 		}
+		scanMetadata(&r, metadataJSON)
 		requests = append(requests, r)
 	}
 	return requests, rows.Err()
+}
+
+// scanMetadata parses JSONB metadata into the Request's Metadata map.
+func scanMetadata(r *types.Request, data []byte) {
+	if len(data) > 2 {
+		json.Unmarshal(data, &r.Metadata)
+	}
 }

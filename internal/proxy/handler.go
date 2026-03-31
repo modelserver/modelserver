@@ -98,6 +98,15 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, all
 
 	oauthGrantID := OAuthGrantIDFromContext(r.Context())
 
+	// Capture notable client headers as metadata.
+	metadata := make(map[string]string)
+	if v := r.Header.Get("Anthropic-Beta"); v != "" {
+		metadata["anthropic_beta"] = v
+	}
+	if v := r.Header.Get("Anthropic-Version"); v != "" {
+		metadata["anthropic_version"] = v
+	}
+
 	// Insert a pending request record before proxying.
 	pendingReq := &types.Request{
 		ProjectID:    project.ID,
@@ -109,6 +118,7 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, all
 		Streaming:    reqShape.Stream,
 		Status:       types.RequestStatusProcessing,
 		ClientIP:     r.RemoteAddr,
+		Metadata:     metadata,
 	}
 	if err := h.store.CreateRequest(pendingReq); err != nil {
 		h.logger.Warn("failed to insert pending request", "error", err)

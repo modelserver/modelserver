@@ -162,6 +162,7 @@ export interface Request {
   ttft_ms: number;
   error_message?: string;
   client_ip?: string;
+  metadata?: Record<string, string>;
   created_at: string;
 }
 

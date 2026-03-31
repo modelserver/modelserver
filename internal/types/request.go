@@ -50,8 +50,9 @@ type Request struct {
 	GroupID     string  `json:"group_id,omitempty"`
 	Attempt     int     `json:"attempt,omitempty"`
 	RetryReason string  `json:"retry_reason,omitempty"`
-	SelectionMs float64 `json:"selection_ms,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	SelectionMs float64            `json:"selection_ms,omitempty"`
+	Metadata    map[string]string  `json:"metadata,omitempty"`
+	CreatedAt   time.Time          `json:"created_at"`
 }
 
 // Trace groups related requests under a shared trace identifier.
