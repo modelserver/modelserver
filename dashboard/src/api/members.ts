@@ -75,6 +75,16 @@ export function useQuotaUsage(projectId: string, userId: string) {
   });
 }
 
+export function useMyMembership(projectId: string) {
+  return useQuery({
+    queryKey: ["my-membership", projectId],
+    queryFn: () =>
+      api.get<DataResponse<ProjectMember>>(
+        `/api/v1/projects/${projectId}/my-membership`,
+      ),
+  });
+}
+
 export function useMyQuota(projectId: string) {
   return useQuery({
     queryKey: ["my-quota", projectId],

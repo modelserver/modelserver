@@ -467,6 +467,30 @@ func handleMyQuota(st *store.Store) http.HandlerFunc {
 	}
 }
 
+func handleMyMembership(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		projectID := chi.URLParam(r, "projectID")
+		caller := UserFromContext(r.Context())
+
+		member, err := st.GetProjectMember(projectID, caller.ID)
+		if err != nil || member == nil {
+			// Superadmins may not be actual members; return a synthetic owner record.
+			if caller.IsSuperadmin {
+				writeData(w, http.StatusOK, types.ProjectMember{
+					UserID:    caller.ID,
+					ProjectID: projectID,
+					Role:      types.RoleOwner,
+				})
+				return
+			}
+			writeError(w, http.StatusNotFound, "not_found", "not a member of this project")
+			return
+		}
+
+		writeData(w, http.StatusOK, member)
+	}
+}
+
 // handleMembersUsage returns quota usage for multiple members in a single request.
 // Accepts ?user_ids=id1,id2,... query parameter.
 func handleMembersUsage(st *store.Store) http.HandlerFunc {

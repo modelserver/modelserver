@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useCurrentProject } from "@/hooks/useCurrentProject";
 import { useAuth } from "@/hooks/useAuth";
-import { useMembers, useAddMember, useUpdateMember, useRemoveMember, useMembersUsage } from "@/api/members";
+import { useMembers, useMyMembership, useAddMember, useUpdateMember, useRemoveMember, useMembersUsage } from "@/api/members";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { Pagination } from "@/components/shared/Pagination";
@@ -71,9 +71,9 @@ export function MembersPage() {
     return m;
   }, [usageData]);
 
-  // Determine current user's role in this project
-  const currentMember = members.find((m) => m.user_id === currentUser?.id);
-  const currentRole = currentMember?.role;
+  // Determine current user's role in this project (independent of pagination)
+  const { data: myMembershipData } = useMyMembership(projectId);
+  const currentRole = myMembershipData?.data?.role;
   const canManageQuota = currentRole === "owner" || currentRole === "maintainer";
 
   async function handleAdd() {
