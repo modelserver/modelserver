@@ -167,6 +167,27 @@ func (m *OAuthTokenManager) GetAccessToken(upstreamID string) (string, error) {
 	return token, nil
 }
 
+// ForceRefreshAccessToken unconditionally refreshes the OAuth token for the
+// given upstream, bypassing the expiry-buffer check. This is used to recover
+// from 401/403 responses caused by server-side token revocation or clock drift.
+func (m *OAuthTokenManager) ForceRefreshAccessToken(upstreamID string) (string, error) {
+	_, err, _ := m.sfGroup.Do("force:"+upstreamID, func() (interface{}, error) {
+		return nil, m.refreshToken(upstreamID)
+	})
+	if err != nil {
+		return "", fmt.Errorf("forced token refresh failed: %w", err)
+	}
+	m.mu.RLock()
+	creds, ok := m.credentials[upstreamID]
+	if !ok {
+		m.mu.RUnlock()
+		return "", fmt.Errorf("no credentials after refresh for upstream %s", upstreamID)
+	}
+	token := creds.AccessToken
+	m.mu.RUnlock()
+	return token, nil
+}
+
 // refreshToken exchanges a refresh token for new access/refresh tokens.
 func (m *OAuthTokenManager) refreshToken(upstreamID string) error {
 	m.mu.RLock()

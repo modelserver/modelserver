@@ -17,6 +17,10 @@ var claudeCodeRequiredBetas = []string{
 // directorSetClaudeCodeUpstream configures the reverse-proxy request for a
 // Claude Code (OAuth subscription) upstream. The request/response format is
 // standard Anthropic — only the auth mechanism and headers differ.
+//
+// Client-provided User-Agent and X-Stainless-* headers are preserved so that
+// the Anthropic backend sees accurate version/runtime metadata from the real
+// Claude Code client. Defaults are only applied when the client omits them.
 func directorSetClaudeCodeUpstream(req *http.Request, baseURL, accessToken string) {
 	req.URL.Scheme = "https"
 	if baseURL != "" {
@@ -30,27 +34,45 @@ func directorSetClaudeCodeUpstream(req *http.Request, baseURL, accessToken strin
 	}
 	req.Host = req.URL.Host
 
-	// Append ?beta=true query parameter.
+	// Append ?beta=true query parameter. The Anthropic SDK's beta.messages
+	// endpoint always sends this (via anthropic.beta.messages.create()).
 	q := req.URL.Query()
 	q.Set("beta", "true")
 	req.URL.RawQuery = q.Encode()
 
-	// Set all required headers from scratch — do not inherit from client.
+	// Authentication: replace API key with OAuth Bearer token.
 	req.Header.Del("x-api-key")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Connection", "keep-alive")
+
 	// Merge required Claude Code beta flags with any client-provided betas.
 	mergeClaudeCodeBetaHeaders(req)
-	req.Header.Set("Anthropic-Version", "2023-06-01")
+
+	// Anthropic-Version: preserve the client's value if provided.
+	if req.Header.Get("Anthropic-Version") == "" {
+		req.Header.Set("Anthropic-Version", "2023-06-01")
+	}
 	req.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
+
+	// X-App: always set (simple identifier the client also sends).
 	req.Header.Set("X-App", "cli")
-	req.Header.Set("User-Agent", "claude-cli/2.1.76 (external, cli)")
-	req.Header.Set("X-Stainless-Lang", "js")
-	req.Header.Set("X-Stainless-Package-Version", "0.74.0")
-	req.Header.Set("X-Stainless-OS", "Linux")
-	req.Header.Set("X-Stainless-Runtime", "bun")
-	req.Header.Set("X-Stainless-Runtime-Version", "1.3.11")
-	req.Header.Set("X-Stainless-Arch", "x64")
+
+	// User-Agent and X-Stainless-* headers: pass through client values.
+	// Only set defaults when the client doesn't provide them.
+	setHeaderDefault(req, "User-Agent", "claude-cli/0.0.0 (external, cli)")
+	setHeaderDefault(req, "X-Stainless-Lang", "js")
+	setHeaderDefault(req, "X-Stainless-Package-Version", "0.0.0")
+	setHeaderDefault(req, "X-Stainless-OS", "Linux")
+	setHeaderDefault(req, "X-Stainless-Runtime", "bun")
+	setHeaderDefault(req, "X-Stainless-Runtime-Version", "0.0.0")
+	setHeaderDefault(req, "X-Stainless-Arch", "x64")
+}
+
+// setHeaderDefault sets a header only if the request does not already carry it.
+func setHeaderDefault(req *http.Request, key, fallback string) {
+	if req.Header.Get(key) == "" {
+		req.Header.Set(key, fallback)
+	}
 }
 
 // mergeClaudeCodeBetaHeaders ensures claudeCodeRequiredBetas are present in

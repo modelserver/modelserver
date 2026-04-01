@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"net/http"
 	"testing"
 )
 
@@ -20,6 +21,7 @@ func TestDirectorSetClaudeCodeUpstream(t *testing.T) {
 	if req.URL.Path != "/v1/messages" {
 		t.Errorf("path = %s, want /v1/messages", req.URL.Path)
 	}
+	// ?beta=true is appended (the Anthropic SDK's beta.messages endpoint sends this).
 	if req.URL.Query().Get("beta") != "true" {
 		t.Errorf("expected beta=true query param, got %s", req.URL.RawQuery)
 	}
@@ -43,17 +45,19 @@ func TestDirectorSetClaudeCodeUpstream(t *testing.T) {
 	if got := req.Header.Get("Anthropic-Beta"); got != wantBeta {
 		t.Errorf("Anthropic-Beta = %s, want %s", got, wantBeta)
 	}
-	if got := req.Header.Get("User-Agent"); got != "claude-cli/2.1.76 (external, cli)" {
-		t.Errorf("User-Agent = %s, want claude-cli/2.1.76 (external, cli)", got)
+	// No client User-Agent → default should be set.
+	if got := req.Header.Get("User-Agent"); got != "claude-cli/0.0.0 (external, cli)" {
+		t.Errorf("User-Agent = %s, want claude-cli/0.0.0 (external, cli)", got)
 	}
-	if got := req.Header.Get("X-Stainless-Package-Version"); got != "0.74.0" {
-		t.Errorf("X-Stainless-Package-Version = %s, want 0.74.0", got)
+	// No client X-Stainless-* → defaults should be set.
+	if got := req.Header.Get("X-Stainless-Package-Version"); got != "0.0.0" {
+		t.Errorf("X-Stainless-Package-Version = %s, want 0.0.0", got)
 	}
 	if got := req.Header.Get("X-Stainless-Runtime"); got != "bun" {
 		t.Errorf("X-Stainless-Runtime = %s, want bun", got)
 	}
-	if got := req.Header.Get("X-Stainless-Runtime-Version"); got != "1.3.11" {
-		t.Errorf("X-Stainless-Runtime-Version = %s, want 1.3.11", got)
+	if got := req.Header.Get("X-Stainless-Runtime-Version"); got != "0.0.0" {
+		t.Errorf("X-Stainless-Runtime-Version = %s, want 0.0.0", got)
 	}
 	if req.Header.Get("Connection") != "keep-alive" {
 		t.Errorf("Connection = %s, want keep-alive", req.Header.Get("Connection"))
@@ -102,5 +106,111 @@ func TestDirectorSetClaudeCodeUpstream_EmptyBaseURL(t *testing.T) {
 
 	if req.URL.Scheme != "https" {
 		t.Errorf("scheme = %s, want https", req.URL.Scheme)
+	}
+}
+
+func TestDirectorSetClaudeCodeUpstream_PreservesClientHeaders(t *testing.T) {
+	req := mustNewRequest(t, "POST", "http://localhost/v1/messages", nil)
+	// Simulate client-provided User-Agent and X-Stainless-* headers.
+	req.Header.Set("User-Agent", "claude-cli/2.5.0 (external, cli)")
+	req.Header.Set("X-Stainless-Package-Version", "1.2.3")
+	req.Header.Set("X-Stainless-Runtime", "node")
+	req.Header.Set("X-Stainless-Runtime-Version", "22.0.0")
+	req.Header.Set("X-Stainless-OS", "Darwin")
+	req.Header.Set("X-Stainless-Arch", "arm64")
+
+	directorSetClaudeCodeUpstream(req, "https://api.anthropic.com", "token")
+
+	// Client-provided values should be preserved, not overwritten.
+	if got := req.Header.Get("User-Agent"); got != "claude-cli/2.5.0 (external, cli)" {
+		t.Errorf("User-Agent = %s, want client value claude-cli/2.5.0 (external, cli)", got)
+	}
+	if got := req.Header.Get("X-Stainless-Package-Version"); got != "1.2.3" {
+		t.Errorf("X-Stainless-Package-Version = %s, want client value 1.2.3", got)
+	}
+	if got := req.Header.Get("X-Stainless-Runtime"); got != "node" {
+		t.Errorf("X-Stainless-Runtime = %s, want client value node", got)
+	}
+	if got := req.Header.Get("X-Stainless-Runtime-Version"); got != "22.0.0" {
+		t.Errorf("X-Stainless-Runtime-Version = %s, want client value 22.0.0", got)
+	}
+	if got := req.Header.Get("X-Stainless-OS"); got != "Darwin" {
+		t.Errorf("X-Stainless-OS = %s, want client value Darwin", got)
+	}
+	if got := req.Header.Get("X-Stainless-Arch"); got != "arm64" {
+		t.Errorf("X-Stainless-Arch = %s, want client value arm64", got)
+	}
+}
+
+func TestDirectorSetClaudeCodeUpstream_PreservesClientAnthropicVersion(t *testing.T) {
+	req := mustNewRequest(t, "POST", "http://localhost/v1/messages", nil)
+	req.Header.Set("Anthropic-Version", "2024-01-01")
+
+	directorSetClaudeCodeUpstream(req, "https://api.anthropic.com", "token")
+
+	if got := req.Header.Get("Anthropic-Version"); got != "2024-01-01" {
+		t.Errorf("Anthropic-Version = %s, want client value 2024-01-01", got)
+	}
+}
+
+func TestDirectorSetClaudeCodeUpstream_BetaQueryParamPreservesExisting(t *testing.T) {
+	req := mustNewRequest(t, "POST", "http://localhost/v1/messages?existing=param", nil)
+
+	directorSetClaudeCodeUpstream(req, "https://api.anthropic.com", "token")
+
+	if req.URL.Query().Get("beta") != "true" {
+		t.Errorf("expected beta=true query param, got %s", req.URL.RawQuery)
+	}
+	// Existing query params should be preserved.
+	if req.URL.Query().Get("existing") != "param" {
+		t.Errorf("expected existing query param to be preserved, got %s", req.URL.RawQuery)
+	}
+}
+
+func TestSanitizeOutboundHeaders_ClaudeCodeHeaders(t *testing.T) {
+	h := http.Header{}
+	// Standard headers.
+	h.Set("Content-Type", "application/json")
+	h.Set("Authorization", "Bearer token")
+	h.Set("Anthropic-Beta", "claude-code-20250219")
+	h.Set("User-Agent", "claude-cli/2.5.0")
+	h.Set("X-Stainless-Lang", "js")
+	// Claude Code specific headers that should be preserved.
+	h.Set("X-Claude-Code-Session-Id", "sess-123")
+	h.Set("X-Client-Request-Id", "req-456")
+	h.Set("X-Client-App", "my-app")
+	h.Set("X-Anthropic-Additional-Protection", "true")
+	h.Set("X-Claude-Remote-Container-Id", "container-789")
+	h.Set("X-Claude-Remote-Session-Id", "remote-abc")
+	// Header that should be stripped.
+	h.Set("X-Custom-Disallowed", "should-be-removed")
+
+	sanitized := sanitizeOutboundHeaders(h)
+
+	// All Claude Code headers should pass through.
+	for _, hdr := range []string{
+		"X-Claude-Code-Session-Id",
+		"X-Client-Request-Id",
+		"X-Client-App",
+		"X-Anthropic-Additional-Protection",
+		"X-Claude-Remote-Container-Id",
+		"X-Claude-Remote-Session-Id",
+	} {
+		if sanitized.Get(hdr) == "" {
+			t.Errorf("expected %s to be preserved, but it was stripped", hdr)
+		}
+	}
+
+	// Standard headers should still pass.
+	if sanitized.Get("Content-Type") == "" {
+		t.Error("Content-Type should be preserved")
+	}
+	if sanitized.Get("X-Stainless-Lang") == "" {
+		t.Error("X-Stainless-Lang should be preserved")
+	}
+
+	// Disallowed header should be stripped.
+	if sanitized.Get("X-Custom-Disallowed") != "" {
+		t.Error("X-Custom-Disallowed should be stripped")
 	}
 }

@@ -170,6 +170,11 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 
 	startTime := time.Now()
 
+	// Track whether we've already attempted an OAuth token refresh for a
+	// claudecode upstream on this request. We retry at most once per request
+	// to avoid infinite loops.
+	claudeCodeOAuthRetried := false
+
 	// 6. Retry loop: try each candidate in order.
 	for attempt, candidate := range candidates {
 		upstream := candidate.Upstream
@@ -228,6 +233,13 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			"Anthropic-Version",
 			"User-Agent",
 			"X-App",
+			// Claude Code client headers for analytics and request correlation.
+			"X-Claude-Code-Session-Id",
+			"X-Client-Request-Id",
+			"X-Client-App",
+			"X-Anthropic-Additional-Protection",
+			"X-Claude-Remote-Container-Id",
+			"X-Claude-Remote-Session-Id",
 		} {
 			if v := r.Header.Get(h); v != "" {
 				outReq.Header.Set(h, v)
@@ -340,6 +352,60 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 				cancelFn()
 			}
 			continue
+		}
+
+		// 6h2. Claude Code OAuth 401/403 recovery: if the upstream returned
+		//       401 or 403, force-refresh the token and retry once. This
+		//       handles server-side token revocation and clock drift (mirrors
+		//       the real Claude Code client's withOAuth401Retry behaviour).
+		if upstream.Provider == types.ProviderClaudeCode && resp != nil &&
+			(resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) &&
+			!claudeCodeOAuthRetried {
+			claudeCodeOAuthRetried = true
+
+			// Discard the error response body and clean up.
+			io.ReadAll(io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			e.router.ConnTracker().Release(upstream.ID)
+			if cancelFn != nil {
+				cancelFn()
+			}
+
+			newToken, refreshErr := e.router.ForceRefreshClaudeCodeAccessToken(upstream.ID)
+			if refreshErr != nil {
+				logger.Warn("claudecode OAuth refresh failed on 401/403, returning original error", "error", refreshErr)
+				// Re-create a minimal error response for the client.
+				writeProxyError(w, resp.StatusCode, "upstream authentication failed")
+				return
+			}
+
+			logger.Info("retrying claudecode request after OAuth token refresh", "upstream_id", upstream.ID)
+
+			// Rebuild the outgoing request with the refreshed token.
+			// Use outReq.URL (the upstream URL set by SetUpstream), not
+			// r.URL (the original client URL).
+			retryReq, _ := http.NewRequestWithContext(r.Context(), r.Method, outReq.URL.String(), io.NopCloser(bytes.NewReader(transformedBody)))
+			retryReq.ContentLength = int64(len(transformedBody))
+			retryReq.Host = outReq.Host
+			retryReq.Header = outReq.Header.Clone()
+			retryReq.Header.Set("Authorization", "Bearer "+newToken)
+
+			e.router.ConnTracker().Acquire(upstream.ID)
+
+			retryCtx := retryReq.Context()
+			var retryCancelFn context.CancelFunc
+			if timeout := upstreamTimeout(upstream, reqCtx.IsStream); timeout > 0 {
+				retryCtx, retryCancelFn = context.WithTimeout(retryCtx, timeout)
+			}
+			retryReq = retryReq.WithContext(retryCtx)
+
+			resp, doErr = e.httpClient.Do(retryReq)
+			if retryCancelFn != nil && doErr != nil {
+				retryCancelFn()
+			}
+			cancelFn = retryCancelFn
+
+			// Fall through to the normal commit path with the retry result.
 		}
 
 		// 6i. Commit: this is the final response (success or non-retryable error).
@@ -867,7 +933,14 @@ func sanitizeOutboundHeaders(h http.Header) http.Header {
 			canon == "Anthropic-Dangerous-Direct-Browser-Access",
 			canon == "Anthropic-Version",
 			canon == "X-Api-Key",
-			canon == "Authorization":
+			canon == "Authorization",
+			// Claude Code client headers for analytics and request correlation.
+			canon == "X-Claude-Code-Session-Id",
+			canon == "X-Client-Request-Id",
+			canon == "X-Client-App",
+			canon == "X-Anthropic-Additional-Protection",
+			canon == "X-Claude-Remote-Container-Id",
+			canon == "X-Claude-Remote-Session-Id":
 			allowed[canon] = vals
 		default:
 			if strings.HasPrefix(canon, "X-Stainless-") {

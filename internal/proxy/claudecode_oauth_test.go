@@ -287,6 +287,103 @@ func TestClaudeCodeTransformer_SetUpstream_JSONBlob(t *testing.T) {
 	}
 }
 
+func TestForceRefreshAccessToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token":  "force-refreshed-token",
+			"refresh_token": "new-rt",
+			"expires_in":    3600,
+		})
+	}))
+	defer server.Close()
+
+	mgr := NewOAuthTokenManager(nil, nil, nil)
+	mgr.httpClient = server.Client()
+	mgr.tokenURL = server.URL
+
+	// Credentials are NOT expired — ForceRefresh should refresh anyway.
+	mgr.mu.Lock()
+	mgr.credentials["ch1"] = &ClaudeCodeCredentials{
+		AccessToken:  "still-valid-token",
+		RefreshToken: "rt",
+		ExpiresAt:    time.Now().Add(1 * time.Hour).Unix(),
+	}
+	mgr.mu.Unlock()
+
+	token, err := mgr.ForceRefreshAccessToken("ch1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token != "force-refreshed-token" {
+		t.Errorf("token = %s, want force-refreshed-token", token)
+	}
+}
+
+func TestForceRefreshAccessToken_Fails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":"invalid_grant"}`))
+	}))
+	defer server.Close()
+
+	mgr := NewOAuthTokenManager(nil, nil, nil)
+	mgr.httpClient = server.Client()
+	mgr.tokenURL = server.URL
+
+	mgr.mu.Lock()
+	mgr.credentials["ch1"] = &ClaudeCodeCredentials{
+		AccessToken:  "old-token",
+		RefreshToken: "bad-rt",
+		ExpiresAt:    time.Now().Add(1 * time.Hour).Unix(),
+	}
+	mgr.mu.Unlock()
+
+	_, err := mgr.ForceRefreshAccessToken("ch1")
+	if err == nil {
+		t.Error("expected error from failed force refresh")
+	}
+}
+
+func TestRouter_ForceRefreshClaudeCodeAccessToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token":  "force-refreshed",
+			"refresh_token": "new-rt",
+			"expires_in":    3600,
+		})
+	}))
+	defer server.Close()
+
+	mgr := NewOAuthTokenManager(nil, nil, nil)
+	mgr.httpClient = server.Client()
+	mgr.tokenURL = server.URL
+
+	mgr.mu.Lock()
+	mgr.credentials["up1"] = &ClaudeCodeCredentials{
+		AccessToken:  "valid-token",
+		RefreshToken: "rt",
+		ExpiresAt:    time.Now().Add(1 * time.Hour).Unix(),
+	}
+	mgr.mu.Unlock()
+
+	r := &Router{oauthMgr: mgr}
+	token, err := r.ForceRefreshClaudeCodeAccessToken("up1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token != "force-refreshed" {
+		t.Errorf("token = %s, want force-refreshed", token)
+	}
+}
+
+func TestRouter_ForceRefreshClaudeCodeAccessToken_NoManager(t *testing.T) {
+	r := &Router{}
+	_, err := r.ForceRefreshClaudeCodeAccessToken("up1")
+	if err == nil {
+		t.Error("expected error when oauthMgr is nil")
+	}
+}
+
 func TestReload_UsesDBWhenNewer(t *testing.T) {
 	mgr := NewOAuthTokenManager(nil, nil, nil)
 

@@ -459,6 +459,16 @@ func (r *Router) GetClaudeCodeAccessToken(upstreamID string) (string, error) {
 	return r.oauthMgr.GetAccessToken(upstreamID)
 }
 
+// ForceRefreshClaudeCodeAccessToken unconditionally refreshes the OAuth token
+// for a claudecode upstream, bypassing the normal expiry-buffer check. Used to
+// recover from 401/403 responses.
+func (r *Router) ForceRefreshClaudeCodeAccessToken(upstreamID string) (string, error) {
+	if r.oauthMgr == nil {
+		return "", fmt.Errorf("OAuthTokenManager not configured")
+	}
+	return r.oauthMgr.ForceRefreshAccessToken(upstreamID)
+}
+
 // ConnTracker returns the shared connection tracker.
 func (r *Router) ConnTracker() *lb.ConnectionTracker {
 	return r.connTracker
