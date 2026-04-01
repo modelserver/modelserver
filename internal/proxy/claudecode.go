@@ -4,7 +4,15 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strings"
 )
+
+// claudeCodeRequiredBetas are beta flags that must always be present on
+// Claude Code (OAuth subscription) upstream requests.
+var claudeCodeRequiredBetas = []string{
+	"claude-code-20250219",
+	"oauth-2025-04-20",
+}
 
 // directorSetClaudeCodeUpstream configures the reverse-proxy request for a
 // Claude Code (OAuth subscription) upstream. The request/response format is
@@ -31,8 +39,8 @@ func directorSetClaudeCodeUpstream(req *http.Request, baseURL, accessToken strin
 	req.Header.Del("x-api-key")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Connection", "keep-alive")
-	// Anthropic-Beta: pass through the client's header as-is (already
-	// forwarded by the executor); do not override it here.
+	// Merge required Claude Code beta flags with any client-provided betas.
+	mergeClaudeCodeBetaHeaders(req)
 	req.Header.Set("Anthropic-Version", "2023-06-01")
 	req.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
 	req.Header.Set("X-App", "cli")
@@ -43,4 +51,30 @@ func directorSetClaudeCodeUpstream(req *http.Request, baseURL, accessToken strin
 	req.Header.Set("X-Stainless-Runtime", "bun")
 	req.Header.Set("X-Stainless-Runtime-Version", "1.3.11")
 	req.Header.Set("X-Stainless-Arch", "x64")
+}
+
+// mergeClaudeCodeBetaHeaders ensures claudeCodeRequiredBetas are present in
+// the Anthropic-Beta header while preserving any client-provided beta flags.
+func mergeClaudeCodeBetaHeaders(req *http.Request) {
+	clientBetas := splitBetaHeaders(req.Header.Values("Anthropic-Beta"))
+
+	seen := make(map[string]struct{}, len(claudeCodeRequiredBetas)+len(clientBetas))
+	merged := make([]string, 0, len(claudeCodeRequiredBetas)+len(clientBetas))
+
+	// Required betas come first.
+	for _, b := range claudeCodeRequiredBetas {
+		if _, ok := seen[b]; !ok {
+			seen[b] = struct{}{}
+			merged = append(merged, b)
+		}
+	}
+	// Then append client betas, skipping duplicates.
+	for _, b := range clientBetas {
+		if _, ok := seen[b]; !ok {
+			seen[b] = struct{}{}
+			merged = append(merged, b)
+		}
+	}
+
+	req.Header.Set("Anthropic-Beta", strings.Join(merged, ","))
 }
