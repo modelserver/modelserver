@@ -38,9 +38,11 @@ func TestDirectorSetClaudeCodeUpstream(t *testing.T) {
 	if req.Header.Get("X-App") != "cli" {
 		t.Errorf("X-App = %s, want cli", req.Header.Get("X-App"))
 	}
-	wantBeta := "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27"
-	if got := req.Header.Get("Anthropic-Beta"); got != wantBeta {
-		t.Errorf("Anthropic-Beta = %s, want %s", got, wantBeta)
+	// Anthropic-Beta must NOT be overwritten — the client's header should
+	// pass through unchanged. The test request has no Anthropic-Beta header,
+	// so after calling directorSetClaudeCodeUpstream it must still be empty.
+	if got := req.Header.Get("Anthropic-Beta"); got != "" {
+		t.Errorf("Anthropic-Beta should be empty (pass-through), got %s", got)
 	}
 	if got := req.Header.Get("User-Agent"); got != "claude-cli/2.1.76 (external, cli)" {
 		t.Errorf("User-Agent = %s, want claude-cli/2.1.76 (external, cli)", got)
@@ -68,6 +70,18 @@ func TestDirectorSetClaudeCodeUpstream_BaseURLWithPath(t *testing.T) {
 	}
 	if req.URL.Path != "/prefix/v1/messages" {
 		t.Errorf("path = %s, want /prefix/v1/messages", req.URL.Path)
+	}
+}
+
+func TestDirectorSetClaudeCodeUpstream_PreservesClientBetaHeader(t *testing.T) {
+	req := mustNewRequest(t, "POST", "http://localhost/v1/messages", nil)
+	clientBeta := "interleaved-thinking-2025-05-14,output-128k-2025-02-19"
+	req.Header.Set("Anthropic-Beta", clientBeta)
+
+	directorSetClaudeCodeUpstream(req, "https://api.anthropic.com", "token")
+
+	if got := req.Header.Get("Anthropic-Beta"); got != clientBeta {
+		t.Errorf("Anthropic-Beta = %s, want %s (client header should be preserved)", got, clientBeta)
 	}
 }
 

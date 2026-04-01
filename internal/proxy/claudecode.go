@@ -31,7 +31,8 @@ func directorSetClaudeCodeUpstream(req *http.Request, baseURL, accessToken strin
 	req.Header.Del("x-api-key")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Connection", "keep-alive")
-	req.Header.Set("Anthropic-Beta", "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27")
+	// Anthropic-Beta: pass through the client's header as-is (already
+	// forwarded by the executor); do not override it here.
 	req.Header.Set("Anthropic-Version", "2023-06-01")
 	req.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
 	req.Header.Set("X-App", "cli")
