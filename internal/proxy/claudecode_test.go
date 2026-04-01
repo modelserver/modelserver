@@ -100,6 +100,18 @@ func TestDirectorSetClaudeCodeUpstream_DeduplicatesBetas(t *testing.T) {
 	}
 }
 
+func TestDirectorSetClaudeCodeUpstream_ExcludesBetas(t *testing.T) {
+	req := mustNewRequest(t, "POST", "http://localhost/v1/messages", nil)
+	req.Header.Set("Anthropic-Beta", "claude-code-20250219,fine-grained-tool-streaming-2025-05-14,interleaved-thinking-2025-05-14")
+
+	directorSetClaudeCodeUpstream(req, "https://api.anthropic.com", "token")
+
+	want := "oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14"
+	if got := req.Header.Get("Anthropic-Beta"); got != want {
+		t.Errorf("Anthropic-Beta = %s, want %s", got, want)
+	}
+}
+
 func TestDirectorSetClaudeCodeUpstream_EmptyBaseURL(t *testing.T) {
 	req := mustNewRequest(t, "POST", "http://localhost/v1/messages", nil)
 	directorSetClaudeCodeUpstream(req, "", "token")

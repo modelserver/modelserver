@@ -14,6 +14,13 @@ var claudeCodeRequiredBetas = []string{
 	"oauth-2025-04-20",
 }
 
+// claudeCodeExcludedBetas are beta flags that must be stripped from client
+// requests to Claude Code upstreams. These are known to cause errors (e.g.
+// rate_limit_error) on the OAuth subscription endpoint.
+var claudeCodeExcludedBetas = map[string]struct{}{
+	"fine-grained-tool-streaming-2025-05-14": {},
+}
+
 // directorSetClaudeCodeUpstream configures the reverse-proxy request for a
 // Claude Code (OAuth subscription) upstream. The request/response format is
 // standard Anthropic — only the auth mechanism and headers differ.
@@ -75,8 +82,8 @@ func setHeaderDefault(req *http.Request, key, fallback string) {
 	}
 }
 
-// mergeClaudeCodeBetaHeaders ensures claudeCodeRequiredBetas are present in
-// the Anthropic-Beta header while preserving any client-provided beta flags.
+// mergeClaudeCodeBetaHeaders ensures claudeCodeRequiredBetas are present,
+// strips claudeCodeExcludedBetas, and preserves remaining client betas.
 func mergeClaudeCodeBetaHeaders(req *http.Request) {
 	clientBetas := splitBetaHeaders(req.Header.Values("Anthropic-Beta"))
 
@@ -90,12 +97,16 @@ func mergeClaudeCodeBetaHeaders(req *http.Request) {
 			merged = append(merged, b)
 		}
 	}
-	// Then append client betas, skipping duplicates.
+	// Then append client betas, skipping duplicates and excluded betas.
 	for _, b := range clientBetas {
-		if _, ok := seen[b]; !ok {
-			seen[b] = struct{}{}
-			merged = append(merged, b)
+		if _, ok := seen[b]; ok {
+			continue
 		}
+		if _, excluded := claudeCodeExcludedBetas[b]; excluded {
+			continue
+		}
+		seen[b] = struct{}{}
+		merged = append(merged, b)
 	}
 
 	req.Header.Set("Anthropic-Beta", strings.Join(merged, ","))
