@@ -114,21 +114,27 @@ function UtilizationBadge({ upstreamId }: { upstreamId: string }) {
   const extraUsage = util.extra_usage;
 
   return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-xs tabular-nums" title={reset5h ? `5h resets in ${reset5h}` : undefined}>
+    <div className="flex flex-col gap-0.5 items-end">
+      <span className="text-xs tabular-nums">
         5h:{" "}
         {pct5h != null ? (
           <span className={pctColor(pct5h)}>{pct5h}%</span>
         ) : (
           <span className="text-muted-foreground">—</span>
         )}
+        {reset5h && (
+          <span className="text-muted-foreground ml-1">({reset5h})</span>
+        )}
       </span>
-      <span className="text-xs tabular-nums" title={reset7d ? `7d resets in ${reset7d}` : undefined}>
+      <span className="text-xs tabular-nums">
         7d:{" "}
         {pct7d != null ? (
           <span className={pctColor(pct7d)}>{pct7d}%</span>
         ) : (
           <span className="text-muted-foreground">—</span>
+        )}
+        {reset7d && (
+          <span className="text-muted-foreground ml-1">({reset7d})</span>
         )}
       </span>
       {extraUsage?.is_enabled && (
@@ -388,15 +394,6 @@ export function UpstreamsPage() {
         ),
     },
     {
-      header: "Utilization",
-      accessor: (u) =>
-        u.provider === "claudecode" ? (
-          <UtilizationBadge upstreamId={u.id} />
-        ) : (
-          <span className="text-xs text-muted-foreground">—</span>
-        ),
-    },
-    {
       header: "Models",
       accessor: (u) => u.supported_models?.join(", ") || "\u2014",
     },
@@ -437,6 +434,9 @@ export function UpstreamsPage() {
     {
       header: "Credits (5h / 7d)",
       accessor: (u) => {
+        if (u.provider === "claudecode") {
+          return <UtilizationBadge upstreamId={u.id} />;
+        }
         const usage = usageMap.get(u.id);
         const pct5h = usage ? (usage.credits_5h / MAX20X_5H * 100) : 0;
         const pct7d = usage ? (usage.credits_7d / MAX20X_7D * 100) : 0;
