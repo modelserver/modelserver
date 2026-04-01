@@ -374,8 +374,23 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			newToken, refreshErr := e.router.ForceRefreshClaudeCodeAccessToken(upstream.ID)
 			if refreshErr != nil {
 				logger.Warn("claudecode OAuth refresh failed on 401/403, returning original error", "error", refreshErr)
-				// Re-create a minimal error response for the client.
 				writeProxyError(w, resp.StatusCode, "upstream authentication failed")
+				// Complete the request record so it doesn't stay in "processing" forever.
+				if reqCtx.RequestID != "" {
+					duration := time.Since(startTime).Milliseconds()
+					failReq := types.Request{
+						OAuthGrantID: reqCtx.OAuthGrantID,
+						Status:       types.RequestStatusError,
+						LatencyMs:    duration,
+						ErrorMessage: "claudecode OAuth refresh failed",
+						ClientIP:     reqCtx.ClientIP,
+					}
+					go func() {
+						if err := e.store.CompleteRequest(reqCtx.RequestID, &failReq); err != nil {
+							e.logger.Error("failed to complete request", "request_id", reqCtx.RequestID, "error", err)
+						}
+					}()
+				}
 				return
 			}
 
