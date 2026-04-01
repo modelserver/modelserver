@@ -6,6 +6,7 @@ export interface RequestFilters {
   model?: string;
   status?: string;
   api_key_id?: string;
+  created_by?: string;
   since?: string;
   until?: string;
   page?: number;
@@ -17,6 +18,7 @@ export function useRequests(projectId: string, filters: RequestFilters = {}) {
   if (filters.model) params.set("model", filters.model);
   if (filters.status) params.set("status", filters.status);
   if (filters.api_key_id) params.set("api_key_id", filters.api_key_id);
+  if (filters.created_by) params.set("created_by", filters.created_by);
   if (filters.since) params.set("since", filters.since);
   if (filters.until) params.set("until", filters.until);
   if (filters.page) params.set("page", String(filters.page));

@@ -5,6 +5,7 @@ import type { ListResponse, Request } from "./types";
 export interface AdminRequestFilters {
   model?: string;
   status?: string;
+  created_by?: string;
   since?: string;
   until?: string;
   page?: number;
@@ -15,6 +16,7 @@ export function useAdminRequests(filters: AdminRequestFilters = {}) {
   const params = new URLSearchParams();
   if (filters.model) params.set("model", filters.model);
   if (filters.status) params.set("status", filters.status);
+  if (filters.created_by) params.set("created_by", filters.created_by);
   if (filters.since) params.set("since", filters.since);
   if (filters.until) params.set("until", filters.until);
   if (filters.page) params.set("page", String(filters.page));

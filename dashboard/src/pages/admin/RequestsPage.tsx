@@ -1,6 +1,8 @@
 import { useState } from "react";
+import { Link } from "react-router";
 import { useAdminRequests, type AdminRequestFilters } from "@/api/adminRequests";
 import { useUpstreams } from "@/api/upstreams";
+import { useUsers } from "@/api/users";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { Pagination } from "@/components/shared/Pagination";
@@ -45,9 +47,12 @@ export function AdminRequestsPage() {
   const [status, setStatus] = useState("");
   const [since, setSince] = useState(defaultSince);
   const [until, setUntil] = useState(defaultUntil);
+  const [createdBy, setCreatedBy] = useState("");
   const [selected, setSelected] = useState<Request | null>(null);
 
   const { data: upstreamsData } = useUpstreams(1, 100);
+  const { data: usersData } = useUsers(1, 100);
+  const users = usersData?.data ?? [];
   const upstreams = upstreamsData?.data ?? [];
 
   const filters: AdminRequestFilters = {
@@ -55,6 +60,7 @@ export function AdminRequestsPage() {
     per_page: 20,
     model: model || undefined,
     status: status || undefined,
+    created_by: createdBy || undefined,
     since: since ? `${since}T00:00:00Z` : undefined,
     until: until ? `${until}T23:59:59Z` : undefined,
   };
@@ -109,6 +115,20 @@ export function AdminRequestsPage() {
       header: "TTFT",
       accessor: (r) => (r.ttft_ms > 0 ? `${r.ttft_ms}ms` : "-"),
       className: "text-right",
+    },
+    {
+      header: "Trace",
+      accessor: (r) => r.trace_id ? (
+        <Link
+          to={`/projects/${r.project_id}/traces`}
+          className="font-mono text-xs text-blue-600 hover:underline dark:text-blue-400"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {r.trace_id.slice(0, 8)}...
+        </Link>
+      ) : (
+        <span className="text-muted-foreground">-</span>
+      ),
     },
     {
       header: "Client IP",
@@ -167,6 +187,27 @@ export function AdminRequestsPage() {
             <SelectItem value="rate_limited">Rate Limited</SelectItem>
           </SelectContent>
         </Select>
+        {users.length > 0 && (
+          <Select
+            value={createdBy}
+            onValueChange={(v) => {
+              setCreatedBy(!v || v === "all" ? "" : v);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="w-44">
+              <SelectValue placeholder="All users" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All users</SelectItem>
+              {users.map((u) => (
+                <SelectItem key={u.id} value={u.id}>
+                  {u.nickname || u.email}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
       <Card>

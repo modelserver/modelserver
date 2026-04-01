@@ -28,6 +28,8 @@ func handleListRequests(st *store.Store) http.HandlerFunc {
 		isDeveloper := callerMember != nil && callerMember.Role == types.RoleDeveloper
 		if isDeveloper {
 			filters.CreatedBy = caller.ID
+		} else if cb := q.Get("created_by"); cb != "" {
+			filters.CreatedBy = cb
 		}
 
 		if since := q.Get("since"); since != "" {
@@ -65,8 +67,9 @@ func handleListAllRequests(st *store.Store) http.HandlerFunc {
 		q := r.URL.Query()
 
 		filters := store.RequestFilters{
-			Model:  q.Get("model"),
-			Status: q.Get("status"),
+			Model:     q.Get("model"),
+			Status:    q.Get("status"),
+			CreatedBy: q.Get("created_by"),
 		}
 		if since := q.Get("since"); since != "" {
 			if t, err := time.Parse(time.RFC3339, since); err == nil {

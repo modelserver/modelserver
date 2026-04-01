@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { Link } from "react-router";
 import { useCurrentProject } from "@/hooks/useCurrentProject";
 import { useRequests, type RequestFilters } from "@/api/requests";
 import { useKeys } from "@/api/keys";
+import { useMembers } from "@/api/members";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { StatusBadge } from "@/components/shared/StatusBadge";
@@ -48,10 +50,14 @@ export function RequestsPage() {
   const [apiKeyId, setApiKeyId] = useState("");
   const [since, setSince] = useState(defaultSince);
   const [until, setUntil] = useState(defaultUntil);
+  const [createdBy, setCreatedBy] = useState("");
   const [selected, setSelected] = useState<Request | null>(null);
 
   const { data: keysData } = useKeys(projectId);
   const apiKeys = keysData?.data ?? [];
+
+  const { data: membersData } = useMembers(projectId, 1, 100);
+  const members = membersData?.data ?? [];
 
   const filters: RequestFilters = {
     page,
@@ -59,6 +65,7 @@ export function RequestsPage() {
     model: model || undefined,
     status: status || undefined,
     api_key_id: apiKeyId || undefined,
+    created_by: createdBy || undefined,
     since: since ? `${since}T00:00:00Z` : undefined,
     until: until ? `${until}T23:59:59Z` : undefined,
   };
@@ -134,6 +141,20 @@ export function RequestsPage() {
       },
     },
     {
+      header: "Trace",
+      accessor: (r) => r.trace_id ? (
+        <Link
+          to={`/projects/${projectId}/traces`}
+          className="font-mono text-xs text-blue-600 hover:underline dark:text-blue-400"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {r.trace_id.slice(0, 8)}...
+        </Link>
+      ) : (
+        <span className="text-muted-foreground">-</span>
+      ),
+    },
+    {
       header: "Client IP",
       accessor: (r) => r.client_ip ? (
         <span className="font-mono text-xs">{r.client_ip}</span>
@@ -202,6 +223,27 @@ export function RequestsPage() {
               {apiKeys.map((k) => (
                 <SelectItem key={k.id} value={k.id}>
                   {k.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        {members.length > 0 && (
+          <Select
+            value={createdBy}
+            onValueChange={(v) => {
+              setCreatedBy(!v || v === "all" ? "" : v);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="w-44">
+              <SelectValue placeholder="All members" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All members</SelectItem>
+              {members.map((m) => (
+                <SelectItem key={m.user_id} value={m.user_id}>
+                  {m.user?.nickname || m.user?.email || m.user_id.slice(0, 8)}
                 </SelectItem>
               ))}
             </SelectContent>

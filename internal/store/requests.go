@@ -260,6 +260,11 @@ func buildGlobalRequestFilters(f RequestFilters) (string, []interface{}, int) {
 		args = append(args, f.APIKeyID)
 		n++
 	}
+	if f.CreatedBy != "" {
+		conditions = append(conditions, fmt.Sprintf("r.created_by = $%d", n))
+		args = append(args, f.CreatedBy)
+		n++
+	}
 	if !f.Since.IsZero() {
 		conditions = append(conditions, fmt.Sprintf("r.created_at >= $%d", n))
 		args = append(args, f.Since)
