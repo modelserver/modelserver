@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -18,6 +19,11 @@ import (
 	"github.com/modelserver/modelserver/internal/proxy"
 	"github.com/modelserver/modelserver/internal/store"
 )
+
+type utilizationCacheEntry struct {
+	body      []byte
+	fetchedAt time.Time
+}
 
 const (
 	defaultClaudeCodeRedirectURI = "http://localhost:54545/callback"
@@ -191,6 +197,9 @@ func handleClaudeCodeTokenStatus(st *store.Store, encKey []byte) http.HandlerFun
 }
 
 func handleClaudeCodeUtilization(st *store.Store, encKey []byte) http.HandlerFunc {
+	var cache sync.Map // upstreamID → *utilizationCacheEntry
+	const cacheTTL = 60 * time.Second
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		upstreamID := chi.URLParam(r, "upstreamID")
 		u, err := st.GetUpstreamByID(upstreamID)
@@ -257,6 +266,17 @@ func handleClaudeCodeUtilization(st *store.Store, encKey []byte) http.HandlerFun
 			}
 		}
 
+		// Return cached response if fresh enough.
+		if cached, ok := cache.Load(upstreamID); ok {
+			entry := cached.(*utilizationCacheEntry)
+			if time.Since(entry.fetchedAt) < cacheTTL {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				w.Write(entry.body)
+				return
+			}
+		}
+
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, "https://api.anthropic.com/api/oauth/usage", nil)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to create request")
@@ -279,6 +299,16 @@ func handleClaudeCodeUtilization(st *store.Store, encKey []byte) http.HandlerFun
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
 		if resp.StatusCode != http.StatusOK {
 			slog.Error("claudecode utilization fetch: upstream error", "upstream_id", upstreamID, "status", resp.StatusCode, "body", string(body))
+			// On rate limit, serve stale cache if available.
+			if resp.StatusCode == http.StatusTooManyRequests {
+				if cached, ok := cache.Load(upstreamID); ok {
+					entry := cached.(*utilizationCacheEntry)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					w.Write(entry.body)
+					return
+				}
+			}
 			writeError(w, http.StatusBadGateway, "upstream_error",
 				fmt.Sprintf("utilization API returned %d", resp.StatusCode))
 			return
@@ -290,9 +320,39 @@ func handleClaudeCodeUtilization(st *store.Store, encKey []byte) http.HandlerFun
 			return
 		}
 
+		// Enrich response with local credits for comparison.
+		var utilResp map[string]interface{}
+		if err := json.Unmarshal(body, &utilResp); err == nil {
+			if fh, ok := utilResp["five_hour"].(map[string]interface{}); ok {
+				if ra, ok := fh["resets_at"].(string); ok && ra != "" {
+					if t, err := time.Parse(time.RFC3339, ra); err == nil {
+						if credits, err := st.GetCreditsByUpstreamIDSince(upstreamID, t.Add(-5*time.Hour)); err == nil {
+							utilResp["local_credits_5h"] = credits
+						}
+					}
+				}
+			}
+			if sd, ok := utilResp["seven_day"].(map[string]interface{}); ok {
+				if ra, ok := sd["resets_at"].(string); ok && ra != "" {
+					if t, err := time.Parse(time.RFC3339, ra); err == nil {
+						if credits, err := st.GetCreditsByUpstreamIDSince(upstreamID, t.Add(-7*24*time.Hour)); err == nil {
+							utilResp["local_credits_7d"] = credits
+						}
+					}
+				}
+			}
+			if enriched, err := json.Marshal(utilResp); err == nil {
+				body = enriched
+			}
+		}
+
+		// Cache the enriched response.
+		fullResp := []byte(fmt.Sprintf(`{"data":%s}`, string(body)))
+		cache.Store(upstreamID, &utilizationCacheEntry{body: fullResp, fetchedAt: time.Now()})
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"data":%s}`, string(body))
+		w.Write(fullResp)
 	}
 }
 

@@ -110,6 +110,8 @@ function UtilizationBadge({ upstreamId }: { upstreamId: string }) {
   const pct7d = util.seven_day?.utilization != null ? Math.round(util.seven_day.utilization) : null;
   const reset5h = util.five_hour?.resets_at ? formatReset(util.five_hour.resets_at) : "";
   const reset7d = util.seven_day?.resets_at ? formatReset(util.seven_day.resets_at) : "";
+  const localPct5h = util.local_credits_5h != null ? (util.local_credits_5h / MAX20X_5H * 100) : null;
+  const localPct7d = util.local_credits_7d != null ? (util.local_credits_7d / MAX20X_7D * 100) : null;
 
   const extraUsage = util.extra_usage;
 
@@ -122,6 +124,9 @@ function UtilizationBadge({ upstreamId }: { upstreamId: string }) {
         ) : (
           <span className="text-muted-foreground">—</span>
         )}
+        {localPct5h != null && (
+          <span className="text-muted-foreground ml-1">local {localPct5h.toFixed(1)}%</span>
+        )}
         {reset5h && (
           <span className="text-muted-foreground ml-1">({reset5h})</span>
         )}
@@ -132,6 +137,9 @@ function UtilizationBadge({ upstreamId }: { upstreamId: string }) {
           <span className={pctColor(pct7d)}>{pct7d}%</span>
         ) : (
           <span className="text-muted-foreground">—</span>
+        )}
+        {localPct7d != null && (
+          <span className="text-muted-foreground ml-1">local {localPct7d.toFixed(1)}%</span>
         )}
         {reset7d && (
           <span className="text-muted-foreground ml-1">({reset7d})</span>
@@ -146,6 +154,10 @@ function UtilizationBadge({ upstreamId }: { upstreamId: string }) {
     </div>
   );
 }
+
+// max_20x plan limits
+const MAX20X_5H = 11_000_000;
+const MAX20X_7D = 83_333_300;
 
 const PER_PAGE = 20;
 
@@ -168,10 +180,6 @@ export function UpstreamsPage() {
     }
     return m;
   }, [usageData]);
-
-  // max_20x plan limits
-  const MAX20X_5H = 11_000_000;
-  const MAX20X_7D = 83_333_300;
 
   const [testStates, setTestStates] = useState<Record<string, { status: "loading" | "success" | "error"; result?: UpstreamTestResult }>>({});
 

@@ -325,6 +325,8 @@ export interface ClaudeCodeUtilization {
   seven_day_opus?: ClaudeCodeRateLimit | null;
   seven_day_sonnet?: ClaudeCodeRateLimit | null;
   extra_usage?: ClaudeCodeExtraUsage | null;
+  local_credits_5h?: number;
+  local_credits_7d?: number;
 }
 
 // --- Upstream (new routing system) ---

@@ -251,6 +251,18 @@ func (s *Store) CountRequestsInWindowForModel(apiKeyID, model string, windowStar
 	return count, err
 }
 
+// GetCreditsByUpstreamIDSince returns total credits consumed by a specific upstream since a given time.
+func (s *Store) GetCreditsByUpstreamIDSince(upstreamID string, since time.Time) (float64, error) {
+	var total float64
+	err := s.pool.QueryRow(context.Background(), `
+		SELECT COALESCE(SUM(credits_consumed), 0)
+		FROM requests
+		WHERE upstream_id = $1 AND created_at >= $2`,
+		upstreamID, since,
+	).Scan(&total)
+	return total, err
+}
+
 // --- Project-level credit queries (for shared/project-scope rate limiting) ---
 
 // SumCreditsInWindowByProject returns total credits consumed by all keys in a project within a time window.
