@@ -11,8 +11,16 @@ import (
 func handleListTraces(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "projectID")
+		caller := UserFromContext(r.Context())
+		callerMember := MemberFromContext(r.Context())
 		p := parsePagination(r)
-		traces, total, err := st.ListTraces(projectID, p)
+
+		var createdBy string
+		if callerMember != nil && callerMember.Role == types.RoleDeveloper {
+			createdBy = caller.ID
+		}
+
+		traces, total, err := st.ListTraces(projectID, p, createdBy)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to list traces")
 			return

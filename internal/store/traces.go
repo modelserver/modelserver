@@ -35,19 +35,32 @@ func (s *Store) GetTraceByID(id string) (*types.Trace, error) {
 }
 
 // ListTraces returns traces for a project with pagination.
-func (s *Store) ListTraces(projectID string, p types.PaginationParams) ([]types.Trace, int, error) {
+// When createdBy is non-empty, only traces containing at least one request
+// by that user are returned (used to scope developer visibility).
+func (s *Store) ListTraces(projectID string, p types.PaginationParams, createdBy string) ([]types.Trace, int, error) {
 	ctx := context.Background()
+
+	where := "WHERE t.project_id = $1"
+	args := []interface{}{projectID}
+	n := 2
+	if createdBy != "" {
+		where += fmt.Sprintf(" AND EXISTS (SELECT 1 FROM requests r WHERE r.trace_id = t.id AND r.created_by = $%d)", n)
+		args = append(args, createdBy)
+		n++
+	}
+
 	var total int
-	if err := s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM traces WHERE project_id = $1", projectID).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, fmt.Sprintf("SELECT COUNT(*) FROM traces t %s", where), args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
+	args = append(args, p.Limit(), p.Offset())
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
-		SELECT id, project_id, source, created_at, updated_at
-		FROM traces WHERE project_id = $1
-		ORDER BY %s %s LIMIT $2 OFFSET $3`,
-		sanitizeSort(p.Sort, "created_at"), sanitizeOrder(p.Order)),
-		projectID, p.Limit(), p.Offset(),
+		SELECT t.id, t.project_id, t.source, t.created_at, t.updated_at
+		FROM traces t %s
+		ORDER BY %s %s LIMIT $%d OFFSET $%d`,
+		where, sanitizeSort(p.Sort, "t.created_at"), sanitizeOrder(p.Order), n, n+1),
+		args...,
 	)
 	if err != nil {
 		return nil, 0, err
