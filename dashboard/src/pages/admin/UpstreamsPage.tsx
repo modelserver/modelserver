@@ -110,8 +110,16 @@ function UtilizationBadge({ upstreamId }: { upstreamId: string }) {
   const pct7d = util.seven_day?.utilization != null ? Math.round(util.seven_day.utilization) : null;
   const reset5h = util.five_hour?.resets_at ? formatReset(util.five_hour.resets_at) : "";
   const reset7d = util.seven_day?.resets_at ? formatReset(util.seven_day.resets_at) : "";
-  const localPct5h = util.local_credits_5h != null ? (util.local_credits_5h / MAX20X_5H * 100) : null;
-  const localPct7d = util.local_credits_7d != null ? (util.local_credits_7d / MAX20X_7D * 100) : null;
+  const sumCredits = (m?: Record<string, { credits_consumed: number }>) => {
+    if (!m) return null;
+    let total = 0;
+    for (const b of Object.values(m)) total += b.credits_consumed;
+    return total;
+  };
+  const localCredits5h = sumCredits(util.local_5h);
+  const localCredits7d = sumCredits(util.local_7d);
+  const localPct5h = localCredits5h != null ? (localCredits5h / MAX20X_5H * 100) : null;
+  const localPct7d = localCredits7d != null ? (localCredits7d / MAX20X_7D * 100) : null;
 
   const extraUsage = util.extra_usage;
 

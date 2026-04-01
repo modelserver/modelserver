@@ -251,6 +251,36 @@ func (s *Store) CountRequestsInWindowForModel(apiKeyID, model string, windowStar
 	return count, err
 }
 
+// GetTokenBreakdownByUpstreamAndModelSince returns per-model token breakdowns for a specific upstream since a given time.
+func (s *Store) GetTokenBreakdownByUpstreamAndModelSince(upstreamID string, since time.Time) (map[string]*UpstreamTokenBreakdown, error) {
+	rows, err := s.pool.Query(context.Background(), `
+		SELECT model,
+			COALESCE(SUM(input_tokens), 0),
+			COALESCE(SUM(output_tokens), 0),
+			COALESCE(SUM(cache_creation_tokens), 0),
+			COALESCE(SUM(cache_read_tokens), 0),
+			COALESCE(SUM(credits_consumed), 0),
+			COUNT(*)
+		FROM requests
+		WHERE upstream_id = $1 AND created_at >= $2
+		GROUP BY model`, upstreamID, since)
+	if err != nil {
+		return nil, fmt.Errorf("token breakdown by model: %w", err)
+	}
+	defer rows.Close()
+
+	m := make(map[string]*UpstreamTokenBreakdown)
+	for rows.Next() {
+		var model string
+		var b UpstreamTokenBreakdown
+		if err := rows.Scan(&model, &b.InputTokens, &b.OutputTokens, &b.CacheCreationTokens, &b.CacheReadTokens, &b.CreditsConsumed, &b.RequestCount); err != nil {
+			return nil, err
+		}
+		m[model] = &b
+	}
+	return m, rows.Err()
+}
+
 // GetCreditsByUpstreamIDSince returns total credits consumed by a specific upstream since a given time.
 func (s *Store) GetCreditsByUpstreamIDSince(upstreamID string, since time.Time) (float64, error) {
 	var total float64
@@ -261,6 +291,36 @@ func (s *Store) GetCreditsByUpstreamIDSince(upstreamID string, since time.Time) 
 		upstreamID, since,
 	).Scan(&total)
 	return total, err
+}
+
+// UpstreamTokenBreakdown holds per-token-type sums for a specific upstream within a time window.
+type UpstreamTokenBreakdown struct {
+	InputTokens         int64   `json:"input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	CreditsConsumed     float64 `json:"credits_consumed"`
+	RequestCount        int64   `json:"request_count"`
+}
+
+// GetTokenBreakdownByUpstreamSince returns per-token-type sums for a specific upstream since a given time.
+func (s *Store) GetTokenBreakdownByUpstreamSince(upstreamID string, since time.Time) (*UpstreamTokenBreakdown, error) {
+	var b UpstreamTokenBreakdown
+	err := s.pool.QueryRow(context.Background(), `
+		SELECT COALESCE(SUM(input_tokens), 0),
+			   COALESCE(SUM(output_tokens), 0),
+			   COALESCE(SUM(cache_creation_tokens), 0),
+			   COALESCE(SUM(cache_read_tokens), 0),
+			   COALESCE(SUM(credits_consumed), 0),
+			   COUNT(*)
+		FROM requests
+		WHERE upstream_id = $1 AND created_at >= $2`,
+		upstreamID, since,
+	).Scan(&b.InputTokens, &b.OutputTokens, &b.CacheCreationTokens, &b.CacheReadTokens, &b.CreditsConsumed, &b.RequestCount)
+	if err != nil {
+		return nil, err
+	}
+	return &b, nil
 }
 
 // --- Project-level credit queries (for shared/project-scope rate limiting) ---

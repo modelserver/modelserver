@@ -319,14 +319,23 @@ export interface ClaudeCodeExtraUsage {
   utilization: number | null;
 }
 
+export interface LocalTokenBreakdown {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  credits_consumed: number;
+  request_count: number;
+}
+
 export interface ClaudeCodeUtilization {
   five_hour?: ClaudeCodeRateLimit | null;
   seven_day?: ClaudeCodeRateLimit | null;
   seven_day_opus?: ClaudeCodeRateLimit | null;
   seven_day_sonnet?: ClaudeCodeRateLimit | null;
   extra_usage?: ClaudeCodeExtraUsage | null;
-  local_credits_5h?: number;
-  local_credits_7d?: number;
+  local_5h?: Record<string, LocalTokenBreakdown>;
+  local_7d?: Record<string, LocalTokenBreakdown>;
 }
 
 // --- Upstream (new routing system) ---

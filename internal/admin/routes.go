@@ -191,6 +191,8 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 					r.Get("/oauth/status", handleClaudeCodeTokenStatus(st, encKey))
 					r.Post("/oauth/refresh", handleClaudeCodeTokenRefresh(st, encKey))
 					r.Get("/utilization", handleClaudeCodeUtilization(st, encKey))
+					r.Get("/utilization-snapshots", handleListUtilizationSnapshots(st))
+					r.Get("/utilization-analysis", handleUtilizationAnalysis(st))
 				})
 			})
 

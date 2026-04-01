@@ -320,26 +320,52 @@ func handleClaudeCodeUtilization(st *store.Store, encKey []byte) http.HandlerFun
 			return
 		}
 
-		// Enrich response with local credits for comparison.
+		// Enrich response with per-model token breakdown and auto-save snapshots.
 		var utilResp map[string]interface{}
 		if err := json.Unmarshal(body, &utilResp); err == nil {
-			if fh, ok := utilResp["five_hour"].(map[string]interface{}); ok {
-				if ra, ok := fh["resets_at"].(string); ok && ra != "" {
-					if t, err := time.Parse(time.RFC3339, ra); err == nil {
-						if credits, err := st.GetCreditsByUpstreamIDSince(upstreamID, t.Add(-5*time.Hour)); err == nil {
-							utilResp["local_credits_5h"] = credits
-						}
-					}
-				}
+			type windowInfo struct {
+				key        string // JSON key: "five_hour" or "seven_day"
+				localKey   string // enrichment key: "local_5h" or "local_7d"
+				windowType string // DB value: "5h" or "7d"
+				duration   time.Duration
 			}
-			if sd, ok := utilResp["seven_day"].(map[string]interface{}); ok {
-				if ra, ok := sd["resets_at"].(string); ok && ra != "" {
-					if t, err := time.Parse(time.RFC3339, ra); err == nil {
-						if credits, err := st.GetCreditsByUpstreamIDSince(upstreamID, t.Add(-7*24*time.Hour)); err == nil {
-							utilResp["local_credits_7d"] = credits
-						}
-					}
+			windows := []windowInfo{
+				{"five_hour", "local_5h", "5h", 5 * time.Hour},
+				{"seven_day", "local_7d", "7d", 7 * 24 * time.Hour},
+			}
+			for _, win := range windows {
+				wObj, ok := utilResp[win.key].(map[string]interface{})
+				if !ok {
+					continue
 				}
+				ra, ok := wObj["resets_at"].(string)
+				if !ok || ra == "" {
+					continue
+				}
+				t, err := time.Parse(time.RFC3339, ra)
+				if err != nil {
+					continue
+				}
+				breakdown, err := st.GetTokenBreakdownByUpstreamAndModelSince(upstreamID, t.Add(-win.duration))
+				if err != nil {
+					continue
+				}
+				utilResp[win.localKey] = breakdown
+
+				// Auto-save snapshot for later analysis.
+				officialPct, _ := wObj["utilization"].(float64)
+				var totalCredits float64
+				for _, b := range breakdown {
+					totalCredits += b.CreditsConsumed
+				}
+				_ = st.CreateUtilizationSnapshot(&store.UtilizationSnapshot{
+					UpstreamID:     upstreamID,
+					WindowType:     win.windowType,
+					OfficialPct:    officialPct,
+					ResetsAt:       &t,
+					ModelBreakdown: breakdown,
+					TotalCredits:   totalCredits,
+				})
 			}
 			if enriched, err := json.Marshal(utilResp); err == nil {
 				body = enriched
