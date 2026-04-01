@@ -40,8 +40,8 @@ func TestDirectorSetClaudeCodeUpstream(t *testing.T) {
 	if req.Header.Get("X-App") != "cli" {
 		t.Errorf("X-App = %s, want cli", req.Header.Get("X-App"))
 	}
-	// No client beta header → only required betas should be present.
-	wantBeta := "claude-code-20250219,oauth-2025-04-20"
+	// No client beta header → only the required OAuth beta should be present.
+	wantBeta := "oauth-2025-04-20"
 	if got := req.Header.Get("Anthropic-Beta"); got != wantBeta {
 		t.Errorf("Anthropic-Beta = %s, want %s", got, wantBeta)
 	}
@@ -82,7 +82,7 @@ func TestDirectorSetClaudeCodeUpstream_MergesClientBetaHeaders(t *testing.T) {
 
 	directorSetClaudeCodeUpstream(req, "https://api.anthropic.com", "token")
 
-	want := "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,output-128k-2025-02-19"
+	want := "oauth-2025-04-20,interleaved-thinking-2025-05-14,output-128k-2025-02-19"
 	if got := req.Header.Get("Anthropic-Beta"); got != want {
 		t.Errorf("Anthropic-Beta = %s, want %s", got, want)
 	}
@@ -94,7 +94,7 @@ func TestDirectorSetClaudeCodeUpstream_DeduplicatesBetas(t *testing.T) {
 
 	directorSetClaudeCodeUpstream(req, "https://api.anthropic.com", "token")
 
-	want := "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14"
+	want := "oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14"
 	if got := req.Header.Get("Anthropic-Beta"); got != want {
 		t.Errorf("Anthropic-Beta = %s, want %s", got, want)
 	}

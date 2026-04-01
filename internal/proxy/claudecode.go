@@ -7,10 +7,10 @@ import (
 	"strings"
 )
 
-// claudeCodeRequiredBetas are beta flags that must always be present on
-// Claude Code (OAuth subscription) upstream requests.
+// claudeCodeRequiredBetas are beta flags that the proxy must always inject
+// on Claude Code (OAuth subscription) upstream requests. Other betas
+// (e.g. claude-code-20250219) are optional and provided by the client.
 var claudeCodeRequiredBetas = []string{
-	"claude-code-20250219",
 	"oauth-2025-04-20",
 }
 
