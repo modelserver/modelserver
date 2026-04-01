@@ -106,8 +106,8 @@ function UtilizationBadge({ upstreamId }: { upstreamId: string }) {
     return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
   }
 
-  const pct5h = util.five_hour?.utilization != null ? Math.round(util.five_hour.utilization * 100) : null;
-  const pct7d = util.seven_day?.utilization != null ? Math.round(util.seven_day.utilization * 100) : null;
+  const pct5h = util.five_hour?.utilization != null ? Math.round(util.five_hour.utilization) : null;
+  const pct7d = util.seven_day?.utilization != null ? Math.round(util.seven_day.utilization) : null;
   const reset5h = util.five_hour?.resets_at ? formatReset(util.five_hour.resets_at) : "";
   const reset7d = util.seven_day?.resets_at ? formatReset(util.seven_day.resets_at) : "";
 
