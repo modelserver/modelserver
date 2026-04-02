@@ -71,15 +71,21 @@ func (h *Handler) HandleGemini(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract model and method from URL wildcard.
-	// e.g. "gemini-3-flash:generateContent" or "gemini-2.5-pro:streamGenerateContent"
+	// Supports both colon and slash separators:
+	//   "gemini-3-flash:generateContent"  (canonical Gemini API format)
+	//   "gemini-3-flash/generateContent"  (some clients use slash)
 	wildcard := chi.URLParam(r, "*")
-	lastColon := strings.LastIndex(wildcard, ":")
-	if lastColon < 0 {
-		writeGeminiError(w, http.StatusBadRequest, "invalid Gemini API path: missing method")
+	var model, method string
+	if i := strings.LastIndex(wildcard, ":"); i >= 0 {
+		model = wildcard[:i]
+		method = wildcard[i+1:]
+	} else if i := strings.LastIndex(wildcard, "/"); i >= 0 {
+		model = wildcard[:i]
+		method = wildcard[i+1:]
+	} else {
+		writeGeminiError(w, http.StatusBadRequest, "invalid Gemini API path: missing method separator (: or /)")
 		return
 	}
-	model := wildcard[:lastColon]
-	method := wildcard[lastColon+1:]
 
 	if model == "" {
 		writeGeminiError(w, http.StatusBadRequest, "invalid Gemini API path: missing model")
@@ -88,7 +94,7 @@ func (h *Handler) HandleGemini(w http.ResponseWriter, r *http.Request) {
 
 	// Reject model names containing path-significant characters to prevent
 	// path traversal or URL manipulation in the upstream request URL.
-	if strings.ContainsAny(model, "/?#\\") || strings.Contains(model, "..") {
+	if strings.ContainsAny(model, "?#\\") || strings.Contains(model, "..") {
 		writeGeminiError(w, http.StatusBadRequest, "invalid model name")
 		return
 	}

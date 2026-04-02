@@ -408,6 +408,10 @@ func extractAPIKey(r *http.Request) string {
 	if key := r.Header.Get("x-api-key"); key != "" {
 		return key
 	}
+	// Gemini clients use x-goog-api-key to pass their API key.
+	if key := r.Header.Get("x-goog-api-key"); key != "" {
+		return key
+	}
 	auth := r.Header.Get("Authorization")
 	if strings.HasPrefix(auth, "Bearer ") {
 		return strings.TrimPrefix(auth, "Bearer ")
