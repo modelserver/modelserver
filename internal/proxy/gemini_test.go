@@ -15,21 +15,21 @@ func TestGeminiEndpointURL(t *testing.T) {
 	}{
 		{
 			name:      "non-streaming generateContent",
-			baseURL:   "https://generativelanguage.googleapis.com/v1beta",
+			baseURL:   "https://generativelanguage.googleapis.com",
 			model:     "gemini-2.5-flash",
 			streaming: false,
 			wantURL:   "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
 		},
 		{
 			name:      "streaming streamGenerateContent",
-			baseURL:   "https://generativelanguage.googleapis.com/v1beta",
+			baseURL:   "https://generativelanguage.googleapis.com",
 			model:     "gemini-2.5-pro",
 			streaming: true,
 			wantURL:   "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
 		},
 		{
 			name:      "trailing slash in base URL",
-			baseURL:   "https://generativelanguage.googleapis.com/v1beta/",
+			baseURL:   "https://generativelanguage.googleapis.com/",
 			model:     "gemini-3-flash-preview",
 			streaming: false,
 			wantURL:   "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent",
@@ -52,7 +52,7 @@ func TestDirectorSetGeminiUpstream(t *testing.T) {
 	req.Header.Set("anthropic-version", "2023-06-01")
 
 	directorSetGeminiUpstream(req,
-		"https://generativelanguage.googleapis.com/v1beta",
+		"https://generativelanguage.googleapis.com",
 		"AIzaSy-fake-key",
 		"gemini-2.5-flash",
 		false,
@@ -84,7 +84,7 @@ func TestDirectorSetGeminiUpstream_Streaming(t *testing.T) {
 	req := mustNewRequest(t, "POST", "http://localhost/v1beta/models/gemini-2.5-pro:streamGenerateContent", nil)
 
 	directorSetGeminiUpstream(req,
-		"https://generativelanguage.googleapis.com/v1beta",
+		"https://generativelanguage.googleapis.com",
 		"AIzaSy-key",
 		"gemini-2.5-pro",
 		true,

@@ -330,7 +330,7 @@ func (hc *HealthChecker) buildGeminiProbe(entry *healthEntry) (*http.Request, er
 	}
 
 	base := strings.TrimRight(entry.baseURL, "/")
-	url := fmt.Sprintf("%s/models/%s:generateContent", base, entry.testModel)
+	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent", base, entry.testModel)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)

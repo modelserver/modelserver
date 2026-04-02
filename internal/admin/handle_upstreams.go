@@ -227,7 +227,7 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 			if len(base) > 0 && base[len(base)-1] == '/' {
 				base = base[:len(base)-1]
 			}
-			endpoint = fmt.Sprintf("%s/models/%s:generateContent", base, upstreamTestModel)
+			endpoint = fmt.Sprintf("%s/v1beta/models/%s:generateContent", base, upstreamTestModel)
 			reqBody, _ = json.Marshal(map[string]interface{}{
 				"contents": []map[string]interface{}{
 					{

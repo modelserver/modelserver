@@ -641,7 +641,7 @@ export function UpstreamsPage() {
                 placeholder={form.provider === "vertex"
                   ? "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/REGION/publishers/anthropic/models"
                   : form.provider === "gemini"
-                  ? "https://generativelanguage.googleapis.com/v1beta"
+                  ? "https://generativelanguage.googleapis.com"
                   : "https://api.anthropic.com"}
               />
             </div>

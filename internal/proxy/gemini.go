@@ -30,14 +30,17 @@ func withGeminiParams(r *http.Request, model string, isStream bool) *http.Reques
 }
 
 // geminiEndpointURL constructs the full Gemini API endpoint URL.
-// Format: {baseURL}/models/{model}:generateContent or :streamGenerateContent?alt=sse
+// The baseURL should NOT include the API version path (e.g. "https://generativelanguage.googleapis.com").
+// The /v1beta prefix is added automatically, matching the GOOGLE_GEMINI_BASE_URL convention
+// from the google/go-genai SDK.
+// Format: {baseURL}/v1beta/models/{model}:generateContent or :streamGenerateContent?alt=sse
 func geminiEndpointURL(baseURL, model string, streaming bool) string {
 	base := strings.TrimRight(baseURL, "/")
 	method := "generateContent"
 	if streaming {
 		method = "streamGenerateContent"
 	}
-	endpoint := fmt.Sprintf("%s/models/%s:%s", base, model, method)
+	endpoint := fmt.Sprintf("%s/v1beta/models/%s:%s", base, model, method)
 	if streaming {
 		endpoint += "?alt=sse"
 	}
