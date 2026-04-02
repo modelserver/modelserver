@@ -323,60 +323,6 @@ func (s *Store) GetTokenBreakdownByUpstreamSince(upstreamID string, since time.T
 	return &b, nil
 }
 
-// BucketedCreditsUsage holds credits consumed in a time bucket (hour or day).
-type BucketedCreditsUsage struct {
-	Bucket  time.Time `json:"bucket"`
-	Credits float64   `json:"credits"`
-}
-
-// GetHourlyCreditsConsumedByUser returns per-hour credits consumed by a user (for 5h windows).
-func (s *Store) GetHourlyCreditsConsumedByUser(projectID, userID string, since, until time.Time) ([]BucketedCreditsUsage, error) {
-	rows, err := s.pool.Query(context.Background(), `
-		SELECT date_trunc('hour', created_at) AS bucket, COALESCE(SUM(credits_consumed), 0)
-		FROM requests
-		WHERE project_id = $1 AND created_by = $2 AND created_at >= $3 AND created_at <= $4
-		GROUP BY bucket ORDER BY bucket ASC`,
-		projectID, userID, since, until)
-	if err != nil {
-		return nil, fmt.Errorf("hourly credits by user: %w", err)
-	}
-	defer rows.Close()
-
-	var result []BucketedCreditsUsage
-	for rows.Next() {
-		var b BucketedCreditsUsage
-		if err := rows.Scan(&b.Bucket, &b.Credits); err != nil {
-			return nil, err
-		}
-		result = append(result, b)
-	}
-	return result, rows.Err()
-}
-
-// GetDailyCreditsConsumedByUser returns per-day credits consumed by a user (for 7d/1M windows).
-func (s *Store) GetDailyCreditsConsumedByUser(projectID, userID string, since, until time.Time) ([]BucketedCreditsUsage, error) {
-	rows, err := s.pool.Query(context.Background(), `
-		SELECT DATE(created_at) AS bucket, COALESCE(SUM(credits_consumed), 0)
-		FROM requests
-		WHERE project_id = $1 AND created_by = $2 AND created_at >= $3 AND created_at <= $4
-		GROUP BY DATE(created_at) ORDER BY bucket ASC`,
-		projectID, userID, since, until)
-	if err != nil {
-		return nil, fmt.Errorf("daily credits by user: %w", err)
-	}
-	defer rows.Close()
-
-	var result []BucketedCreditsUsage
-	for rows.Next() {
-		var b BucketedCreditsUsage
-		if err := rows.Scan(&b.Bucket, &b.Credits); err != nil {
-			return nil, err
-		}
-		result = append(result, b)
-	}
-	return result, rows.Err()
-}
-
 // --- Project-level credit queries (for shared/project-scope rate limiting) ---
 
 // SumCreditsInWindowByProject returns total credits consumed by all keys in a project within a time window.

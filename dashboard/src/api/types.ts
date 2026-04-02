@@ -90,23 +90,6 @@ export interface MemberUsage {
   windows: QuotaWindowStatus[];
 }
 
-// --- Quota History ---
-export interface QuotaHistoryPoint {
-  timestamp: string;
-  percentage: number;
-}
-
-export interface QuotaWindowHistory {
-  window: string;
-  window_type: string;
-  series: QuotaHistoryPoint[];
-}
-
-export interface QuotaHistoryResponse {
-  user_id: string;
-  windows: QuotaWindowHistory[];
-}
-
 // --- API Key ---
 export interface APIKey {
   id: string;

@@ -2,8 +2,7 @@ import { useCurrentProject } from "@/hooks/useCurrentProject";
 import { useProject } from "@/api/projects";
 import { useUsageOverview, useDailyUsage } from "@/api/usage";
 import { useRequests } from "@/api/requests";
-import { useMyQuota, useMyQuotaHistory } from "@/api/members";
-import { QuotaHistoryChart } from "@/components/shared/QuotaHistoryChart";
+import { useMyQuota } from "@/api/members";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatCard } from "@/components/shared/StatCard";
 import { DataTable, type Column } from "@/components/shared/DataTable";
@@ -49,14 +48,12 @@ export function OverviewPage() {
   const { data: daily } = useDailyUsage(projectId);
   const { data: recentData } = useRequests(projectId, { per_page: 5 });
   const { data: myQuotaData } = useMyQuota(projectId);
-  const { data: myQuotaHistoryData } = useMyQuotaHistory(projectId);
   const { user } = useAuth();
 
   const overview = usage?.data;
   const dailyData = daily?.data ?? [];
   const recentRequests = recentData?.data ?? [];
   const myQuota = myQuotaData?.data;
-  const myQuotaHistory = myQuotaHistoryData?.data;
 
   return (
     <div className="space-y-6">
@@ -124,10 +121,6 @@ export function OverviewPage() {
             ))}
           </CardContent>
         </Card>
-      )}
-
-      {myQuotaHistory && myQuotaHistory.windows.length > 0 && (
-        <QuotaHistoryChart windows={myQuotaHistory.windows} />
       )}
 
       <Card>
