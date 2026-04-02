@@ -202,7 +202,7 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			// Start with original body. If the model was remapped and this is
 			// not Bedrock (which strips the model field), rewrite it in the body.
 			bodyForTransform := originalBody
-			if actualModel != reqCtx.Model && upstream.Provider != types.ProviderBedrock && upstream.Provider != types.ProviderVertex {
+			if actualModel != reqCtx.Model && upstream.Provider != types.ProviderBedrock && upstream.Provider != types.ProviderVertex && upstream.Provider != types.ProviderGemini {
 				bodyForTransform, _ = sjson.SetBytes(append([]byte{}, originalBody...), "model", actualModel)
 			}
 
@@ -262,6 +262,12 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 		// request context so SetUpstream can construct the correct URL path.
 		if upstream.Provider == types.ProviderVertex {
 			outReq = withVertexParams(outReq, actualModel, reqCtx.IsStream)
+		}
+
+		// For Gemini, inject the resolved model and streaming flag into the
+		// request context so SetUpstream can construct the correct URL path.
+		if upstream.Provider == types.ProviderGemini {
+			outReq = withGeminiParams(outReq, actualModel, reqCtx.IsStream)
 		}
 
 		// For Claude Code upstreams, resolve a fresh OAuth access token
@@ -955,7 +961,9 @@ func sanitizeOutboundHeaders(h http.Header) http.Header {
 			canon == "X-Client-App",
 			canon == "X-Anthropic-Additional-Protection",
 			canon == "X-Claude-Remote-Container-Id",
-			canon == "X-Claude-Remote-Session-Id":
+			canon == "X-Claude-Remote-Session-Id",
+			// Gemini API key header.
+			canon == "X-Goog-Api-Key":
 			allowed[canon] = vals
 		default:
 			if strings.HasPrefix(canon, "X-Stainless-") {

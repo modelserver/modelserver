@@ -59,6 +59,7 @@ func init() {
 	providerTransformers[types.ProviderOpenAI] = &OpenAITransformer{}
 	providerTransformers[types.ProviderClaudeCode] = &ClaudeCodeTransformer{}
 	providerTransformers[types.ProviderVertex] = &VertexTransformer{} // tokenManager set by Router init via SetTokenManager
+	providerTransformers[types.ProviderGemini] = &GeminiTransformer{}
 }
 
 // GetProviderTransformer returns the transformer for the given provider name.

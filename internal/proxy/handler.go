@@ -9,7 +9,9 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"path"
+	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/modelserver/modelserver/internal/collector"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
@@ -55,6 +57,112 @@ func (h *Handler) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	h.handleProxyRequest(w, r, []string{
 		types.ProviderOpenAI,
 	})
+}
+
+// HandleGemini proxies Gemini API requests (generateContent / streamGenerateContent).
+// The model and streaming flag are extracted from the URL path rather than the body.
+// Example: POST /v1beta/models/gemini-3-flash:generateContent
+func (h *Handler) HandleGemini(w http.ResponseWriter, r *http.Request) {
+	apiKey := APIKeyFromContext(r.Context())
+	project := ProjectFromContext(r.Context())
+	if apiKey == nil || project == nil {
+		writeGeminiError(w, http.StatusInternalServerError, "missing auth context")
+		return
+	}
+
+	// Extract model and method from URL wildcard.
+	// e.g. "gemini-3-flash:generateContent" or "gemini-2.5-pro:streamGenerateContent"
+	wildcard := chi.URLParam(r, "*")
+	lastColon := strings.LastIndex(wildcard, ":")
+	if lastColon < 0 {
+		writeGeminiError(w, http.StatusBadRequest, "invalid Gemini API path: missing method")
+		return
+	}
+	model := wildcard[:lastColon]
+	method := wildcard[lastColon+1:]
+
+	if model == "" {
+		writeGeminiError(w, http.StatusBadRequest, "invalid Gemini API path: missing model")
+		return
+	}
+
+	// Reject model names containing path-significant characters to prevent
+	// path traversal or URL manipulation in the upstream request URL.
+	if strings.ContainsAny(model, "/?#\\") || strings.Contains(model, "..") {
+		writeGeminiError(w, http.StatusBadRequest, "invalid model name")
+		return
+	}
+
+	var isStream bool
+	switch method {
+	case "generateContent":
+		isStream = false
+	case "streamGenerateContent":
+		isStream = true
+	default:
+		writeGeminiError(w, http.StatusBadRequest, "unsupported Gemini method: "+method)
+		return
+	}
+
+	bodyBytes, err := io.ReadAll(http.MaxBytesReader(w, r.Body, h.maxBodySize))
+	if err != nil {
+		writeGeminiError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+	if len(apiKey.AllowedModels) > 0 && !modelInList(apiKey.AllowedModels, model) {
+		writeGeminiError(w, http.StatusForbidden, "model not allowed for this API key")
+		return
+	}
+
+	policy := PolicyFromContext(r.Context())
+	traceID := TraceIDFromContext(r.Context())
+
+	if traceID != "" {
+		source := TraceSourceFromContext(r.Context())
+		if err := h.store.EnsureTrace(project.ID, traceID, source); err != nil {
+			h.logger.Warn("failed to ensure trace", "error", err)
+		}
+	}
+
+	oauthGrantID := OAuthGrantIDFromContext(r.Context())
+
+	pendingReq := &types.Request{
+		ProjectID:    project.ID,
+		APIKeyID:     apiKey.ID,
+		OAuthGrantID: oauthGrantID,
+		CreatedBy:    apiKey.CreatedBy,
+		TraceID:      traceID,
+		Model:        model,
+		Streaming:    isStream,
+		Status:       types.RequestStatusProcessing,
+		ClientIP:     r.RemoteAddr,
+	}
+	if err := h.store.CreateRequest(pendingReq); err != nil {
+		h.logger.Warn("failed to insert pending request", "error", err)
+		pendingReq.ID = ""
+	}
+
+	reqCtx := &RequestContext{
+		ProjectID:        project.ID,
+		APIKeyID:         apiKey.ID,
+		OAuthGrantID:     oauthGrantID,
+		UserID:           apiKey.CreatedBy,
+		Model:            model,
+		IsStream:         isStream,
+		AllowedProviders: []string{types.ProviderGemini},
+		TraceID:          traceID,
+		TraceSource:      TraceSourceFromContext(r.Context()),
+		SessionID:        traceID,
+		ClientIP:         r.RemoteAddr,
+		Policy:           policy,
+		APIKey:           apiKey,
+		Project:          project,
+		RequestID:        pendingReq.ID,
+	}
+
+	h.executor.Execute(w, r, reqCtx)
 }
 
 // handleProxyRequest is the shared implementation for HandleMessages and HandleResponses.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -249,8 +250,10 @@ func (hc *HealthChecker) buildProbeRequest(entry *healthEntry) (*http.Request, e
 	switch entry.provider {
 	case "anthropic":
 		return hc.buildAnthropicProbe(entry)
-	case "openai", "gemini":
+	case "openai":
 		return hc.buildOpenAIProbe(entry)
+	case "gemini":
+		return hc.buildGeminiProbe(entry)
 	case "claudecode":
 		return hc.buildClaudeCodeProbe(entry)
 	case "bedrock":
@@ -306,6 +309,34 @@ func (hc *HealthChecker) buildOpenAIProbe(entry *healthEntry) (*http.Request, er
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+entry.apiKey)
+	return req, nil
+}
+
+func (hc *HealthChecker) buildGeminiProbe(entry *healthEntry) (*http.Request, error) {
+	body := map[string]interface{}{
+		"contents": []map[string]interface{}{
+			{
+				"parts": []map[string]string{{"text": "hi"}},
+				"role":  "user",
+			},
+		},
+		"generationConfig": map[string]interface{}{
+			"maxOutputTokens": 1,
+		},
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal probe body: %w", err)
+	}
+
+	base := strings.TrimRight(entry.baseURL, "/")
+	url := fmt.Sprintf("%s/models/%s:generateContent", base, entry.testModel)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", entry.apiKey)
 	return req, nil
 }
 

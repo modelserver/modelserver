@@ -28,6 +28,17 @@ func MountRoutes(r chi.Router, st *store.Store, handler *Handler, traceCfg confi
 		r.Get("/models", handler.HandleListModels)
 		r.Get("/usage", handler.HandleUsage)
 	})
+
+	// Gemini native API proxy: /v1beta/models/{model}:{method}
+	r.Route("/v1beta", func(r chi.Router) {
+		r.Use(AuthMiddleware(st, encKey, introspector))
+		r.Use(TraceMiddleware(traceCfg))
+		if limiter != nil {
+			r.Use(RateLimitMiddleware(limiter, st, logger))
+		}
+
+		r.Post("/models/*", handler.HandleGemini)
+	})
 }
 
 // HandleListModels returns available models for the authenticated API key.

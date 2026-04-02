@@ -222,6 +222,23 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 				"max_tokens":        10,
 				"messages":          []map[string]string{{"role": "user", "content": "Hi"}},
 			})
+		case types.ProviderGemini:
+			base := baseURL
+			if len(base) > 0 && base[len(base)-1] == '/' {
+				base = base[:len(base)-1]
+			}
+			endpoint = fmt.Sprintf("%s/models/%s:generateContent", base, upstreamTestModel)
+			reqBody, _ = json.Marshal(map[string]interface{}{
+				"contents": []map[string]interface{}{
+					{
+						"parts": []map[string]string{{"text": "Hi"}},
+						"role":  "user",
+					},
+				},
+				"generationConfig": map[string]interface{}{
+					"maxOutputTokens": 10,
+				},
+			})
 		default:
 			endpoint = baseURL + "/v1/messages"
 			reqBody, _ = json.Marshal(map[string]interface{}{
@@ -247,6 +264,8 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 			req.Header.Set("Authorization", "Bearer "+string(apiKey))
 		case types.ProviderBedrock:
 			req.Header.Set("Authorization", "Bearer "+string(apiKey))
+		case types.ProviderGemini:
+			req.Header.Set("x-goog-api-key", string(apiKey))
 		case types.ProviderClaudeCode:
 			var creds struct {
 				AccessToken string `json:"access_token"`
