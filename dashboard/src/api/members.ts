@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
-import type { ListResponse, DataResponse, ProjectMember, QuotaUsageResponse, MemberUsage } from "./types";
+import type { ListResponse, DataResponse, ProjectMember, QuotaUsageResponse, MemberUsage, QuotaHistoryResponse } from "./types";
 
 export function useMembers(projectId: string, page = 1, perPage = 20) {
   return useQuery({
@@ -72,6 +72,27 @@ export function useQuotaUsage(projectId: string, userId: string) {
         `/api/v1/projects/${projectId}/members/${userId}/quota-usage`,
       ),
     enabled: !!userId,
+  });
+}
+
+export function useQuotaHistory(projectId: string, userId: string) {
+  return useQuery({
+    queryKey: ["quota-history", projectId, userId],
+    queryFn: () =>
+      api.get<DataResponse<QuotaHistoryResponse>>(
+        `/api/v1/projects/${projectId}/members/${userId}/quota-history`,
+      ),
+    enabled: !!userId,
+  });
+}
+
+export function useMyQuotaHistory(projectId: string) {
+  return useQuery({
+    queryKey: ["my-quota-history", projectId],
+    queryFn: () =>
+      api.get<DataResponse<QuotaHistoryResponse>>(
+        `/api/v1/projects/${projectId}/my-quota-history`,
+      ),
   });
 }
 

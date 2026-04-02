@@ -1,7 +1,8 @@
 import { useState, useMemo } from "react";
 import { useCurrentProject } from "@/hooks/useCurrentProject";
 import { useAuth } from "@/hooks/useAuth";
-import { useMembers, useMyMembership, useAddMember, useUpdateMember, useRemoveMember, useMembersUsage } from "@/api/members";
+import { useMembers, useMyMembership, useAddMember, useUpdateMember, useRemoveMember, useMembersUsage, useQuotaHistory } from "@/api/members";
+import { QuotaHistoryChart } from "@/components/shared/QuotaHistoryChart";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { Pagination } from "@/components/shared/Pagination";
@@ -32,7 +33,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import type { ProjectMember, MemberUsage } from "@/api/types";
-import { Plus, MoreHorizontal, Pencil } from "lucide-react";
+import { Plus, MoreHorizontal, Pencil, BarChart3 } from "lucide-react";
 
 const roles = ["owner", "maintainer", "developer"] as const;
 const PER_PAGE = 20;
@@ -57,6 +58,9 @@ export function MembersPage() {
   const [quotaValue, setQuotaValue] = useState<string>("100");
   const [removeQuota, setRemoveQuota] = useState(false);
 
+  // Quota history dialog state
+  const [historyTarget, setHistoryTarget] = useState<ProjectMember | null>(null);
+
   const members = data?.data ?? [];
   const meta = data?.meta;
 
@@ -70,6 +74,9 @@ export function MembersPage() {
     }
     return m;
   }, [usageData]);
+
+  // Quota history for selected member
+  const { data: historyData } = useQuotaHistory(projectId, historyTarget?.user_id ?? "");
 
   // Determine current user's role in this project (independent of pagination)
   const { data: myMembershipData } = useMyMembership(projectId);
@@ -173,25 +180,35 @@ export function MembersPage() {
           return <span className="text-xs text-muted-foreground">—</span>;
         }
         return (
-          <div className="flex flex-col gap-1 min-w-[120px]">
-            {usage.windows.map((w) => {
-              const pct = Math.min(w.percentage, 100);
-              const isHigh = pct > 80;
-              return (
-                <div key={w.window} className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground w-6 shrink-0">{w.window}</span>
-                  <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all ${isHigh ? "bg-destructive" : "bg-primary"}`}
-                      style={{ width: `${pct}%` }}
-                    />
+          <div className="flex items-center gap-2">
+            <div className="flex flex-col gap-1 min-w-[120px]">
+              {usage.windows.map((w) => {
+                const pct = Math.min(w.percentage, 100);
+                const isHigh = pct > 80;
+                return (
+                  <div key={w.window} className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground w-6 shrink-0">{w.window}</span>
+                    <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${isHigh ? "bg-destructive" : "bg-primary"}`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className={`text-xs tabular-nums w-12 text-right ${isHigh ? "text-destructive font-medium" : ""}`}>
+                      {pct.toFixed(1)}%
+                    </span>
                   </div>
-                  <span className={`text-xs tabular-nums w-12 text-right ${isHigh ? "text-destructive font-medium" : ""}`}>
-                    {pct.toFixed(1)}%
-                  </span>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              className="shrink-0 rounded p-1 hover:bg-muted transition-colors"
+              onClick={() => setHistoryTarget(m)}
+              title="View usage history"
+            >
+              <BarChart3 className="h-4 w-4 text-muted-foreground" />
+            </button>
           </div>
         );
       },
@@ -385,6 +402,29 @@ export function MembersPage() {
               {updateMember.isPending ? "Saving..." : "Save Quota"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Quota History Dialog */}
+      <Dialog open={!!historyTarget} onOpenChange={() => setHistoryTarget(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              Usage History —{" "}
+              {historyTarget?.user?.nickname ||
+                historyTarget?.user?.email ||
+                historyTarget?.user_id}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-2">
+            {historyData?.data?.windows && historyData.data.windows.length > 0 ? (
+              <QuotaHistoryChart windows={historyData.data.windows} />
+            ) : (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                No quota history data
+              </p>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>
