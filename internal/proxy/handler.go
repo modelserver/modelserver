@@ -47,7 +47,7 @@ func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
 		types.ProviderAnthropic,
 		types.ProviderBedrock,
 		types.ProviderClaudeCode,
-		types.ProviderVertex,
+		types.ProviderVertexAnthropic,
 	})
 }
 

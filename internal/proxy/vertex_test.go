@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestTransformVertexBody(t *testing.T) {
+func TestTransformVertexAnthropicBody(t *testing.T) {
 	tests := []struct {
 		name      string
 		body      string
@@ -116,16 +116,64 @@ func TestTransformVertexBody(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := transformVertexBody([]byte(tt.body), tt.betas)
+			result, err := transformVertexAnthropicBody([]byte(tt.body), tt.betas)
 			if err != nil {
-				t.Fatalf("transformVertexBody() error = %v", err)
+				t.Fatalf("transformVertexAnthropicBody() error = %v", err)
 			}
 			tt.wantCheck(t, string(result))
 		})
 	}
 }
 
-func TestFilterVertexBetas_Allowlist(t *testing.T) {
+func TestTransformVertexAnthropicBody_PreservesEagerInputStreaming(t *testing.T) {
+	body := `{"model":"claude-sonnet-4-20250514","stream":true,"max_tokens":1024,"tools":[{"name":"make_file","eager_input_streaming":true,"input_schema":{"type":"object","properties":{"filename":{"type":"string"}}}}],"messages":[{"role":"user","content":"Hi"}]}`
+
+	result, err := transformVertexAnthropicBody([]byte(body), nil)
+	if err != nil {
+		t.Fatalf("transformVertexAnthropicBody() error = %v", err)
+	}
+
+	got := string(result)
+
+	// eager_input_streaming must survive the transformation.
+	if !strings.Contains(got, `"eager_input_streaming":true`) {
+		t.Errorf("eager_input_streaming should be preserved, got %s", got)
+	}
+	// model should be removed, stream preserved.
+	if strings.Contains(got, `"model"`) {
+		t.Errorf("model should be removed, got %s", got)
+	}
+	if !strings.Contains(got, `"stream":true`) {
+		t.Errorf("stream should be preserved for Vertex, got %s", got)
+	}
+	if !strings.Contains(got, `"make_file"`) {
+		t.Errorf("tool name should remain, got %s", got)
+	}
+}
+
+func TestTransformVertexAnthropicBody_PreservesEagerInputStreamingWithCacheControlStripping(t *testing.T) {
+	// Tool has both eager_input_streaming and cache_control with scope.
+	// Scope should be stripped but eager_input_streaming preserved.
+	body := `{"model":"m","stream":true,"tools":[{"name":"t","eager_input_streaming":true,"input_schema":{"type":"object"},"cache_control":{"type":"ephemeral","scope":"auto"}}]}`
+
+	result, err := transformVertexAnthropicBody([]byte(body), nil)
+	if err != nil {
+		t.Fatalf("transformVertexAnthropicBody() error = %v", err)
+	}
+
+	got := string(result)
+	if !strings.Contains(got, `"eager_input_streaming":true`) {
+		t.Errorf("eager_input_streaming should be preserved, got %s", got)
+	}
+	if strings.Contains(got, `"scope"`) {
+		t.Errorf("scope should be stripped, got %s", got)
+	}
+	if !strings.Contains(got, `"cache_control"`) {
+		t.Errorf("cache_control should remain, got %s", got)
+	}
+}
+
+func TestFilterVertexAnthropicBetas_Allowlist(t *testing.T) {
 	input := []string{
 		"interleaved-thinking-2025-05-14",
 		"prompt-caching-2024-07-31",
@@ -136,7 +184,7 @@ func TestFilterVertexBetas_Allowlist(t *testing.T) {
 	}
 	body := []byte(`{}`)
 
-	supported, dropped := filterVertexBetas(input, body)
+	supported, dropped := filterVertexAnthropicBetas(input, body)
 
 	wantSupported := []string{
 		"interleaved-thinking-2025-05-14",
@@ -167,25 +215,25 @@ func TestFilterVertexBetas_Allowlist(t *testing.T) {
 	}
 }
 
-func TestFilterVertexBetas_Rename(t *testing.T) {
+func TestFilterVertexAnthropicBetas_Rename(t *testing.T) {
 	input := []string{"advanced-tool-use-2025-11-20"}
 	body := []byte(`{}`)
 
-	supported, _ := filterVertexBetas(input, body)
+	supported, _ := filterVertexAnthropicBetas(input, body)
 
 	if len(supported) != 1 || supported[0] != "tool-search-tool-2025-10-19" {
 		t.Errorf("expected advanced-tool-use renamed to tool-search-tool, got %v", supported)
 	}
 }
 
-func TestFilterVertexBetas_InferFromBody(t *testing.T) {
+func TestFilterVertexAnthropicBetas_InferFromBody(t *testing.T) {
 	// No beta headers, but body has context_management and web search tool.
 	body := []byte(`{
 		"context_management":{"edits":[{"type":"compact_20260112"},{"type":"clear_tool_results"}]},
 		"tools":[{"type":"web_search_20250305","name":"web_search"}]
 	}`)
 
-	supported, _ := filterVertexBetas(nil, body)
+	supported, _ := filterVertexAnthropicBetas(nil, body)
 
 	wantSupported := []string{
 		"compact-2026-01-12",
@@ -203,29 +251,29 @@ func TestFilterVertexBetas_InferFromBody(t *testing.T) {
 	}
 }
 
-func TestFilterVertexBetas_InferToolSearch(t *testing.T) {
+func TestFilterVertexAnthropicBetas_InferToolSearch(t *testing.T) {
 	body := []byte(`{"tools":[{"type":"tool_search","name":"ts"}]}`)
 
-	supported, _ := filterVertexBetas(nil, body)
+	supported, _ := filterVertexAnthropicBetas(nil, body)
 
 	if len(supported) != 1 || supported[0] != "tool-search-tool-2025-10-19" {
 		t.Errorf("expected tool-search-tool inferred, got %v", supported)
 	}
 }
 
-func TestFilterVertexBetas_NoDuplicates(t *testing.T) {
+func TestFilterVertexAnthropicBetas_NoDuplicates(t *testing.T) {
 	// Header has context-management AND body infers it too — should deduplicate.
 	input := []string{"context-management-2025-06-27"}
 	body := []byte(`{"context_management":{"edits":[{"type":"clear_tool_results"}]}}`)
 
-	supported, _ := filterVertexBetas(input, body)
+	supported, _ := filterVertexAnthropicBetas(input, body)
 
 	if len(supported) != 1 {
 		t.Errorf("expected 1 deduplicated beta, got %v", supported)
 	}
 }
 
-func TestVertexEndpointURL(t *testing.T) {
+func TestVertexAnthropicEndpointURL(t *testing.T) {
 	tests := []struct {
 		name      string
 		baseURL   string
@@ -258,20 +306,20 @@ func TestVertexEndpointURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := vertexEndpointURL(tt.baseURL, tt.model, tt.streaming)
+			got := vertexAnthropicEndpointURL(tt.baseURL, tt.model, tt.streaming)
 			if got != tt.wantURL {
-				t.Errorf("vertexEndpointURL() = %q, want %q", got, tt.wantURL)
+				t.Errorf("vertexAnthropicEndpointURL() = %q, want %q", got, tt.wantURL)
 			}
 		})
 	}
 }
 
-func TestDirectorSetVertexUpstream(t *testing.T) {
+func TestDirectorSetVertexAnthropicUpstream(t *testing.T) {
 	req := mustNewRequest(t, "POST", "http://localhost/v1/messages", nil)
 	req.Header.Set("x-api-key", "user-key")
 	req.Header.Set("anthropic-version", "2023-06-01")
 
-	directorSetVertexUpstream(req,
+	directorSetVertexAnthropicUpstream(req,
 		"https://us-east5-aiplatform.googleapis.com/v1/projects/p/locations/us-east5/publishers/anthropic/models",
 		"ya29.fake-access-token",
 		"claude-sonnet-4-20250514",
@@ -300,10 +348,10 @@ func TestDirectorSetVertexUpstream(t *testing.T) {
 	}
 }
 
-func TestDirectorSetVertexUpstream_NonStreaming(t *testing.T) {
+func TestDirectorSetVertexAnthropicUpstream_NonStreaming(t *testing.T) {
 	req := mustNewRequest(t, "POST", "http://localhost/v1/messages", nil)
 
-	directorSetVertexUpstream(req,
+	directorSetVertexAnthropicUpstream(req,
 		"https://us-east5-aiplatform.googleapis.com/v1/projects/p/locations/us-east5/publishers/anthropic/models",
 		"ya29.token",
 		"claude-sonnet-4-20250514",

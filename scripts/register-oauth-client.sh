@@ -8,7 +8,8 @@
 set -euo pipefail
 
 HYDRA_ADMIN_URL="${HYDRA_ADMIN_URL:-http://127.0.0.1:4445}"
-CLIENT_ID="${CLIENT_ID:-agentserver}"
+CLIENT_ID="${CLIENT_ID:-9782ae6f-0748-4af7-a66b-640ebff6086d}"
+CLIENT_NAME="${CLIENT_NAME:-agentserver}"
 CLIENT_SECRET="${CLIENT_SECRET:-agentserver-oauth-secret-change-me}"
 AGENTSERVER_REDIRECT_URI="${AGENTSERVER_REDIRECT_URI:-https://localhost:8080/api/auth/modelserver/callback}"
 
@@ -22,6 +23,9 @@ curl -s -o /dev/null -w "" -X DELETE \
 curl -s -X POST "${HYDRA_ADMIN_URL}/admin/clients" \
   -H "Content-Type: application/json" \
   -d "{
+    \"client_id\": \"${CLIENT_ID}\",
+    \"client_name\": \"${CLIENT_NAME}\",
+    \"client_secret\": \"${CLIENT_SECRET}\",
     \"redirect_uris\": [\"${AGENTSERVER_REDIRECT_URI}\"],
     \"grant_types\": [\"authorization_code\", \"refresh_token\"],
     \"response_types\": [\"code\"],

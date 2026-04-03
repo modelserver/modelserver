@@ -202,7 +202,7 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			// Start with original body. If the model was remapped and this is
 			// not Bedrock (which strips the model field), rewrite it in the body.
 			bodyForTransform := originalBody
-			if actualModel != reqCtx.Model && upstream.Provider != types.ProviderBedrock && upstream.Provider != types.ProviderVertex && upstream.Provider != types.ProviderGemini && upstream.Provider != types.ProviderVertexGoogle {
+			if actualModel != reqCtx.Model && upstream.Provider != types.ProviderBedrock && upstream.Provider != types.ProviderVertexAnthropic && upstream.Provider != types.ProviderGemini && upstream.Provider != types.ProviderVertexGoogle {
 				bodyForTransform, _ = sjson.SetBytes(append([]byte{}, originalBody...), "model", actualModel)
 			}
 
@@ -258,10 +258,10 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			outReq = withBedrockParams(outReq, actualModel, reqCtx.IsStream)
 		}
 
-		// For Vertex, inject the resolved model and streaming flag into the
+		// For Vertex Anthropic, inject the resolved model and streaming flag into the
 		// request context so SetUpstream can construct the correct URL path.
-		if upstream.Provider == types.ProviderVertex {
-			outReq = withVertexParams(outReq, actualModel, reqCtx.IsStream)
+		if upstream.Provider == types.ProviderVertexAnthropic {
+			outReq = withVertexAnthropicParams(outReq, actualModel, reqCtx.IsStream)
 		}
 
 		// For Gemini, inject the resolved model and streaming flag into the

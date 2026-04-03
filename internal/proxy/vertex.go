@@ -12,13 +12,13 @@ import (
 
 const vertexDefaultVersion = "vertex-2023-10-16"
 
-// vertexSupportedBetas maps incoming anthropic-beta header values to their
+// vertexAnthropicSupportedBetas maps incoming anthropic-beta header values to their
 // Vertex AI equivalents. Only headers present in this map are forwarded from
 // client requests; all others are silently dropped. A different value means
 // the header is renamed for Vertex AI.
 //
 // Aligned with litellm's anthropic_beta_headers_config.json (vertex_ai section).
-var vertexSupportedBetas = map[string]string{
+var vertexAnthropicSupportedBetas = map[string]string{
 	"advanced-tool-use-2025-11-20":    "tool-search-tool-2025-10-19",
 	"computer-use-2025-01-24":         "computer-use-2025-01-24",
 	"computer-use-2025-11-24":         "computer-use-2025-11-24",
@@ -29,16 +29,16 @@ var vertexSupportedBetas = map[string]string{
 	"web-search-2025-03-05":           "web-search-2025-03-05",
 }
 
-// filterVertexBetas filters incoming beta flags through the Vertex AI allowlist,
+// filterVertexAnthropicBetas filters incoming beta flags through the Vertex AI allowlist,
 // remapping where necessary. It also infers additional required betas from the
 // request body (e.g. compact, context-management, web-search) following the same
 // logic as litellm's transformation.py.
-func filterVertexBetas(betas []string, body []byte) (supported, dropped []string) {
+func filterVertexAnthropicBetas(betas []string, body []byte) (supported, dropped []string) {
 	seen := make(map[string]bool)
 
 	// 1. Filter through allowlist with optional renaming.
 	for _, b := range betas {
-		if mapped, ok := vertexSupportedBetas[b]; ok {
+		if mapped, ok := vertexAnthropicSupportedBetas[b]; ok {
 			if !seen[mapped] {
 				supported = append(supported, mapped)
 				seen[mapped] = true
@@ -49,7 +49,7 @@ func filterVertexBetas(betas []string, body []byte) (supported, dropped []string
 	}
 
 	// 2. Infer additional betas from request body content.
-	for _, b := range inferVertexBetasFromBody(body) {
+	for _, b := range inferVertexAnthropicBetasFromBody(body) {
 		if !seen[b] {
 			supported = append(supported, b)
 			seen[b] = true
@@ -59,12 +59,12 @@ func filterVertexBetas(betas []string, body []byte) (supported, dropped []string
 	return
 }
 
-// inferVertexBetasFromBody inspects the request body for features that require
+// inferVertexAnthropicBetasFromBody inspects the request body for features that require
 // specific beta flags and returns them. This ensures the correct beta flags are
 // present even if the client didn't include them in the header.
 //
 // Aligned with litellm's VertexAIPartnerModelsAnthropicMessagesConfig.
-func inferVertexBetasFromBody(body []byte) []string {
+func inferVertexAnthropicBetasFromBody(body []byte) []string {
 	var betas []string
 
 	// Check context_management.edits for compact vs other edit types.
@@ -106,9 +106,9 @@ func inferVertexBetasFromBody(body []byte) []string {
 	return betas
 }
 
-// vertexUnsupportedBodyFields lists top-level request body fields that Vertex AI
+// vertexAnthropicUnsupportedBodyFields lists top-level request body fields that Vertex AI
 // does not accept. These are stripped before forwarding to avoid 400 errors.
-var vertexUnsupportedBodyFields = []string{
+var vertexAnthropicUnsupportedBodyFields = []string{
 	"output_format",
 	"output_config",
 }
@@ -143,7 +143,7 @@ func stripCacheControlScope(body []byte) []byte {
 	return body
 }
 
-// transformVertexBody modifies the request body for Vertex AI format:
+// transformVertexAnthropicBody modifies the request body for Vertex AI format:
 //   - Sets anthropic_version to "vertex-2023-10-16" if not present
 //   - Moves anthropic-beta header values into body as anthropic_beta array
 //   - Removes model field (encoded in the URL)
@@ -153,7 +153,7 @@ func stripCacheControlScope(body []byte) []byte {
 // NOTE: Unlike Bedrock, the stream field is NOT removed. Vertex AI requires
 // "stream": true in the request body in addition to using the streamRawPredict
 // endpoint. Without it, Vertex returns a non-streaming JSON response.
-func transformVertexBody(body []byte, betas []string) ([]byte, error) {
+func transformVertexAnthropicBody(body []byte, betas []string) ([]byte, error) {
 	var err error
 
 	if !gjson.GetBytes(body, "anthropic_version").Exists() {
@@ -172,7 +172,7 @@ func transformVertexBody(body []byte, betas []string) ([]byte, error) {
 
 	body, _ = sjson.DeleteBytes(body, "model")
 
-	for _, field := range vertexUnsupportedBodyFields {
+	for _, field := range vertexAnthropicUnsupportedBodyFields {
 		body, _ = sjson.DeleteBytes(body, field)
 	}
 
@@ -181,9 +181,9 @@ func transformVertexBody(body []byte, betas []string) ([]byte, error) {
 	return body, nil
 }
 
-// vertexEndpointURL constructs the full Vertex AI endpoint URL.
+// vertexAnthropicEndpointURL constructs the full Vertex AI endpoint URL.
 // Format: {baseURL}/{model}:rawPredict or {baseURL}/{model}:streamRawPredict
-func vertexEndpointURL(baseURL, model string, streaming bool) string {
+func vertexAnthropicEndpointURL(baseURL, model string, streaming bool) string {
 	base := strings.TrimRight(baseURL, "/")
 	method := "rawPredict"
 	if streaming {
@@ -192,9 +192,9 @@ func vertexEndpointURL(baseURL, model string, streaming bool) string {
 	return fmt.Sprintf("%s/%s:%s", base, model, method)
 }
 
-// directorSetVertexUpstream configures the outbound request for a Vertex AI upstream.
-func directorSetVertexUpstream(req *http.Request, baseURL, accessToken, model string, streaming bool) {
-	endpoint := vertexEndpointURL(baseURL, model, streaming)
+// directorSetVertexAnthropicUpstream configures the outbound request for a Vertex AI upstream.
+func directorSetVertexAnthropicUpstream(req *http.Request, baseURL, accessToken, model string, streaming bool) {
+	endpoint := vertexAnthropicEndpointURL(baseURL, model, streaming)
 	target, err := url.Parse(endpoint)
 	if err != nil {
 		req.Header.Set("Authorization", "Bearer "+accessToken)

@@ -9,7 +9,7 @@ const (
 	ProviderGemini     = "gemini"
 	ProviderBedrock    = "bedrock"
 	ProviderClaudeCode = "claudecode"
-	ProviderVertex       = "vertex"
+	ProviderVertexAnthropic = "vertex-anthropic"
 	ProviderVertexGoogle = "vertex-google"
 )
 

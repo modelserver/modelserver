@@ -11,18 +11,18 @@ import (
 	"golang.org/x/oauth2"
 )
 
-func TestVertexTransformer_SetUpstream(t *testing.T) {
+func TestVertexAnthropicTransformer_SetUpstream(t *testing.T) {
 	tm := NewVertexTokenManager()
 	mock := &mockTokenSource{
 		token: &oauth2.Token{AccessToken: "ya29.test-token"},
 	}
 	tm.registerWithSource("u1", mock)
 
-	transformer := &VertexTransformer{}
+	transformer := &VertexAnthropicTransformer{}
 	transformer.SetTokenManager(tm)
 
 	req := mustNewRequest(t, "POST", "http://localhost/v1/messages", nil)
-	req = withVertexParams(req, "claude-sonnet-4-20250514", true)
+	req = withVertexAnthropicParams(req, "claude-sonnet-4-20250514", true)
 
 	upstream := &types.Upstream{
 		ID:      "u1",
@@ -43,21 +43,21 @@ func TestVertexTransformer_SetUpstream(t *testing.T) {
 	}
 }
 
-func TestVertexTransformer_SetUpstream_MovesBetasToHeader(t *testing.T) {
+func TestVertexAnthropicTransformer_SetUpstream_MovesBetasToHeader(t *testing.T) {
 	tm := NewVertexTokenManager()
 	mock := &mockTokenSource{
 		token: &oauth2.Token{AccessToken: "ya29.token"},
 	}
 	tm.registerWithSource("u1", mock)
 
-	transformer := &VertexTransformer{}
+	transformer := &VertexAnthropicTransformer{}
 	transformer.SetTokenManager(tm)
 
 	// Body with anthropic_beta array (as produced by TransformBody).
 	body := []byte(`{"anthropic_version":"vertex-2023-10-16","anthropic_beta":["interleaved-thinking-2025-05-14","context-management-2025-06-27"],"stream":true,"max_tokens":1024}`)
 	req := mustNewRequest(t, "POST", "http://localhost/v1/messages", bytes.NewReader(body))
 	req.ContentLength = int64(len(body))
-	req = withVertexParams(req, "claude-sonnet-4-20250514", true)
+	req = withVertexAnthropicParams(req, "claude-sonnet-4-20250514", true)
 
 	upstream := &types.Upstream{
 		ID:      "u1",
@@ -89,13 +89,13 @@ func TestVertexTransformer_SetUpstream_MovesBetasToHeader(t *testing.T) {
 	}
 }
 
-func TestVertexTransformer_SetUpstream_TokenError(t *testing.T) {
+func TestVertexAnthropicTransformer_SetUpstream_TokenError(t *testing.T) {
 	tm := NewVertexTokenManager()
-	transformer := &VertexTransformer{}
+	transformer := &VertexAnthropicTransformer{}
 	transformer.SetTokenManager(tm)
 
 	req := mustNewRequest(t, "POST", "http://localhost/v1/messages", nil)
-	req = withVertexParams(req, "claude-sonnet-4-20250514", false)
+	req = withVertexAnthropicParams(req, "claude-sonnet-4-20250514", false)
 
 	upstream := &types.Upstream{
 		ID:      "unknown",
@@ -108,11 +108,11 @@ func TestVertexTransformer_SetUpstream_TokenError(t *testing.T) {
 	}
 }
 
-func TestVertexTransformer_SetUpstream_NilTokenManager(t *testing.T) {
-	transformer := &VertexTransformer{} // no SetTokenManager called
+func TestVertexAnthropicTransformer_SetUpstream_NilTokenManager(t *testing.T) {
+	transformer := &VertexAnthropicTransformer{} // no SetTokenManager called
 
 	req := mustNewRequest(t, "POST", "http://localhost/v1/messages", nil)
-	req = withVertexParams(req, "claude-sonnet-4-20250514", false)
+	req = withVertexAnthropicParams(req, "claude-sonnet-4-20250514", false)
 
 	upstream := &types.Upstream{
 		ID:      "u1",
@@ -125,8 +125,8 @@ func TestVertexTransformer_SetUpstream_NilTokenManager(t *testing.T) {
 	}
 }
 
-func TestVertexTransformer_TransformBody(t *testing.T) {
-	transformer := &VertexTransformer{}
+func TestVertexAnthropicTransformer_TransformBody(t *testing.T) {
+	transformer := &VertexAnthropicTransformer{}
 
 	headers := http.Header{}
 	headers.Set("anthropic-beta", "interleaved-thinking-2025-05-14,claude-code-20250219,prompt-caching-2024-07-31,context-management-2025-06-27")

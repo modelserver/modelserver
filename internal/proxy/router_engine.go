@@ -91,8 +91,8 @@ func NewRouter(
 	// Create the Vertex AI token manager.
 	r.vertexTokenManager = NewVertexTokenManager()
 
-	// Wire the token manager into the already-registered VertexTransformer.
-	SetVertexTokenManager(r.vertexTokenManager)
+	// Wire the token manager into the already-registered VertexAnthropicTransformer.
+	SetVertexAnthropicTokenManager(r.vertexTokenManager)
 
 	// Wire the same token manager into the VertexGoogleTransformer.
 	SetVertexGoogleTokenManager(r.vertexTokenManager)
@@ -130,7 +130,7 @@ func (r *Router) buildMaps(
 	if r.vertexTokenManager != nil {
 		r.vertexTokenManager.Clear()
 		for _, u := range upstreams {
-			if u.Provider == types.ProviderVertex || u.Provider == types.ProviderVertexGoogle {
+			if u.Provider == types.ProviderVertexAnthropic || u.Provider == types.ProviderVertexGoogle {
 				if key, ok := keys[u.ID]; ok {
 					if err := r.vertexTokenManager.Register(u.ID, []byte(key)); err != nil {
 						r.logger.Error("failed to register vertex token source",

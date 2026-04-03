@@ -211,7 +211,7 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 				"max_tokens": 10,
 				"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
 			})
-		case types.ProviderVertex:
+		case types.ProviderVertexAnthropic:
 			base := baseURL
 			if len(base) > 0 && base[len(base)-1] == '/' {
 				base = base[:len(base)-1]
@@ -298,7 +298,7 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 			req.Header.Set("Anthropic-Version", "2023-06-01")
 			req.Header.Set("Anthropic-Beta", "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14")
 			req.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
-		case types.ProviderVertex, types.ProviderVertexGoogle:
+		case types.ProviderVertexAnthropic, types.ProviderVertexGoogle:
 			creds, err := google.CredentialsFromJSON(r.Context(), apiKey, "https://www.googleapis.com/auth/cloud-platform")
 			if err != nil {
 				writeData(w, http.StatusOK, map[string]interface{}{

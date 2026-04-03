@@ -221,6 +221,69 @@ func TestDirectorSetUpstream_BaseURLWithPath(t *testing.T) {
 	}
 }
 
+func TestTransformBedrockBody_PreservesEagerInputStreaming(t *testing.T) {
+	body := `{"model":"claude-sonnet-4-20250514","stream":true,"max_tokens":1024,"tools":[{"name":"make_file","eager_input_streaming":true,"input_schema":{"type":"object","properties":{"filename":{"type":"string"}}}}],"messages":[{"role":"user","content":"Hi"}]}`
+
+	result, err := transformBedrockBody([]byte(body), nil)
+	if err != nil {
+		t.Fatalf("transformBedrockBody() error = %v", err)
+	}
+
+	got := string(result)
+
+	// eager_input_streaming must survive the transformation.
+	if !contains(got, `"eager_input_streaming":true`) {
+		t.Errorf("eager_input_streaming should be preserved, got %s", got)
+	}
+	// model and stream should be removed.
+	if contains(got, `"model"`) {
+		t.Errorf("model should be removed, got %s", got)
+	}
+	if contains(got, `"stream"`) {
+		t.Errorf("stream should be removed, got %s", got)
+	}
+	// tools array should remain intact.
+	if !contains(got, `"tools"`) {
+		t.Errorf("tools should remain, got %s", got)
+	}
+	if !contains(got, `"make_file"`) {
+		t.Errorf("tool name should remain, got %s", got)
+	}
+}
+
+func TestTransformBedrockBody_PreservesEagerInputStreamingFalse(t *testing.T) {
+	body := `{"model":"m","stream":true,"tools":[{"name":"t","eager_input_streaming":false,"input_schema":{"type":"object"}}]}`
+
+	result, err := transformBedrockBody([]byte(body), nil)
+	if err != nil {
+		t.Fatalf("transformBedrockBody() error = %v", err)
+	}
+
+	got := string(result)
+	if !contains(got, `"eager_input_streaming":false`) {
+		t.Errorf("eager_input_streaming:false should be preserved, got %s", got)
+	}
+}
+
+func TestTransformBedrockBody_MultipleToolsMixedEagerStreaming(t *testing.T) {
+	body := `{"model":"m","stream":true,"tools":[{"name":"t1","eager_input_streaming":true,"input_schema":{"type":"object"}},{"type":"web_search_20250305","name":"ws"},{"name":"t2","input_schema":{"type":"object"}}]}`
+
+	result, err := transformBedrockBody([]byte(body), nil)
+	if err != nil {
+		t.Fatalf("transformBedrockBody() error = %v", err)
+	}
+
+	got := string(result)
+	// First tool has eager_input_streaming: true
+	if !contains(got, `"eager_input_streaming":true`) {
+		t.Errorf("eager_input_streaming should be preserved on first tool, got %s", got)
+	}
+	// All three tools should remain
+	if !contains(got, `"t1"`) || !contains(got, `"ws"`) || !contains(got, `"t2"`) {
+		t.Errorf("all tool names should remain, got %s", got)
+	}
+}
+
 func TestDirectorSetOpenAIUpstream_AzureBaseURL(t *testing.T) {
 	req := mustNewRequest(t, "POST", "http://localhost/v1/responses", nil)
 	directorSetOpenAIUpstream(req, "https://myresource.cognitiveservices.azure.com/openai", "azure-key")

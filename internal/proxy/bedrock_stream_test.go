@@ -160,6 +160,59 @@ func TestBedrockStreamAdapter_MessageStopStripsMetrics(t *testing.T) {
 	}
 }
 
+func TestBedrockStreamAdapter_InputJSONDelta(t *testing.T) {
+	// Simulate fine-grained tool streaming through Bedrock's binary EventStream.
+	events := []string{
+		`{"type":"message_start","message":{"id":"msg_1","model":"claude-opus-4-20250514","usage":{"input_tokens":50}}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_abc","name":"make_file","input":{}}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"filename\": \"test.txt\""}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":", \"content\": \"hello\"}"}}`,
+		`{"type":"content_block_stop","index":0}`,
+		`{"type":"message_delta","usage":{"output_tokens":30}}`,
+		`{"type":"message_stop"}`,
+	}
+
+	var buf bytes.Buffer
+	for _, evt := range events {
+		buf.Write(makeChunkMessage(t, evt))
+	}
+
+	adapter := newBedrockStreamAdapter(io.NopCloser(&buf))
+	result, err := io.ReadAll(adapter)
+	if err != nil {
+		t.Fatalf("ReadAll error: %v", err)
+	}
+
+	got := string(result)
+
+	// Verify all events are converted to SSE format.
+	expectedTypes := []string{"message_start", "content_block_start", "content_block_delta", "content_block_delta", "content_block_stop", "message_delta", "message_stop"}
+	for _, evtType := range expectedTypes {
+		if !strings.Contains(got, "event: "+evtType+"\n") {
+			t.Errorf("missing event type %q in output:\n%s", evtType, got)
+		}
+	}
+
+	// Verify input_json_delta content passes through.
+	if !strings.Contains(got, `"input_json_delta"`) {
+		t.Errorf("input_json_delta type should be preserved in output:\n%s", got)
+	}
+	if !strings.Contains(got, `"partial_json"`) {
+		t.Errorf("partial_json field should be preserved in output:\n%s", got)
+	}
+	if !strings.Contains(got, `filename`) {
+		t.Errorf("partial JSON content should be preserved in output:\n%s", got)
+	}
+
+	// Verify tool_use content_block_start passes through.
+	if !strings.Contains(got, `"tool_use"`) {
+		t.Errorf("tool_use type should be preserved in output:\n%s", got)
+	}
+	if !strings.Contains(got, `"toolu_abc"`) {
+		t.Errorf("tool use ID should be preserved in output:\n%s", got)
+	}
+}
+
 func TestBedrockStreamAdapter_EmptyStream(t *testing.T) {
 	adapter := newBedrockStreamAdapter(io.NopCloser(bytes.NewReader(nil)))
 	result, err := io.ReadAll(adapter)

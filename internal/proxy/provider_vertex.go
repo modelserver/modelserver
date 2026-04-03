@@ -16,54 +16,54 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// vertexContextKey is used to pass Vertex-specific parameters through the
+// vertexAnthropicContextKey is used to pass Vertex-Anthropic-specific parameters through the
 // request context from the Executor to SetUpstream.
-type vertexContextKey struct{}
+type vertexAnthropicContextKey struct{}
 
-// vertexParams holds the resolved model and streaming flag that SetUpstream
+// vertexAnthropicParams holds the resolved model and streaming flag that SetUpstream
 // needs to construct the Vertex endpoint URL.
-type vertexParams struct {
+type vertexAnthropicParams struct {
 	Model    string
 	IsStream bool
 }
 
-// withVertexParams returns a new request with Vertex routing parameters
+// withVertexAnthropicParams returns a new request with Vertex-Anthropic routing parameters
 // stored in its context.
-func withVertexParams(r *http.Request, model string, isStream bool) *http.Request {
-	ctx := context.WithValue(r.Context(), vertexContextKey{}, vertexParams{
+func withVertexAnthropicParams(r *http.Request, model string, isStream bool) *http.Request {
+	ctx := context.WithValue(r.Context(), vertexAnthropicContextKey{}, vertexAnthropicParams{
 		Model:    model,
 		IsStream: isStream,
 	})
 	return r.WithContext(ctx)
 }
 
-// VertexTransformer handles Google Vertex AI request/response transformations.
+// VertexAnthropicTransformer handles Google Vertex AI (Anthropic) request/response transformations.
 // The tokenManager is stored as an atomic pointer so it can be set after init()
 // without mutating the global providerTransformers map.
-type VertexTransformer struct {
+type VertexAnthropicTransformer struct {
 	tokenManager atomic.Pointer[VertexTokenManager]
 }
 
-var _ ProviderTransformer = (*VertexTransformer)(nil)
+var _ ProviderTransformer = (*VertexAnthropicTransformer)(nil)
 
 // TransformBody applies Vertex-specific body modifications.
-func (t *VertexTransformer) TransformBody(body []byte, _ string, _ bool, headers http.Header) ([]byte, error) {
+func (t *VertexAnthropicTransformer) TransformBody(body []byte, _ string, _ bool, headers http.Header) ([]byte, error) {
 	allBetas := splitBetaHeaders(headers.Values("anthropic-beta"))
-	betas, _ := filterVertexBetas(allBetas, body)
-	return transformVertexBody(body, betas)
+	betas, _ := filterVertexAnthropicBetas(allBetas, body)
+	return transformVertexAnthropicBody(body, betas)
 }
 
 // SetTokenManager atomically sets the token manager. Called by Router init.
-func (t *VertexTransformer) SetTokenManager(tm *VertexTokenManager) {
+func (t *VertexAnthropicTransformer) SetTokenManager(tm *VertexTokenManager) {
 	t.tokenManager.Store(tm)
 }
 
-// SetUpstream configures the outbound request for a Vertex AI upstream.
-// After directorSetVertexUpstream sets the URL and auth, this method moves
+// SetUpstream configures the outbound request for a Vertex AI (Anthropic) upstream.
+// After directorSetVertexAnthropicUpstream sets the URL and auth, this method moves
 // the anthropic_beta array from the request body to the anthropic-beta HTTP
 // header, matching the approach used by litellm for Vertex AI passthrough.
-func (t *VertexTransformer) SetUpstream(r *http.Request, upstream *types.Upstream, _ string) error {
-	params, _ := r.Context().Value(vertexContextKey{}).(vertexParams)
+func (t *VertexAnthropicTransformer) SetUpstream(r *http.Request, upstream *types.Upstream, _ string) error {
+	params, _ := r.Context().Value(vertexAnthropicContextKey{}).(vertexAnthropicParams)
 
 	tm := t.tokenManager.Load()
 	if tm == nil {
@@ -74,7 +74,7 @@ func (t *VertexTransformer) SetUpstream(r *http.Request, upstream *types.Upstrea
 		return err
 	}
 
-	directorSetVertexUpstream(r, upstream.BaseURL, accessToken, params.Model, params.IsStream)
+	directorSetVertexAnthropicUpstream(r, upstream.BaseURL, accessToken, params.Model, params.IsStream)
 
 	// Move anthropic_beta from body to HTTP header.
 	if r.Body != nil {
@@ -100,7 +100,7 @@ func (t *VertexTransformer) SetUpstream(r *http.Request, upstream *types.Upstrea
 
 // WrapStream wraps the response body with the Anthropic SSE stream interceptor.
 // Vertex AI's streamRawPredict returns standard Anthropic SSE format.
-func (t *VertexTransformer) WrapStream(body io.ReadCloser, startTime time.Time, onComplete func(StreamMetrics)) io.ReadCloser {
+func (t *VertexAnthropicTransformer) WrapStream(body io.ReadCloser, startTime time.Time, onComplete func(StreamMetrics)) io.ReadCloser {
 	return newStreamInterceptor(body, startTime, func(model, msgID string, usage anthropic.Usage, ttft int64) {
 		onComplete(StreamMetrics{
 			Model:               model,
@@ -115,7 +115,7 @@ func (t *VertexTransformer) WrapStream(body io.ReadCloser, startTime time.Time, 
 }
 
 // ParseResponse extracts metrics from a non-streaming Vertex AI response body.
-func (t *VertexTransformer) ParseResponse(body []byte) (*ResponseMetrics, error) {
+func (t *VertexAnthropicTransformer) ParseResponse(body []byte) (*ResponseMetrics, error) {
 	model, msgID, usage, err := ParseNonStreamingResponse(body)
 	if err != nil {
 		return nil, err
