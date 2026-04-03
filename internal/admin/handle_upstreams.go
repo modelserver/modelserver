@@ -193,9 +193,9 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 		case types.ProviderOpenAI:
 			endpoint = baseURL + "/v1/chat/completions"
 			reqBody, _ = json.Marshal(map[string]interface{}{
-				"model":      upstreamTestModel,
-				"max_tokens": 10,
-				"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
+				"model":                upstreamTestModel,
+				"max_completion_tokens": 10,
+				"messages":             []map[string]string{{"role": "user", "content": "Hi"}},
 			})
 		case types.ProviderBedrock:
 			endpoint = baseURL + "/model/" + upstreamTestModel + "/invoke"
