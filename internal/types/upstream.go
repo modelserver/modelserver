@@ -9,8 +9,8 @@ const (
 	ProviderGemini     = "gemini"
 	ProviderBedrock    = "bedrock"
 	ProviderClaudeCode = "claudecode"
-	ProviderVertex        = "vertex"
-	ProviderVertexGoogle  = "vertex-google"
+	ProviderVertex       = "vertex"
+	ProviderVertexGoogle = "vertex-google"
 )
 
 // Upstream status constants.

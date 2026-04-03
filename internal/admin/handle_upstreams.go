@@ -239,6 +239,23 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 					"maxOutputTokens": 10,
 				},
 			})
+		case types.ProviderVertexGoogle:
+			base := baseURL
+			if len(base) > 0 && base[len(base)-1] == '/' {
+				base = base[:len(base)-1]
+			}
+			endpoint = fmt.Sprintf("%s/%s:generateContent", base, upstreamTestModel)
+			reqBody, _ = json.Marshal(map[string]interface{}{
+				"contents": []map[string]interface{}{
+					{
+						"parts": []map[string]string{{"text": "Hi"}},
+						"role":  "user",
+					},
+				},
+				"generationConfig": map[string]interface{}{
+					"maxOutputTokens": 10,
+				},
+			})
 		default:
 			endpoint = baseURL + "/v1/messages"
 			reqBody, _ = json.Marshal(map[string]interface{}{
@@ -281,7 +298,7 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 			req.Header.Set("Anthropic-Version", "2023-06-01")
 			req.Header.Set("Anthropic-Beta", "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14")
 			req.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
-		case types.ProviderVertex:
+		case types.ProviderVertex, types.ProviderVertexGoogle:
 			creds, err := google.CredentialsFromJSON(r.Context(), apiKey, "https://www.googleapis.com/auth/cloud-platform")
 			if err != nil {
 				writeData(w, http.StatusOK, map[string]interface{}{
