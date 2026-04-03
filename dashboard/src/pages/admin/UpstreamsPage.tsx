@@ -621,7 +621,8 @@ export function UpstreamsPage() {
                   <SelectItem value="gemini">Gemini</SelectItem>
                   <SelectItem value="bedrock">AWS Bedrock</SelectItem>
                   <SelectItem value="claudecode">Claude Code</SelectItem>
-                  <SelectItem value="vertex">Google Vertex AI</SelectItem>
+                  <SelectItem value="vertex">Google Vertex AI (Anthropic)</SelectItem>
+                  <SelectItem value="vertex-google">Google Vertex AI (Gemini)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -640,6 +641,8 @@ export function UpstreamsPage() {
                 onChange={(e) => setForm((p) => ({ ...p, base_url: e.target.value }))}
                 placeholder={form.provider === "vertex"
                   ? "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/REGION/publishers/anthropic/models"
+                  : form.provider === "vertex-google"
+                  ? "https://REGION-aiplatform.googleapis.com/v1beta1/projects/PROJECT/locations/REGION/publishers/google/models"
                   : form.provider === "gemini"
                   ? "https://generativelanguage.googleapis.com"
                   : "https://api.anthropic.com"}
@@ -724,7 +727,7 @@ export function UpstreamsPage() {
                   </div>
                 )}
               </div>
-            ) : form.provider === "vertex" ? (
+            ) : form.provider === "vertex" || form.provider === "vertex-google" ? (
               <div className="space-y-2">
                 <Label>{editingId ? "API Key (leave blank to keep current)" : "API Key"}</Label>
                 <Textarea
