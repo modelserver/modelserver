@@ -94,6 +94,9 @@ func NewRouter(
 	// Wire the token manager into the already-registered VertexTransformer.
 	SetVertexTokenManager(r.vertexTokenManager)
 
+	// Wire the same token manager into the VertexGoogleTransformer.
+	SetVertexGoogleTokenManager(r.vertexTokenManager)
+
 	// Build shared infrastructure components.
 	r.connTracker = lb.NewConnectionTracker()
 	r.metrics = lb.NewUpstreamMetrics()
@@ -127,7 +130,7 @@ func (r *Router) buildMaps(
 	if r.vertexTokenManager != nil {
 		r.vertexTokenManager.Clear()
 		for _, u := range upstreams {
-			if u.Provider == types.ProviderVertex {
+			if u.Provider == types.ProviderVertex || u.Provider == types.ProviderVertexGoogle {
 				if key, ok := keys[u.ID]; ok {
 					if err := r.vertexTokenManager.Register(u.ID, []byte(key)); err != nil {
 						r.logger.Error("failed to register vertex token source",

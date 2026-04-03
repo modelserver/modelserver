@@ -260,6 +260,8 @@ func (hc *HealthChecker) buildProbeRequest(entry *healthEntry) (*http.Request, e
 		return hc.buildBedrockProbe(entry)
 	case "vertex":
 		return hc.buildVertexProbe(entry)
+	case "vertex-google":
+		return hc.buildVertexGoogleProbe(entry)
 	default:
 		return hc.buildOpenAIProbe(entry)
 	}
@@ -416,6 +418,47 @@ func (hc *HealthChecker) buildVertexProbe(entry *healthEntry) (*http.Request, er
 		token, err := hc.tokenFetcher(entry.upstreamID)
 		if err != nil {
 			return nil, fmt.Errorf("get vertex token: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	return req, nil
+}
+
+func (hc *HealthChecker) buildVertexGoogleProbe(entry *healthEntry) (*http.Request, error) {
+	body := map[string]interface{}{
+		"contents": []map[string]interface{}{
+			{
+				"parts": []map[string]string{{"text": "hi"}},
+				"role":  "user",
+			},
+		},
+		"generationConfig": map[string]interface{}{
+			"maxOutputTokens": 1,
+		},
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal probe body: %w", err)
+	}
+
+	base := entry.baseURL
+	if len(base) > 0 && base[len(base)-1] == '/' {
+		base = base[:len(base)-1]
+	}
+	url := fmt.Sprintf("%s/%s:generateContent", base, entry.testModel)
+
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Get access token via the token fetcher callback (shared with vertex).
+	if hc.tokenFetcher != nil {
+		token, err := hc.tokenFetcher(entry.upstreamID)
+		if err != nil {
+			return nil, fmt.Errorf("get vertex google token: %w", err)
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

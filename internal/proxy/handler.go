@@ -157,7 +157,7 @@ func (h *Handler) HandleGemini(w http.ResponseWriter, r *http.Request) {
 		UserID:           apiKey.CreatedBy,
 		Model:            model,
 		IsStream:         isStream,
-		AllowedProviders: []string{types.ProviderGemini},
+		AllowedProviders: []string{types.ProviderGemini, types.ProviderVertexGoogle},
 		TraceID:          traceID,
 		TraceSource:      TraceSourceFromContext(r.Context()),
 		SessionID:        traceID,
