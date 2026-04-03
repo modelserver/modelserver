@@ -58,7 +58,8 @@ func init() {
 	providerTransformers[types.ProviderBedrock] = &BedrockTransformer{}
 	providerTransformers[types.ProviderOpenAI] = &OpenAITransformer{}
 	providerTransformers[types.ProviderClaudeCode] = &ClaudeCodeTransformer{}
-	providerTransformers[types.ProviderVertex] = &VertexTransformer{} // tokenManager set by Router init via SetTokenManager
+	providerTransformers[types.ProviderVertex] = &VertexTransformer{}             // tokenManager set by Router init via SetTokenManager
+	providerTransformers[types.ProviderVertexGoogle] = &VertexGoogleTransformer{} // tokenManager set by Router init via SetVertexGoogleTokenManager
 	providerTransformers[types.ProviderGemini] = &GeminiTransformer{}
 }
 
@@ -76,6 +77,14 @@ func GetProviderTransformer(provider string) ProviderTransformer {
 // This avoids mutating the global providerTransformers map at runtime.
 func SetVertexTokenManager(tm *VertexTokenManager) {
 	if vt, ok := providerTransformers[types.ProviderVertex].(*VertexTransformer); ok {
+		vt.SetTokenManager(tm)
+	}
+}
+
+// SetVertexGoogleTokenManager sets the token manager on the already-registered
+// VertexGoogleTransformer. Called by Router init after creating the token manager.
+func SetVertexGoogleTokenManager(tm *VertexTokenManager) {
+	if vt, ok := providerTransformers[types.ProviderVertexGoogle].(*VertexGoogleTransformer); ok {
 		vt.SetTokenManager(tm)
 	}
 }
