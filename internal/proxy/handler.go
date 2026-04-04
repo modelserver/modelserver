@@ -134,6 +134,11 @@ func (h *Handler) HandleGemini(w http.ResponseWriter, r *http.Request) {
 
 	oauthGrantID := OAuthGrantIDFromContext(r.Context())
 
+	metadata := make(map[string]string)
+	if v := r.Header.Get("User-Agent"); v != "" {
+		metadata["user_agent"] = v
+	}
+
 	pendingReq := &types.Request{
 		ProjectID:    project.ID,
 		APIKeyID:     apiKey.ID,
@@ -144,6 +149,7 @@ func (h *Handler) HandleGemini(w http.ResponseWriter, r *http.Request) {
 		Streaming:    isStream,
 		Status:       types.RequestStatusProcessing,
 		ClientIP:     r.RemoteAddr,
+		Metadata:     metadata,
 	}
 	if err := h.store.CreateRequest(pendingReq); err != nil {
 		h.logger.Warn("failed to insert pending request", "error", err)
@@ -219,6 +225,9 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, all
 	}
 	if v := r.Header.Get("Anthropic-Version"); v != "" {
 		metadata["anthropic_version"] = v
+	}
+	if v := r.Header.Get("User-Agent"); v != "" {
+		metadata["user_agent"] = v
 	}
 
 	// Insert a pending request record before proxying.
