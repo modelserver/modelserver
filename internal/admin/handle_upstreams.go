@@ -194,7 +194,7 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 			endpoint = baseURL + "/v1/responses"
 			reqBody, _ = json.Marshal(map[string]interface{}{
 				"model":            upstreamTestModel,
-				"max_output_tokens": 10,
+				"max_output_tokens": 16,
 				"input":            "Hi",
 			})
 		case types.ProviderBedrock:
