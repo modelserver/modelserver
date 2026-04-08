@@ -59,6 +59,14 @@ func (h *Handler) HandleResponses(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// HandleChatCompletions proxies OpenAI Chat Completions format requests.
+// Routes to providers that support the Chat Completions wire format.
+func (h *Handler) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	h.handleProxyRequest(w, r, []string{
+		types.ProviderVertexOpenAI,
+	})
+}
+
 // HandleGemini proxies Gemini API requests (generateContent / streamGenerateContent).
 // The model and streaming flag are extracted from the URL path rather than the body.
 // Example: POST /v1beta/models/gemini-3-flash:generateContent

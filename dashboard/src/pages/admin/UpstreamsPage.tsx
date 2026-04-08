@@ -623,6 +623,7 @@ export function UpstreamsPage() {
                   <SelectItem value="claudecode">Claude Code</SelectItem>
                   <SelectItem value="vertex-anthropic">Google Vertex AI (Anthropic)</SelectItem>
                   <SelectItem value="vertex-google">Google Vertex AI (Gemini)</SelectItem>
+                  <SelectItem value="vertex-openai">Google Vertex AI (OpenAI)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -643,6 +644,8 @@ export function UpstreamsPage() {
                   ? "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/REGION/publishers/anthropic/models"
                   : form.provider === "vertex-google"
                   ? "https://REGION-aiplatform.googleapis.com/v1beta1/projects/PROJECT/locations/REGION/publishers/google/models"
+                  : form.provider === "vertex-openai"
+                  ? "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/REGION/endpoints/openapi"
                   : form.provider === "gemini"
                   ? "https://generativelanguage.googleapis.com"
                   : "https://api.anthropic.com"}
@@ -727,7 +730,7 @@ export function UpstreamsPage() {
                   </div>
                 )}
               </div>
-            ) : form.provider === "vertex-anthropic" || form.provider === "vertex-google" ? (
+            ) : form.provider === "vertex-anthropic" || form.provider === "vertex-google" || form.provider === "vertex-openai" ? (
               <div className="space-y-2">
                 <Label>{editingId ? "API Key (leave blank to keep current)" : "API Key"}</Label>
                 <Textarea

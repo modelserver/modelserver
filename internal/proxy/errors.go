@@ -18,6 +18,21 @@ func writeProxyError(w http.ResponseWriter, status int, message string) {
 	})
 }
 
+// writeChatCompletionsError writes an OpenAI-style error response.
+// Used for Chat Completions endpoint handler errors so clients using OpenAI
+// SDKs receive errors in the expected format.
+func writeChatCompletionsError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": map[string]interface{}{
+			"message": message,
+			"type":    httpStatusToErrorType(status),
+			"code":    status,
+		},
+	})
+}
+
 // writeGeminiError writes a Google API-style error response.
 // Used for Gemini endpoint handler errors so clients receive errors in the
 // format they expect: {"error": {"code": 400, "message": "...", "status": "..."}}.

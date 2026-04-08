@@ -262,6 +262,8 @@ func (hc *HealthChecker) buildProbeRequest(entry *healthEntry) (*http.Request, e
 		return hc.buildVertexProbe(entry)
 	case "vertex-google":
 		return hc.buildVertexGoogleProbe(entry)
+	case "vertex-openai":
+		return hc.buildVertexOpenAIProbe(entry)
 	default:
 		return hc.buildOpenAIProbe(entry)
 	}
@@ -459,6 +461,39 @@ func (hc *HealthChecker) buildVertexGoogleProbe(entry *healthEntry) (*http.Reque
 		token, err := hc.tokenFetcher(entry.upstreamID)
 		if err != nil {
 			return nil, fmt.Errorf("get vertex google token: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	return req, nil
+}
+
+func (hc *HealthChecker) buildVertexOpenAIProbe(entry *healthEntry) (*http.Request, error) {
+	body := map[string]interface{}{
+		"model":      entry.testModel,
+		"max_tokens": 1,
+		"messages": []map[string]string{
+			{"role": "user", "content": "hi"},
+		},
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal probe body: %w", err)
+	}
+
+	base := strings.TrimRight(entry.baseURL, "/")
+	url := base + "/chat/completions"
+
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	if hc.tokenFetcher != nil {
+		token, err := hc.tokenFetcher(entry.upstreamID)
+		if err != nil {
+			return nil, fmt.Errorf("get vertex openai token: %w", err)
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

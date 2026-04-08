@@ -61,6 +61,7 @@ func init() {
 	providerTransformers[types.ProviderVertexAnthropic] = &VertexAnthropicTransformer{} // tokenManager set by Router init via SetVertexAnthropicTokenManager
 	providerTransformers[types.ProviderVertexGoogle] = &VertexGoogleTransformer{} // tokenManager set by Router init via SetVertexGoogleTokenManager
 	providerTransformers[types.ProviderGemini] = &GeminiTransformer{}
+	providerTransformers[types.ProviderVertexOpenAI] = &VertexOpenAITransformer{}
 }
 
 // GetProviderTransformer returns the transformer for the given provider name.
@@ -85,6 +86,14 @@ func SetVertexAnthropicTokenManager(tm *VertexTokenManager) {
 // VertexGoogleTransformer. Called by Router init after creating the token manager.
 func SetVertexGoogleTokenManager(tm *VertexTokenManager) {
 	if vt, ok := providerTransformers[types.ProviderVertexGoogle].(*VertexGoogleTransformer); ok {
+		vt.SetTokenManager(tm)
+	}
+}
+
+// SetVertexOpenAITokenManager sets the token manager on the already-registered
+// VertexOpenAITransformer. Called by Router init after creating the token manager.
+func SetVertexOpenAITokenManager(tm *VertexTokenManager) {
+	if vt, ok := providerTransformers[types.ProviderVertexOpenAI].(*VertexOpenAITransformer); ok {
 		vt.SetTokenManager(tm)
 	}
 }

@@ -25,6 +25,7 @@ func MountRoutes(r chi.Router, st *store.Store, handler *Handler, traceCfg confi
 		r.Post("/messages", handler.HandleMessages)
 		r.Post("/messages/count_tokens", handler.HandleCountTokens)
 		r.Post("/responses", handler.HandleResponses)
+		r.Post("/chat/completions", handler.HandleChatCompletions)
 		r.Get("/models", handler.HandleListModels)
 		r.Get("/usage", handler.HandleUsage)
 	})

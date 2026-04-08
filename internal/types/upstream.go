@@ -11,6 +11,7 @@ const (
 	ProviderClaudeCode = "claudecode"
 	ProviderVertexAnthropic = "vertex-anthropic"
 	ProviderVertexGoogle = "vertex-google"
+	ProviderVertexOpenAI = "vertex-openai"
 )
 
 // Upstream status constants.
