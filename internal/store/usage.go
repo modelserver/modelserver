@@ -128,41 +128,78 @@ func (s *Store) GetUsageByModel(projectID string, since, until time.Time) ([]Usa
 	return summaries, nil
 }
 
-// GetUsageByAPIKey returns usage aggregated by API key.
-func (s *Store) GetUsageByAPIKey(projectID string, since, until time.Time) ([]map[string]interface{}, error) {
-	rows, err := s.pool.Query(context.Background(), `
-		SELECT r.api_key_id, k.name, k.key_suffix, COUNT(*) as request_count,
-			COALESCE(SUM(r.input_tokens + r.output_tokens), 0) as total_tokens
-		FROM requests r
-		JOIN api_keys k ON r.api_key_id = k.id
-		WHERE r.project_id = $1 AND r.created_at >= $2 AND r.created_at <= $3
-		GROUP BY r.api_key_id, k.name, k.key_suffix
-		ORDER BY request_count DESC`,
-		projectID, since, until)
+// GetUsageByMember returns usage aggregated by project member (requests.created_by),
+// sorted by total tokens descending, with page/offset pagination. Rows whose
+// created_by no longer resolves to a user are still included with empty
+// nickname/picture/email so totals stay honest. The second return value is the
+// total distinct-member count for pagination meta.
+//
+// The query aggregates first (a bounded set per project) and only joins users
+// against the aggregate so the hot GROUP BY can use idx_requests_project_user_created
+// cleanly. A secondary ORDER BY on created_by gives deterministic tiebreaking
+// so pagination doesn't shuffle rows between pages when totals are equal.
+func (s *Store) GetUsageByMember(projectID string, since, until time.Time, limit, offset int) ([]map[string]interface{}, int, error) {
+	ctx := context.Background()
+
+	var total int
+	if err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(DISTINCT created_by)
+		FROM requests
+		WHERE project_id = $1
+			AND created_by IS NOT NULL
+			AND created_at >= $2 AND created_at <= $3`,
+		projectID, since, until,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("usage by member count: %w", err)
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		WITH agg AS (
+			SELECT created_by,
+				COUNT(*) AS request_count,
+				COALESCE(SUM(input_tokens + output_tokens), 0) AS total_tokens
+			FROM requests
+			WHERE project_id = $1
+				AND created_by IS NOT NULL
+				AND created_at >= $2 AND created_at <= $3
+			GROUP BY created_by
+		)
+		SELECT a.created_by,
+			COALESCE(u.nickname, ''),
+			COALESCE(u.picture, ''),
+			COALESCE(u.email, ''),
+			a.request_count,
+			a.total_tokens
+		FROM agg a
+		LEFT JOIN users u ON u.id::text = a.created_by
+		ORDER BY a.total_tokens DESC, a.created_by
+		LIMIT $4 OFFSET $5`,
+		projectID, since, until, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, 0, fmt.Errorf("usage by member: %w", err)
 	}
 	defer rows.Close()
 
-	var results []map[string]interface{}
+	results := make([]map[string]interface{}, 0)
 	for rows.Next() {
-		var apiKeyID, name, suffix string
+		var userID, nickname, picture, email string
 		var count, tokens int64
-		if err := rows.Scan(&apiKeyID, &name, &suffix, &count, &tokens); err != nil {
-			return nil, err
+		if err := rows.Scan(&userID, &nickname, &picture, &email, &count, &tokens); err != nil {
+			return nil, 0, err
 		}
 		results = append(results, map[string]interface{}{
-			"api_key_id":    apiKeyID,
-			"api_key_name":  name,
-			"key_suffix":    suffix,
+			"user_id":       userID,
+			"nickname":      nickname,
+			"picture":       picture,
+			"email":         email,
 			"request_count": count,
 			"total_tokens":  tokens,
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return results, nil
+	return results, total, nil
 }
 
 // GetDailyUsage returns daily usage breakdown.

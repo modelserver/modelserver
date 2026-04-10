@@ -110,7 +110,7 @@ func handleGetUsage(st *store.Store) http.HandlerFunc {
 			}
 		}
 
-		breakdown := q.Get("breakdown") // "model", "key", "daily"
+		breakdown := q.Get("breakdown") // "model", "member", "daily"
 
 		switch breakdown {
 		case "model":
@@ -120,13 +120,14 @@ func handleGetUsage(st *store.Store) http.HandlerFunc {
 				return
 			}
 			writeData(w, http.StatusOK, data)
-		case "key":
-			data, err := st.GetUsageByAPIKey(projectID, since, until)
+		case "member":
+			p := parsePagination(r)
+			data, total, err := st.GetUsageByMember(projectID, since, until, p.Limit(), p.Offset())
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "internal", "failed to get usage")
 				return
 			}
-			writeData(w, http.StatusOK, data)
+			writeList(w, data, total, p.Page, p.Limit())
 		case "daily":
 			data, err := st.GetDailyUsage(projectID, since, until)
 			if err != nil {

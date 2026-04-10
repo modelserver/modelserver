@@ -276,10 +276,11 @@ export interface DailyUsage {
   total_tokens: number;
 }
 
-export interface UsageByKey {
-  api_key_id: string;
-  api_key_name: string;
-  key_suffix: string;
+export interface UsageByMember {
+  user_id: string;
+  nickname: string;
+  picture: string;
+  email: string;
   request_count: number;
   total_tokens: number;
 }

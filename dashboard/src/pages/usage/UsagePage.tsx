@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { useCurrentProject } from "@/hooks/useCurrentProject";
-import { useUsageOverview, useUsageByModel, useDailyUsage, useUsageByKey } from "@/api/usage";
+import { useUsageOverview, useUsageByModel, useDailyUsage, useUsageByMember } from "@/api/usage";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatCard } from "@/components/shared/StatCard";
 import { DateRangePicker } from "@/components/shared/DateRangePicker";
 import { DataTable, type Column } from "@/components/shared/DataTable";
+import { Pagination } from "@/components/shared/Pagination";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { UsageSummary, UsageByKey } from "@/api/types";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import type { UsageSummary, UsageByMember } from "@/api/types";
 import {
   LineChart,
   Line,
@@ -41,10 +43,24 @@ const tooltipStyle = {
   borderRadius: "var(--radius)",
 };
 
+const MEMBER_PER_PAGE = 20;
+
 export function UsagePage() {
   const projectId = useCurrentProject();
   const [since, setSince] = useState(defaultSince);
   const [until, setUntil] = useState(defaultUntil);
+  const [memberPage, setMemberPage] = useState(1);
+
+  // Reset to page 1 whenever the date range changes, otherwise a narrower
+  // range could leave the user stranded past the new last page.
+  function handleSinceChange(v: string) {
+    setSince(v);
+    setMemberPage(1);
+  }
+  function handleUntilChange(v: string) {
+    setUntil(v);
+    setMemberPage(1);
+  }
 
   const sinceISO = `${since}T00:00:00Z`;
   const untilISO = `${until}T23:59:59Z`;
@@ -52,12 +68,19 @@ export function UsagePage() {
   const { data: overview } = useUsageOverview(projectId, sinceISO, untilISO);
   const { data: daily } = useDailyUsage(projectId, sinceISO, untilISO);
   const { data: byModel } = useUsageByModel(projectId, sinceISO, untilISO);
-  const { data: byKey } = useUsageByKey(projectId, sinceISO, untilISO);
+  const { data: byMember } = useUsageByMember(
+    projectId,
+    sinceISO,
+    untilISO,
+    memberPage,
+    MEMBER_PER_PAGE,
+  );
 
   const stats = overview?.data;
   const dailyData = daily?.data ?? [];
   const modelData = byModel?.data ?? [];
-  const keyData = byKey?.data ?? [];
+  const memberData = byMember?.data ?? [];
+  const memberMeta = byMember?.meta;
 
   const modelColumns: Column<UsageSummary>[] = [
     { header: "Model", accessor: "model" },
@@ -67,9 +90,37 @@ export function UsagePage() {
     { header: "Avg Latency", accessor: (r) => `${Math.round(r.avg_latency_ms)}ms`, className: "text-right" },
   ];
 
-  const keyColumns: Column<UsageByKey>[] = [
-    { header: "Key Name", accessor: "api_key_name" },
-    { header: "Key", accessor: (r) => `ms-...${r.key_suffix}` },
+  // Backend sorts by total_tokens DESC with a stable tiebreaker, so the row's
+  // position within the full sorted list is (page-1)*perPage + localIndex.
+  // That global rank is what decides the 🥇🥈🥉 medals — only rows on page 1
+  // that fall into the top three overall receive them.
+  const pageOffset = (memberPage - 1) * MEMBER_PER_PAGE;
+  const rankByUserId = new Map<string, number>(
+    memberData.map((r, i) => [r.user_id, pageOffset + i]),
+  );
+  const medals = ["🥇", "🥈", "🥉"];
+
+  const memberColumns: Column<UsageByMember>[] = [
+    {
+      header: "Member",
+      accessor: (r) => {
+        const name = r.nickname || r.email || r.user_id;
+        const initials = (r.nickname || r.email || "?").slice(0, 2).toUpperCase();
+        const rank = rankByUserId.get(r.user_id) ?? -1;
+        const medal = rank >= 0 && rank < medals.length ? medals[rank] : null;
+        return (
+          <div className="flex items-center gap-2">
+            {medal && <span className="text-lg leading-none">{medal}</span>}
+            <Avatar size="sm">
+              {r.picture && <AvatarImage src={r.picture} alt={name} />}
+              <AvatarFallback>{initials}</AvatarFallback>
+            </Avatar>
+            <span>{name}</span>
+          </div>
+        );
+      },
+    },
+    { header: "Email", accessor: (r) => r.email || "—" },
     { header: "Requests", accessor: (r) => formatNumber(r.request_count), className: "text-right" },
     { header: "Tokens", accessor: (r) => formatNumber(r.total_tokens), className: "text-right" },
   ];
@@ -81,8 +132,8 @@ export function UsagePage() {
       <DateRangePicker
         since={since}
         until={until}
-        onSinceChange={setSince}
-        onUntilChange={setUntil}
+        onSinceChange={handleSinceChange}
+        onUntilChange={handleUntilChange}
       />
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -160,16 +211,27 @@ export function UsagePage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Usage by API Key</CardTitle>
+          <CardTitle className="text-base">Usage by Member</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0">
           <DataTable
-            columns={keyColumns}
-            data={keyData}
-            keyFn={(r) => r.api_key_id}
+            columns={memberColumns}
+            data={memberData}
+            keyFn={(r) => r.user_id}
             emptyMessage="No data"
           />
         </CardContent>
+        {memberMeta && memberMeta.total_pages > 1 && (
+          <div className="border-t px-4 py-3">
+            <Pagination
+              page={memberMeta.page}
+              totalPages={memberMeta.total_pages}
+              total={memberMeta.total}
+              perPage={memberMeta.per_page}
+              onPageChange={setMemberPage}
+            />
+          </div>
+        )}
       </Card>
     </div>
   );

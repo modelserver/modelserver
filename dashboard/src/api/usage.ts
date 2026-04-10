@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./client";
-import type { DataResponse, UsageOverview, UsageSummary, DailyUsage, UsageByKey } from "./types";
+import type { DataResponse, ListResponse, UsageOverview, UsageSummary, DailyUsage, UsageByMember } from "./types";
 
 export function useUsageOverview(projectId: string, since?: string, until?: string) {
   const params = new URLSearchParams();
@@ -45,15 +45,23 @@ export function useDailyUsage(projectId: string, since?: string, until?: string)
   });
 }
 
-export function useUsageByKey(projectId: string, since?: string, until?: string) {
-  const params = new URLSearchParams({ breakdown: "key" });
+export function useUsageByMember(
+  projectId: string,
+  since?: string,
+  until?: string,
+  page = 1,
+  perPage = 20,
+) {
+  const params = new URLSearchParams({ breakdown: "member" });
   if (since) params.set("since", since);
   if (until) params.set("until", until);
+  params.set("page", String(page));
+  params.set("per_page", String(perPage));
 
   return useQuery({
-    queryKey: ["usage", projectId, "key", since, until],
+    queryKey: ["usage", projectId, "member", since, until, page, perPage],
     queryFn: () =>
-      api.get<DataResponse<UsageByKey[]>>(
+      api.get<ListResponse<UsageByMember>>(
         `/api/v1/projects/${projectId}/usage?${params}`,
       ),
   });
