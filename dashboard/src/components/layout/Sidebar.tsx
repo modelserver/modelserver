@@ -21,6 +21,7 @@ import {
   Network,
   Activity,
   Lock,
+  KeyRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -152,6 +153,9 @@ export function Sidebar() {
             </SidebarLink>
             <SidebarLink to="/admin/routing-health" icon={Activity}>
               Health
+            </SidebarLink>
+            <SidebarLink to="/admin/oauth-clients" icon={KeyRound}>
+              OAuth Clients
             </SidebarLink>
           </>
         )}

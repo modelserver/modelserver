@@ -57,6 +57,9 @@ import { UpstreamsPage } from "@/pages/admin/UpstreamsPage";
 import { UpstreamGroupsPage } from "@/pages/admin/UpstreamGroupsPage";
 import { RoutingHealthPage } from "@/pages/admin/RoutingHealthPage";
 
+// Admin OAuth Clients
+import { OAuthClientsPage } from "@/pages/admin/OAuthClientsPage";
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -101,6 +104,7 @@ export function App() {
                 <Route path="admin/upstreams" element={<UpstreamsPage />} />
                 <Route path="admin/upstream-groups" element={<UpstreamGroupsPage />} />
                 <Route path="admin/routing-health" element={<RoutingHealthPage />} />
+                <Route path="admin/oauth-clients" element={<OAuthClientsPage />} />
               </Route>
             </Routes>
           </BrowserRouter>
