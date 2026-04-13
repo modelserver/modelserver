@@ -226,6 +226,18 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 				})
 			})
 
+			// OAuth Clients (superadmin only, requires Hydra).
+			r.Route("/oauth-clients", func(r chi.Router) {
+				r.Use(RequireSuperadmin)
+				r.Get("/", handleListOAuthClients(hydraClient))
+				r.Post("/", handleCreateOAuthClient(hydraClient))
+				r.Route("/{clientID}", func(r chi.Router) {
+					r.Get("/", handleGetOAuthClient(hydraClient))
+					r.Put("/", handleUpdateOAuthClient(hydraClient))
+					r.Delete("/", handleDeleteOAuthClient(hydraClient))
+				})
+			})
+
 			// Routing routes (superadmin only).
 			r.Route("/routing", func(r chi.Router) {
 				r.Use(RequireSuperadmin)
