@@ -18,6 +18,7 @@ import (
 	"github.com/modelserver/modelserver/internal/config"
 	"github.com/modelserver/modelserver/internal/crypto"
 	"github.com/modelserver/modelserver/internal/store"
+	"github.com/modelserver/modelserver/internal/types"
 )
 
 //go:embed templates/device_verify.html templates/device_success.html templates/device_error.html
@@ -28,10 +29,12 @@ const userCodeCharset = "BCDFGHJKLMNPQRSTVWXZ"
 
 // DeviceFlowHandler handles OAuth 2.0 Device Authorization Grant (RFC 8628) endpoints.
 type DeviceFlowHandler struct {
-	store     *store.Store
-	encKey    []byte
-	cfg       *config.Config
-	templates *template.Template
+	hydra      *HydraClient
+	store      *store.Store
+	encKey     []byte
+	cfg        *config.Config
+	templates  *template.Template
+	httpClient *http.Client
 }
 
 // deviceVerifyData is passed to the device_verify.html template.
@@ -46,7 +49,7 @@ type deviceErrorData struct {
 }
 
 // NewDeviceFlowHandler constructs a DeviceFlowHandler and parses templates.
-func NewDeviceFlowHandler(st *store.Store, encKey []byte, cfg *config.Config) (*DeviceFlowHandler, error) {
+func NewDeviceFlowHandler(hydra *HydraClient, st *store.Store, encKey []byte, cfg *config.Config) (*DeviceFlowHandler, error) {
 	tmpl, err := template.ParseFS(deviceTemplateFS,
 		"templates/device_verify.html",
 		"templates/device_success.html",
@@ -56,26 +59,61 @@ func NewDeviceFlowHandler(st *store.Store, encKey []byte, cfg *config.Config) (*
 		return nil, fmt.Errorf("parse device flow templates: %w", err)
 	}
 	return &DeviceFlowHandler{
-		store:     st,
-		encKey:    encKey,
-		cfg:       cfg,
-		templates: tmpl,
+		hydra:      hydra,
+		store:      st,
+		encKey:     encKey,
+		cfg:        cfg,
+		templates:  tmpl,
+		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}, nil
+}
+
+// StartCleanup starts a background goroutine that periodically deletes expired device codes.
+func (h *DeviceFlowHandler) StartCleanup(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if n, err := h.store.DeleteExpiredDeviceCodes(ctx); err != nil {
+					log.Printf("WARN device_flow: cleanup expired codes: %v", err)
+				} else if n > 0 {
+					log.Printf("INFO device_flow: cleaned up %d expired device codes", n)
+				}
+			}
+		}
+	}()
 }
 
 // HandleDeviceAuthorize handles POST /oauth/device/code.
 // Creates a new device_code + user_code pair and returns them per RFC 8628.
 func (h *DeviceFlowHandler) HandleDeviceAuthorize(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		ClientID string `json:"client_id"`
-		Scope    string `json:"scope"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
-		return
+	var clientID, scope string
+	contentType := r.Header.Get("Content-Type")
+	if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
+		if err := r.ParseForm(); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+			return
+		}
+		clientID = r.FormValue("client_id")
+		scope = r.FormValue("scope")
+	} else {
+		var body struct {
+			ClientID string `json:"client_id"`
+			Scope    string `json:"scope"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+			return
+		}
+		clientID = body.ClientID
+		scope = body.Scope
 	}
 
-	scopes := strings.Fields(body.Scope)
+	scopes := strings.Fields(scope)
 	if len(scopes) == 0 {
 		scopes = []string{"project:inference", "offline_access"}
 	}
@@ -113,7 +151,7 @@ func (h *DeviceFlowHandler) HandleDeviceAuthorize(w http.ResponseWriter, r *http
 	dc := &store.DeviceCode{
 		DeviceCode:        deviceCode,
 		UserCode:          userCode,
-		ClientID:          body.ClientID,
+		ClientID:          clientID,
 		Scopes:            scopes,
 		VerificationNonce: nonce,
 		ExpiresAt:         time.Now().Add(time.Duration(codeTTL) * time.Second),
@@ -240,7 +278,7 @@ func (h *DeviceFlowHandler) HandleCallback(w http.ResponseWriter, r *http.Reques
 	hydraPublicURL := strings.TrimRight(h.cfg.Auth.OAuth.Hydra.PublicURL, "/")
 	redirectURI := baseURL(r) + "/oauth/device/callback"
 
-	tokenResp, err := exchangeAuthCode(ctx, hydraPublicURL, dfCfg.ClientID, dfCfg.ClientSecret, code, redirectURI)
+	tokenResp, err := exchangeAuthCode(ctx, h.httpClient, hydraPublicURL, dfCfg.ClientID, dfCfg.ClientSecret, code, redirectURI)
 	if err != nil {
 		log.Printf("ERROR device_flow: exchange auth code: %v", err)
 		h.renderErrorPage(w, "Failed to complete authorization. Please try again.")
@@ -267,6 +305,27 @@ func (h *DeviceFlowHandler) HandleCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Record OAuth grant so project owners can see and revoke it.
+	if h.hydra != nil {
+		introResult, introErr := h.hydra.IntrospectToken(ctx, tokenResp.AccessToken)
+		if introErr == nil && introResult.Active {
+			projectID, _ := introResult.Ext["project_id"].(string)
+			userID, _ := introResult.Ext["user_id"].(string)
+			if projectID != "" && userID != "" {
+				grant := &types.OAuthGrant{
+					ProjectID:  projectID,
+					UserID:     userID,
+					ClientID:   dfCfg.ClientID,
+					ClientName: "Device Flow",
+					Scopes:     dc.Scopes,
+				}
+				if grantErr := h.store.CreateOAuthGrant(grant); grantErr != nil {
+					log.Printf("WARN device_flow: failed to record grant: %v", grantErr)
+				}
+			}
+		}
+	}
+
 	// Render success page.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.templates.ExecuteTemplate(w, "device_success.html", nil); err != nil {
@@ -277,29 +336,45 @@ func (h *DeviceFlowHandler) HandleCallback(w http.ResponseWriter, r *http.Reques
 // HandleTokenPoll handles POST /oauth/device/token.
 // CLI clients poll this endpoint to retrieve tokens after user approval.
 func (h *DeviceFlowHandler) HandleTokenPoll(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		GrantType  string `json:"grant_type"`
-		DeviceCode string `json:"device_code"`
-		ClientID   string `json:"client_id"`
+	var grantType, deviceCodeVal, clientID string
+	contentType := r.Header.Get("Content-Type")
+	if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
+		if err := r.ParseForm(); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+			return
+		}
+		grantType = r.FormValue("grant_type")
+		deviceCodeVal = r.FormValue("device_code")
+		clientID = r.FormValue("client_id")
+	} else {
+		var body struct {
+			GrantType  string `json:"grant_type"`
+			DeviceCode string `json:"device_code"`
+			ClientID   string `json:"client_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+			return
+		}
+		grantType = body.GrantType
+		deviceCodeVal = body.DeviceCode
+		clientID = body.ClientID
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
-		return
-	}
+	_ = clientID // used for audit only
 
-	if body.GrantType != "urn:ietf:params:oauth:grant-type:device_code" {
+	if grantType != "urn:ietf:params:oauth:grant-type:device_code" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported_grant_type"})
 		return
 	}
 
-	if body.DeviceCode == "" {
+	if deviceCodeVal == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
 		return
 	}
 
 	ctx := r.Context()
 
-	dc, err := h.store.GetDeviceCodeByCode(ctx, body.DeviceCode)
+	dc, err := h.store.GetDeviceCodeByCode(ctx, deviceCodeVal)
 	if err != nil {
 		log.Printf("ERROR device_flow: lookup device code: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "server_error"})
@@ -334,7 +409,10 @@ func (h *DeviceFlowHandler) HandleTokenPoll(w http.ResponseWriter, r *http.Reque
 		}
 		_ = h.store.UpdateDeviceCodePoll(ctx, dc.ID, slowDown)
 		if slowDown {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "slow_down"})
+			writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+				"error":    "slow_down",
+				"interval": dc.PollInterval + 5,
+			})
 			return
 		}
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "authorization_pending"})
@@ -342,7 +420,7 @@ func (h *DeviceFlowHandler) HandleTokenPoll(w http.ResponseWriter, r *http.Reque
 
 	case "approved":
 		// Atomically consume the approved code to prevent replay.
-		consumed, err := h.store.ConsumeApprovedDeviceCode(ctx, body.DeviceCode)
+		consumed, err := h.store.ConsumeApprovedDeviceCode(ctx, deviceCodeVal)
 		if err != nil {
 			log.Printf("ERROR device_flow: consume approved device code: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "server_error"})
@@ -367,6 +445,8 @@ func (h *DeviceFlowHandler) HandleTokenPoll(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Pragma", "no-cache")
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"access_token":  string(accessToken),
 			"refresh_token": string(refreshToken),
@@ -421,12 +501,15 @@ func formatUserCode(code string) string {
 	return code[:4] + "-" + code[4:]
 }
 
-// normalizeUserCode strips dashes/spaces and uppercases the input.
+// normalizeUserCode strips all whitespace and dashes, then uppercases.
 func normalizeUserCode(raw string) string {
-	s := strings.ToUpper(raw)
-	s = strings.ReplaceAll(s, "-", "")
-	s = strings.ReplaceAll(s, " ", "")
-	return s
+	var b strings.Builder
+	for _, c := range strings.ToUpper(raw) {
+		if c != '-' && c != ' ' && c != '\t' && c != '\n' && c != '\r' {
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
 }
 
 // hydraTokenResponse represents the JSON response from Hydra's token endpoint.
@@ -438,7 +521,7 @@ type hydraTokenResponse struct {
 }
 
 // exchangeAuthCode exchanges an authorization code for tokens via Hydra's token endpoint.
-func exchangeAuthCode(ctx context.Context, hydraPublicURL, clientID, clientSecret, code, redirectURI string) (*hydraTokenResponse, error) {
+func exchangeAuthCode(ctx context.Context, httpClient *http.Client, hydraPublicURL, clientID, clientSecret, code, redirectURI string) (*hydraTokenResponse, error) {
 	endpoint := hydraPublicURL + "/oauth2/token"
 
 	form := url.Values{
@@ -455,8 +538,7 @@ func exchangeAuthCode(ctx context.Context, hydraPublicURL, clientID, clientSecre
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token request: %w", err)
 	}

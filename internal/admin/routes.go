@@ -45,7 +45,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 
 		// Device Flow (RFC 8628) endpoints (public — no JWT auth required).
 		if cfg.Auth.OAuth.Hydra.DeviceFlow.ClientID != "" {
-			deviceHandler, err := NewDeviceFlowHandler(st, encKey, cfg)
+			deviceHandler, err := NewDeviceFlowHandler(hydraClient, st, encKey, cfg)
 			if err != nil {
 				panic("admin: failed to create device flow handler: " + err.Error())
 			}
@@ -54,6 +54,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 			r.Post("/oauth/device", deviceHandler.HandleVerifyUserCode)
 			r.Get("/oauth/device/callback", deviceHandler.HandleCallback)
 			r.Post("/oauth/device/token", deviceHandler.HandleTokenPoll)
+			deviceHandler.StartCleanup(context.Background())
 		}
 	}
 
