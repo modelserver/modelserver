@@ -70,7 +70,17 @@ type OIDCConfig struct {
 
 // HydraConfig holds settings for an Ory Hydra OAuth2 server.
 type HydraConfig struct {
-	AdminURL string `yaml:"admin_url" mapstructure:"admin_url"`
+	AdminURL   string           `yaml:"admin_url"   mapstructure:"admin_url"`
+	PublicURL  string           `yaml:"public_url"  mapstructure:"public_url"`
+	DeviceFlow DeviceFlowConfig `yaml:"device_flow" mapstructure:"device_flow"`
+}
+
+// DeviceFlowConfig holds settings for the OAuth 2.0 Device Authorization Grant (RFC 8628).
+type DeviceFlowConfig struct {
+	ClientID     string `yaml:"client_id"      mapstructure:"client_id"`
+	ClientSecret string `yaml:"client_secret"  mapstructure:"client_secret"`
+	CodeTTL      int    `yaml:"code_ttl"       mapstructure:"code_ttl"`
+	PollInterval int    `yaml:"poll_interval"  mapstructure:"poll_interval"`
 }
 
 // EncryptionConfig holds the encryption key used for at-rest data.
@@ -149,6 +159,11 @@ func setDefaults(v *viper.Viper) {
 	_ = v.BindEnv("auth.oauth.oidc.redirect_uri", "MODELSERVER_AUTH_OIDC_REDIRECT_URI")
 	_ = v.BindEnv("auth.oauth.oidc.display_name", "MODELSERVER_AUTH_OIDC_DISPLAY_NAME")
 	_ = v.BindEnv("auth.oauth.hydra.admin_url", "HYDRA_ADMIN_URL")
+	_ = v.BindEnv("auth.oauth.hydra.public_url", "HYDRA_PUBLIC_URL")
+	_ = v.BindEnv("auth.oauth.hydra.device_flow.client_id")
+	_ = v.BindEnv("auth.oauth.hydra.device_flow.client_secret")
+	v.SetDefault("auth.oauth.hydra.device_flow.code_ttl", 600)
+	v.SetDefault("auth.oauth.hydra.device_flow.poll_interval", 5)
 	_ = v.BindEnv("auth.login_description")
 	_ = v.BindEnv("auth.login_footer_html")
 	_ = v.BindEnv("auth.github_url")

@@ -396,3 +396,70 @@ func TestTraceConfigEnv(t *testing.T) {
 		t.Error("Trace.CodexTraceEnabled = false, want true")
 	}
 }
+
+func TestDeviceFlowConfigDefaults(t *testing.T) {
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.OAuth.Hydra.DeviceFlow.CodeTTL != 600 {
+		t.Errorf("DeviceFlow.CodeTTL = %d, want 600", cfg.Auth.OAuth.Hydra.DeviceFlow.CodeTTL)
+	}
+	if cfg.Auth.OAuth.Hydra.DeviceFlow.PollInterval != 5 {
+		t.Errorf("DeviceFlow.PollInterval = %d, want 5", cfg.Auth.OAuth.Hydra.DeviceFlow.PollInterval)
+	}
+}
+
+func TestDeviceFlowConfigYAML(t *testing.T) {
+	yaml := []byte(`
+auth:
+  oauth:
+    hydra:
+      admin_url: "http://hydra:4445"
+      public_url: "http://hydra:4444"
+      device_flow:
+        client_id: "device-client"
+        client_secret: "device-secret"
+        code_ttl: 300
+        poll_interval: 10
+`)
+	cfg, err := Load(yaml)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.OAuth.Hydra.PublicURL != "http://hydra:4444" {
+		t.Errorf("Hydra.PublicURL = %q, want %q", cfg.Auth.OAuth.Hydra.PublicURL, "http://hydra:4444")
+	}
+	if cfg.Auth.OAuth.Hydra.DeviceFlow.ClientID != "device-client" {
+		t.Errorf("DeviceFlow.ClientID = %q, want %q", cfg.Auth.OAuth.Hydra.DeviceFlow.ClientID, "device-client")
+	}
+	if cfg.Auth.OAuth.Hydra.DeviceFlow.ClientSecret != "device-secret" {
+		t.Errorf("DeviceFlow.ClientSecret = %q, want %q", cfg.Auth.OAuth.Hydra.DeviceFlow.ClientSecret, "device-secret")
+	}
+	if cfg.Auth.OAuth.Hydra.DeviceFlow.CodeTTL != 300 {
+		t.Errorf("DeviceFlow.CodeTTL = %d, want 300", cfg.Auth.OAuth.Hydra.DeviceFlow.CodeTTL)
+	}
+	if cfg.Auth.OAuth.Hydra.DeviceFlow.PollInterval != 10 {
+		t.Errorf("DeviceFlow.PollInterval = %d, want 10", cfg.Auth.OAuth.Hydra.DeviceFlow.PollInterval)
+	}
+}
+
+func TestDeviceFlowConfigEnv(t *testing.T) {
+	t.Setenv("HYDRA_PUBLIC_URL", "http://hydra-env:4444")
+	t.Setenv("MODELSERVER_AUTH_OAUTH_HYDRA_DEVICE_FLOW_CLIENT_ID", "env-client")
+	t.Setenv("MODELSERVER_AUTH_OAUTH_HYDRA_DEVICE_FLOW_CLIENT_SECRET", "env-secret")
+
+	cfg, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.OAuth.Hydra.PublicURL != "http://hydra-env:4444" {
+		t.Errorf("Hydra.PublicURL = %q, want %q", cfg.Auth.OAuth.Hydra.PublicURL, "http://hydra-env:4444")
+	}
+	if cfg.Auth.OAuth.Hydra.DeviceFlow.ClientID != "env-client" {
+		t.Errorf("DeviceFlow.ClientID = %q, want %q", cfg.Auth.OAuth.Hydra.DeviceFlow.ClientID, "env-client")
+	}
+	if cfg.Auth.OAuth.Hydra.DeviceFlow.ClientSecret != "env-secret" {
+		t.Errorf("DeviceFlow.ClientSecret = %q, want %q", cfg.Auth.OAuth.Hydra.DeviceFlow.ClientSecret, "env-secret")
+	}
+}
