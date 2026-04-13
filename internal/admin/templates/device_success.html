@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Authorization Successful</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f5f5;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .card {
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+      padding: 2rem;
+      width: 100%;
+      max-width: 400px;
+      text-align: center;
+    }
+    .icon { font-size: 3rem; margin-bottom: 1rem; }
+    h1 { font-size: 1.4rem; font-weight: 600; margin: 0 0 0.5rem; color: #111; }
+    p { color: #555; font-size: 0.95rem; margin: 0; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #1a1a1a; }
+      .card { background: #2a2a2a; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
+      h1 { color: #f0f0f0; }
+      p { color: #aaa; }
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">&#x2705;</div>
+    <h1>Authorization Successful</h1>
+    <p>Your device has been authorized. You may close this window.</p>
+  </div>
+</body>
+</html>
