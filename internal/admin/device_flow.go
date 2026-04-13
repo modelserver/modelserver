@@ -28,7 +28,6 @@ const userCodeCharset = "BCDFGHJKLMNPQRSTVWXZ"
 
 // DeviceFlowHandler handles OAuth 2.0 Device Authorization Grant (RFC 8628) endpoints.
 type DeviceFlowHandler struct {
-	hydra     *HydraClient
 	store     *store.Store
 	encKey    []byte
 	cfg       *config.Config
@@ -47,7 +46,7 @@ type deviceErrorData struct {
 }
 
 // NewDeviceFlowHandler constructs a DeviceFlowHandler and parses templates.
-func NewDeviceFlowHandler(hydra *HydraClient, st *store.Store, encKey []byte, cfg *config.Config) (*DeviceFlowHandler, error) {
+func NewDeviceFlowHandler(st *store.Store, encKey []byte, cfg *config.Config) (*DeviceFlowHandler, error) {
 	tmpl, err := template.ParseFS(deviceTemplateFS,
 		"templates/device_verify.html",
 		"templates/device_success.html",
@@ -57,7 +56,6 @@ func NewDeviceFlowHandler(hydra *HydraClient, st *store.Store, encKey []byte, cf
 		return nil, fmt.Errorf("parse device flow templates: %w", err)
 	}
 	return &DeviceFlowHandler{
-		hydra:     hydra,
 		store:     st,
 		encKey:    encKey,
 		cfg:       cfg,
@@ -146,9 +144,11 @@ func (h *DeviceFlowHandler) HandleDeviceAuthorize(w http.ResponseWriter, r *http
 func (h *DeviceFlowHandler) HandleVerificationPage(w http.ResponseWriter, r *http.Request) {
 	userCode := r.URL.Query().Get("user_code")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	h.templates.ExecuteTemplate(w, "device_verify.html", deviceVerifyData{
+	if err := h.templates.ExecuteTemplate(w, "device_verify.html", deviceVerifyData{
 		UserCode: userCode,
-	})
+	}); err != nil {
+		log.Printf("ERROR device_flow: render template: %v", err)
+	}
 }
 
 // HandleVerifyUserCode handles POST /oauth/device.
@@ -269,7 +269,9 @@ func (h *DeviceFlowHandler) HandleCallback(w http.ResponseWriter, r *http.Reques
 
 	// Render success page.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	h.templates.ExecuteTemplate(w, "device_success.html", nil)
+	if err := h.templates.ExecuteTemplate(w, "device_success.html", nil); err != nil {
+		log.Printf("ERROR device_flow: render template: %v", err)
+	}
 }
 
 // HandleTokenPoll handles POST /oauth/device/token.
@@ -339,28 +341,37 @@ func (h *DeviceFlowHandler) HandleTokenPoll(w http.ResponseWriter, r *http.Reque
 		return
 
 	case "approved":
-		// Decrypt and return tokens.
-		accessToken, err := crypto.Decrypt(h.encKey, dc.AccessToken)
+		// Atomically consume the approved code to prevent replay.
+		consumed, err := h.store.ConsumeApprovedDeviceCode(ctx, body.DeviceCode)
+		if err != nil {
+			log.Printf("ERROR device_flow: consume approved device code: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "server_error"})
+			return
+		}
+		if consumed == nil {
+			// Another concurrent poll already consumed it.
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_grant"})
+			return
+		}
+
+		accessToken, err := crypto.Decrypt(h.encKey, consumed.AccessToken)
 		if err != nil {
 			log.Printf("ERROR device_flow: decrypt access token: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "server_error"})
 			return
 		}
-		refreshToken, err := crypto.Decrypt(h.encKey, dc.RefreshToken)
+		refreshToken, err := crypto.Decrypt(h.encKey, consumed.RefreshToken)
 		if err != nil {
 			log.Printf("ERROR device_flow: decrypt refresh token: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "server_error"})
 			return
 		}
 
-		// Delete after successful retrieval to prevent replay.
-		_ = h.store.DeleteDeviceCode(ctx, dc.ID)
-
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"access_token":  string(accessToken),
 			"refresh_token": string(refreshToken),
-			"token_type":    dc.TokenType,
-			"expires_in":    dc.TokenExpiresIn,
+			"token_type":    consumed.TokenType,
+			"expires_in":    consumed.TokenExpiresIn,
 		})
 		return
 
@@ -466,16 +477,20 @@ func exchangeAuthCode(ctx context.Context, hydraPublicURL, clientID, clientSecre
 // renderVerifyError re-renders the verification form with an error message.
 func (h *DeviceFlowHandler) renderVerifyError(w http.ResponseWriter, userCode, errMsg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	h.templates.ExecuteTemplate(w, "device_verify.html", deviceVerifyData{
+	if err := h.templates.ExecuteTemplate(w, "device_verify.html", deviceVerifyData{
 		UserCode: userCode,
 		Error:    errMsg,
-	})
+	}); err != nil {
+		log.Printf("ERROR device_flow: render template: %v", err)
+	}
 }
 
 // renderErrorPage renders the device_error.html template.
 func (h *DeviceFlowHandler) renderErrorPage(w http.ResponseWriter, errMsg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	h.templates.ExecuteTemplate(w, "device_error.html", deviceErrorData{
+	if err := h.templates.ExecuteTemplate(w, "device_error.html", deviceErrorData{
 		Error: errMsg,
-	})
+	}); err != nil {
+		log.Printf("ERROR device_flow: render template: %v", err)
+	}
 }

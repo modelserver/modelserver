@@ -66,7 +66,7 @@ func (s *Store) GetDeviceCodeByNonce(ctx context.Context, nonce string) (*Device
 		SELECT id, device_code, user_code, client_id, scopes, status,
 			verification_nonce, expires_at, poll_interval, created_at
 		FROM device_codes
-		WHERE verification_nonce = $1`,
+		WHERE verification_nonce = $1 AND status = 'pending' AND expires_at > NOW()`,
 		nonce,
 	).Scan(&dc.ID, &dc.DeviceCode, &dc.UserCode, &dc.ClientID, &dc.Scopes, &dc.Status,
 		&dc.VerificationNonce, &dc.ExpiresAt, &dc.PollInterval, &dc.CreatedAt)
@@ -130,6 +130,31 @@ func (s *Store) UpdateDeviceCodePoll(ctx context.Context, id string, slowDown bo
 	}
 	_, err := s.pool.Exec(ctx, `UPDATE device_codes SET last_polled_at = NOW() WHERE id = $1`, id)
 	return err
+}
+
+// ConsumeApprovedDeviceCode atomically fetches and deletes an approved device code,
+// preventing concurrent polls from both returning tokens.
+func (s *Store) ConsumeApprovedDeviceCode(ctx context.Context, deviceCode string) (*DeviceCode, error) {
+	dc := &DeviceCode{}
+	var lastPolledAt *time.Time
+	err := s.pool.QueryRow(ctx, `
+		DELETE FROM device_codes
+		WHERE device_code = $1 AND status = 'approved'
+		RETURNING id, device_code, user_code, client_id, scopes, status,
+			verification_nonce, access_token, refresh_token, token_type, token_expires_in,
+			expires_at, poll_interval, last_polled_at, created_at`,
+		deviceCode,
+	).Scan(&dc.ID, &dc.DeviceCode, &dc.UserCode, &dc.ClientID, &dc.Scopes, &dc.Status,
+		&dc.VerificationNonce, &dc.AccessToken, &dc.RefreshToken, &dc.TokenType, &dc.TokenExpiresIn,
+		&dc.ExpiresAt, &dc.PollInterval, &lastPolledAt, &dc.CreatedAt)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("consume approved device code: %w", err)
+	}
+	dc.LastPolledAt = lastPolledAt
+	return dc, nil
 }
 
 // DeleteDeviceCode removes a device code record by ID.
