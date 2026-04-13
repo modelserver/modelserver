@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 // HydraOAuthClient represents an OAuth2 client in Hydra.
@@ -50,7 +51,7 @@ func (c *HydraClient) ListOAuthClients(ctx context.Context) ([]HydraOAuthClient,
 
 // GetOAuthClient returns a single OAuth2 client from Hydra.
 func (c *HydraClient) GetOAuthClient(ctx context.Context, clientID string) (*HydraOAuthClient, error) {
-	endpoint := fmt.Sprintf("%s/admin/clients/%s", c.adminURL, clientID)
+	endpoint := fmt.Sprintf("%s/admin/clients/%s", c.adminURL, url.PathEscape(clientID))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -108,7 +109,7 @@ func (c *HydraClient) CreateOAuthClient(ctx context.Context, client *HydraOAuthC
 
 // UpdateOAuthClient updates an existing OAuth2 client in Hydra.
 func (c *HydraClient) UpdateOAuthClient(ctx context.Context, clientID string, client *HydraOAuthClient) (*HydraOAuthClient, error) {
-	endpoint := fmt.Sprintf("%s/admin/clients/%s", c.adminURL, clientID)
+	endpoint := fmt.Sprintf("%s/admin/clients/%s", c.adminURL, url.PathEscape(clientID))
 
 	body, err := json.Marshal(client)
 	if err != nil {
@@ -140,7 +141,7 @@ func (c *HydraClient) UpdateOAuthClient(ctx context.Context, clientID string, cl
 
 // DeleteOAuthClient deletes an OAuth2 client from Hydra.
 func (c *HydraClient) DeleteOAuthClient(ctx context.Context, clientID string) error {
-	endpoint := fmt.Sprintf("%s/admin/clients/%s", c.adminURL, clientID)
+	endpoint := fmt.Sprintf("%s/admin/clients/%s", c.adminURL, url.PathEscape(clientID))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
 	if err != nil {

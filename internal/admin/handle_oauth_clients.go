@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -39,7 +40,11 @@ func handleGetOAuthClient(hydra *HydraClient) http.HandlerFunc {
 		clientID := chi.URLParam(r, "clientID")
 		client, err := hydra.GetOAuthClient(r.Context(), clientID)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "hydra_error", "failed to get OAuth client: "+err.Error())
+			if strings.Contains(err.Error(), "404") {
+				writeError(w, http.StatusNotFound, "not_found", "OAuth client not found")
+			} else {
+				writeError(w, http.StatusBadGateway, "hydra_error", "failed to get OAuth client: "+err.Error())
+			}
 			return
 		}
 		client.ClientSecret = "" // Never expose secret in GET
@@ -98,15 +103,17 @@ func handleUpdateOAuthClient(hydra *HydraClient) http.HandlerFunc {
 		}
 		clientID := chi.URLParam(r, "clientID")
 
-		var input HydraOAuthClient
+		var input struct {
+			HydraOAuthClient
+			RegenerateSecret bool `json:"regenerate_secret"`
+		}
 		if err := decodeBody(r, &input); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
 			return
 		}
 
-		// If regenerate_secret was requested (secret field is "regenerate"), generate a new one.
 		var newSecret string
-		if input.ClientSecret == "regenerate" {
+		if input.RegenerateSecret {
 			secretBytes := make([]byte, 32)
 			if _, err := rand.Read(secretBytes); err != nil {
 				writeError(w, http.StatusInternalServerError, "internal", "failed to generate secret")
@@ -116,7 +123,7 @@ func handleUpdateOAuthClient(hydra *HydraClient) http.HandlerFunc {
 			input.ClientSecret = newSecret
 		}
 
-		updated, err := hydra.UpdateOAuthClient(r.Context(), clientID, &input)
+		updated, err := hydra.UpdateOAuthClient(r.Context(), clientID, &input.HydraOAuthClient)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "hydra_error", "failed to update OAuth client: "+err.Error())
 			return
@@ -140,7 +147,11 @@ func handleDeleteOAuthClient(hydra *HydraClient) http.HandlerFunc {
 		}
 		clientID := chi.URLParam(r, "clientID")
 		if err := hydra.DeleteOAuthClient(r.Context(), clientID); err != nil {
-			writeError(w, http.StatusBadGateway, "hydra_error", "failed to delete OAuth client: "+err.Error())
+			if strings.Contains(err.Error(), "404") {
+				writeError(w, http.StatusNotFound, "not_found", "OAuth client not found")
+			} else {
+				writeError(w, http.StatusBadGateway, "hydra_error", "failed to delete OAuth client: "+err.Error())
+			}
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

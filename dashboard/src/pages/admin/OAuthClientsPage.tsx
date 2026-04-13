@@ -91,7 +91,7 @@ function toggleItem(arr: string[], item: string): string[] {
 }
 
 export function OAuthClientsPage() {
-  const { data, isLoading } = useOAuthClients();
+  const { data, isLoading, isError } = useOAuthClients();
   const createClient = useCreateOAuthClient();
   const updateClient = useUpdateOAuthClient();
   const deleteClient = useDeleteOAuthClient();
@@ -156,10 +156,10 @@ export function OAuthClientsPage() {
           payload.client_id = form.client_id.trim();
         }
         const result = await createClient.mutateAsync(payload);
-        setDialogOpen(false);
         if (result.client_secret) {
           setRevealedSecret(result.client_secret);
         }
+        setDialogOpen(false);
         toast.success("Client created");
       }
     } catch {
@@ -291,6 +291,10 @@ export function OAuthClientsPage() {
             <div className="flex items-center gap-2 p-6 text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
               Loading...
+            </div>
+          ) : isError ? (
+            <div className="p-6 text-destructive">
+              Failed to load OAuth clients. Make sure Hydra is configured and reachable.
             </div>
           ) : (
             <DataTable
