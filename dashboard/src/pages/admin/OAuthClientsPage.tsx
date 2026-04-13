@@ -42,12 +42,24 @@ const GRANT_TYPE_OPTIONS = [
   { value: "authorization_code", label: "Authorization Code" },
   { value: "refresh_token", label: "Refresh Token" },
   { value: "client_credentials", label: "Client Credentials" },
+  { value: "urn:ietf:params:oauth:grant-type:device_code", label: "Device Code" },
 ];
 
 const RESPONSE_TYPE_OPTIONS = [
   { value: "code", label: "Code" },
   { value: "token", label: "Token" },
 ];
+
+const GRANT_TYPE_LABELS: Record<string, string> = {
+  authorization_code: "Authorization Code",
+  refresh_token: "Refresh Token",
+  client_credentials: "Client Credentials",
+  "urn:ietf:params:oauth:grant-type:device_code": "Device Code",
+};
+
+function formatGrantType(g: string): string {
+  return GRANT_TYPE_LABELS[g] ?? g.replace(/_/g, " ");
+}
 
 interface OAuthClientFormState {
   client_name: string;
@@ -208,7 +220,7 @@ export function OAuthClientsPage() {
         <div className="flex flex-wrap gap-1">
           {c.grant_types.map((g) => (
             <Badge key={g} variant="secondary" className="text-xs">
-              {g.replace(/_/g, " ")}
+              {formatGrantType(g)}
             </Badge>
           ))}
         </div>
