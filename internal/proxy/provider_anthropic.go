@@ -16,10 +16,11 @@ type AnthropicTransformer struct{}
 
 var _ ProviderTransformer = (*AnthropicTransformer)(nil)
 
-// TransformBody is a no-op for Anthropic. The body is sent as-is; model
-// rewriting (via ModelMap) is performed by the Executor before this call.
-func (t *AnthropicTransformer) TransformBody(body []byte, _ string, _ bool, _ http.Header) ([]byte, error) {
-	return body, nil
+// TransformBody applies FGTS (fine-grained tool streaming) when the client
+// sends the corresponding anthropic-beta header. This adds eager_input_streaming: true
+// to each tool, matching Claude Code's behavior. Other body fields are passed as-is.
+func (t *AnthropicTransformer) TransformBody(body []byte, _ string, _ bool, headers http.Header) ([]byte, error) {
+	return applyFGTS(body, headers)
 }
 
 // SetUpstream configures the outbound request for an Anthropic upstream.
