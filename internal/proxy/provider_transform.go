@@ -34,7 +34,8 @@ type ResponseMetrics struct {
 // handle its unique wire format, auth mechanism, and response parsing.
 type ProviderTransformer interface {
 	// TransformBody applies provider-specific body modifications.
-	// For Anthropic/ClaudeCode this is a no-op; for Bedrock it strips model/stream
+	// For Anthropic this is a no-op; for ClaudeCode it injects eager_input_streaming
+	// per tool when the FGTS beta header is present; for Bedrock it strips model/stream
 	// fields and injects anthropic_version/anthropic_beta; for OpenAI it's a no-op.
 	TransformBody(originalBody []byte, model string, isStream bool, headers http.Header) ([]byte, error)
 

@@ -138,3 +138,36 @@ func TestHasBeta(t *testing.T) {
 		})
 	}
 }
+
+func TestClaudeCodeTransformer_FGTS(t *testing.T) {
+	body := []byte(`{"tools": [{"name": "bash", "input_schema": {"type": "object"}}]}`)
+	headers := http.Header{}
+	headers.Set("Anthropic-Beta", "fine-grained-tool-streaming-2025-05-14")
+
+	transformer := &ClaudeCodeTransformer{}
+	result, err := transformer.TransformBody(body, "claude-sonnet-4-6", false, headers)
+	if err != nil {
+		t.Fatalf("TransformBody: %v", err)
+	}
+
+	eis := gjson.GetBytes(result, "tools.0.eager_input_streaming")
+	if !eis.Exists() || !eis.Bool() {
+		t.Errorf("tools.0.eager_input_streaming = %v, want true", eis)
+	}
+}
+
+func TestClaudeCodeTransformer_NoFGTS(t *testing.T) {
+	body := []byte(`{"tools": [{"name": "bash"}]}`)
+	headers := http.Header{}
+
+	transformer := &ClaudeCodeTransformer{}
+	result, err := transformer.TransformBody(body, "claude-sonnet-4-6", false, headers)
+	if err != nil {
+		t.Fatalf("TransformBody: %v", err)
+	}
+
+	eis := gjson.GetBytes(result, "tools.0.eager_input_streaming")
+	if eis.Exists() {
+		t.Error("eager_input_streaming should not be set without beta header")
+	}
+}
