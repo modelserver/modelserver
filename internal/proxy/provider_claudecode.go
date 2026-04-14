@@ -16,9 +16,12 @@ type ClaudeCodeTransformer struct{}
 
 var _ ProviderTransformer = (*ClaudeCodeTransformer)(nil)
 
-// TransformBody is a no-op for Claude Code. The body is identical to Anthropic.
-func (t *ClaudeCodeTransformer) TransformBody(body []byte, _ string, _ bool, _ http.Header) ([]byte, error) {
-	return body, nil
+// TransformBody applies FGTS (fine-grained tool streaming) when the client
+// sends the corresponding anthropic-beta header. This adds eager_input_streaming: true
+// to each tool, matching Claude Code's behavior (see /root/cc/source/src/utils/api.ts:194-206).
+// The beta header itself is stripped later by mergeClaudeCodeBetaHeaders in SetUpstream.
+func (t *ClaudeCodeTransformer) TransformBody(body []byte, _ string, _ bool, headers http.Header) ([]byte, error) {
+	return applyFGTS(body, headers)
 }
 
 // SetUpstream configures the outbound request for a Claude Code upstream.
