@@ -336,67 +336,30 @@ func (r *Router) SelectWithRetry(ctx context.Context, group *resolvedGroup, sess
 		return nil
 	}
 
-	// 6. Apply session stickiness BEFORE balancer selection: if the session
-	//    is bound to an upstream that's in our candidate list, force it as
-	//    the primary pick and use the balancer only for retry slots.
-	//    This must happen before SelectN because SelectN(n=1) may randomly
-	//    pick a different upstream, silently breaking stickiness.
-	if sessionID != "" {
-		if val, ok := r.sessionMap.Load(sessionID); ok {
-			binding := val.(sessionBinding)
-			if time.Since(binding.usedAt) < r.sessionTTL {
-				for i, c := range candidates {
-					if c.Upstream.ID == binding.upstreamID {
-						// Refresh binding.
-						r.sessionMap.Store(sessionID, sessionBinding{
-							upstreamID: c.Upstream.ID,
-							usedAt:     time.Now(),
-						})
-
-						// Build result: bound upstream first.
-						result := make([]*SelectedUpstream, 0, n)
-						result = append(result, &SelectedUpstream{
-							Upstream: c.Upstream,
-							APIKey:   r.decryptedKeys[c.Upstream.ID],
-						})
-
-						// For retry slots, use balancer on remaining candidates.
-						if n > 1 && len(candidates) > 1 {
-							remaining := make([]lb.CandidateInfo, 0, len(candidates)-1)
-							remaining = append(remaining, candidates[:i]...)
-							remaining = append(remaining, candidates[i+1:]...)
-
-							balancer, ok := r.balancers[group.group.ID]
-							if !ok {
-								balancer = lb.NewBalancer(group.group.LBPolicy, r.connTracker)
-							}
-							for _, u := range balancer.SelectN(remaining, n-1) {
-								result = append(result, &SelectedUpstream{
-									Upstream: u,
-									APIKey:   r.decryptedKeys[u.ID],
-								})
-							}
-						}
-						return result
-					}
-				}
-				// Bound upstream not in candidates (disabled/unhealthy) — fall through.
-			} else {
-				// Expired binding.
-				r.sessionMap.Delete(sessionID)
-			}
-		}
-	}
-
-	// 7. Use group's balancer to rank (SelectN).
+	// 6. Resolve the group's balancer once (shared across affinity and ranking).
 	balancer, ok := r.balancers[group.group.ID]
 	if !ok {
 		balancer = lb.NewBalancer(group.group.LBPolicy, r.connTracker)
 	}
 
-	ranked := balancer.SelectN(candidates, n)
+	// 7. Session affinity. Concurrent requests with the same sessionID must
+	//    converge on the same primary upstream. Writing the binding only after
+	//    the upstream responds (as the executor does via BindSession) leaves a
+	//    multi-second window in which parallel requests all observe "no
+	//    binding" and independently balance-pick — silently splitting one
+	//    session across multiple upstreams. Claim the binding here, atomically,
+	//    so that losers in the concurrent race read and follow the winner.
+	if sessionID != "" {
+		if primary := r.pinSessionToUpstream(sessionID, candidates, balancer); primary != nil {
+			return r.resultWithPrimary(primary, candidates, balancer, n)
+		}
+		// pinSessionToUpstream returns nil only when the balancer can produce
+		// no primary (e.g. all candidate weights collapse to zero). Fall
+		// through to plain ranking below so the caller still gets a result.
+	}
 
-	// 8. Wrap as []*SelectedUpstream with decrypted API keys.
+	// 8. No session affinity: rank via balancer directly.
+	ranked := balancer.SelectN(candidates, n)
 	result := make([]*SelectedUpstream, len(ranked))
 	for i, u := range ranked {
 		result[i] = &SelectedUpstream{
@@ -404,7 +367,94 @@ func (r *Router) SelectWithRetry(ctx context.Context, group *resolvedGroup, sess
 			APIKey:   r.decryptedKeys[u.ID],
 		}
 	}
+	return result
+}
 
+// pinSessionToUpstream resolves sessionID to a primary upstream from
+// candidates, establishing or refreshing the binding as a side effect.
+// It handles three cases atomically against concurrent callers:
+//
+//  1. Valid binding pointing at an available upstream — use it, refresh
+//     the timestamp.
+//  2. No binding, or binding stale/expired/pointing at an unavailable
+//     upstream — pick via balancer and install the binding via LoadOrStore.
+//     If another goroutine wrote first, follow the winner (provided the
+//     winner's upstream is available); otherwise our pick wins and overwrites.
+//
+// Returns nil only when the balancer cannot produce a primary.
+func (r *Router) pinSessionToUpstream(sessionID string, candidates []lb.CandidateInfo, balancer *lb.Balancer) *types.Upstream {
+	findInCandidates := func(id string) *types.Upstream {
+		for _, c := range candidates {
+			if c.Upstream.ID == id {
+				return c.Upstream
+			}
+		}
+		return nil
+	}
+
+	// Fast path: existing, fresh binding to an available upstream.
+	if val, ok := r.sessionMap.Load(sessionID); ok {
+		binding := val.(sessionBinding)
+		if time.Since(binding.usedAt) < r.sessionTTL {
+			if u := findInCandidates(binding.upstreamID); u != nil {
+				r.sessionMap.Store(sessionID, sessionBinding{
+					upstreamID: u.ID,
+					usedAt:     time.Now(),
+				})
+				return u
+			}
+		}
+	}
+
+	// Slow path: pick a fresh primary and try to claim the session.
+	primary := balancer.Select(candidates)
+	if primary == nil {
+		return nil
+	}
+	newBinding := sessionBinding{upstreamID: primary.ID, usedAt: time.Now()}
+
+	actual, loaded := r.sessionMap.LoadOrStore(sessionID, newBinding)
+	if !loaded {
+		// We won the race for this (previously unbound) session.
+		return primary
+	}
+
+	// Someone else's binding is already present. Use it only if still usable;
+	// otherwise our pick wins and we overwrite the stale/expired binding.
+	existing := actual.(sessionBinding)
+	if time.Since(existing.usedAt) < r.sessionTTL {
+		if u := findInCandidates(existing.upstreamID); u != nil {
+			return u
+		}
+	}
+	r.sessionMap.Store(sessionID, newBinding)
+	return primary
+}
+
+// resultWithPrimary builds the ranked SelectedUpstream list with the given
+// primary as element 0, and balancer-selected fallbacks from the remaining
+// candidates filling retry slots 1..n-1.
+func (r *Router) resultWithPrimary(primary *types.Upstream, candidates []lb.CandidateInfo, balancer *lb.Balancer, n int) []*SelectedUpstream {
+	result := make([]*SelectedUpstream, 0, n)
+	result = append(result, &SelectedUpstream{
+		Upstream: primary,
+		APIKey:   r.decryptedKeys[primary.ID],
+	})
+	if n <= 1 || len(candidates) <= 1 {
+		return result
+	}
+	remaining := make([]lb.CandidateInfo, 0, len(candidates)-1)
+	for _, c := range candidates {
+		if c.Upstream.ID != primary.ID {
+			remaining = append(remaining, c)
+		}
+	}
+	for _, u := range balancer.SelectN(remaining, n-1) {
+		result = append(result, &SelectedUpstream{
+			Upstream: u,
+			APIKey:   r.decryptedKeys[u.ID],
+		})
+	}
 	return result
 }
 
