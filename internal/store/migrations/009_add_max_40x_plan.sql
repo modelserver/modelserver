@@ -3,6 +3,7 @@ VALUES
     ('Max 40x', 'max_40x', 'Max 40x', 'Same usage limits as Claude Max (40x)', 4000, 199999, 1,
      '[{"window":"5h","window_type":"sliding","max_credits":22000000,"scope":"project"},{"window":"7d","window_type":"sliding","max_credits":166666600,"scope":"project"}]',
      '{
+        "claude-opus-4-7":          {"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},
         "claude-opus-4-6":          {"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},
         "claude-sonnet-4-6":        {"input_rate":0.4,  "output_rate":2.0,  "cache_creation_rate":0.4,  "cache_read_rate":0},
         "claude-haiku-4-5":         {"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},

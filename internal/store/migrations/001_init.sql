@@ -240,6 +240,7 @@ CREATE INDEX IF NOT EXISTS idx_orders_payment_ref ON orders(payment_ref) WHERE p
 -- Model credit rates formula: rate = API_price_per_MTok / 7.5
 --
 -- Claude models (cache_read free on subscription):
+--   claude-opus-4-7:           input=$5   → 0.667,  output=$25 → 3.333, cache_creation=0.667, cache_read=0
 --   claude-opus-4-6:           input=$5   → 0.667,  output=$25 → 3.333, cache_creation=0.667, cache_read=0
 --   claude-sonnet-4-6:         input=$3   → 0.4,    output=$15 → 2.0,   cache_creation=0.4,   cache_read=0
 --   claude-haiku-4-5:          input=$1   → 0.133,  output=$5  → 0.667, cache_creation=0.133, cache_read=0
@@ -257,6 +258,7 @@ VALUES
     ('Free', 'free', 'Free', 'Default free tier with basic rate limits', 0, 0, 1,
      '[{"window":"5h","window_type":"sliding","max_credits":55000,"scope":"project"},{"window":"7d","window_type":"sliding","max_credits":500000,"scope":"project"}]',
      '{
+        "claude-opus-4-7":          {"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},
         "claude-opus-4-6":          {"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},
         "claude-sonnet-4-6":        {"input_rate":0.4,  "output_rate":2.0,  "cache_creation_rate":0.4,  "cache_read_rate":0},
         "claude-haiku-4-5":         {"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},
@@ -272,6 +274,7 @@ VALUES
     ('Pro', 'pro', 'Pro', 'Same usage limits as Claude Pro', 100, 9999, 1,
      '[{"window":"5h","window_type":"sliding","max_credits":550000,"scope":"project"},{"window":"7d","window_type":"sliding","max_credits":5000000,"scope":"project"}]',
      '{
+        "claude-opus-4-7":          {"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},
         "claude-opus-4-6":          {"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},
         "claude-sonnet-4-6":        {"input_rate":0.4,  "output_rate":2.0,  "cache_creation_rate":0.4,  "cache_read_rate":0},
         "claude-haiku-4-5":         {"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},
@@ -287,6 +290,7 @@ VALUES
     ('Max 2x', 'max_2x', 'Max 2x', '2x usage limits of Claude Pro', 200, 19999, 1,
      '[{"window":"5h","window_type":"sliding","max_credits":1100000,"scope":"project"},{"window":"7d","window_type":"sliding","max_credits":10000000,"scope":"project"}]',
      '{
+        "claude-opus-4-7":          {"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},
         "claude-opus-4-6":          {"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},
         "claude-sonnet-4-6":        {"input_rate":0.4,  "output_rate":2.0,  "cache_creation_rate":0.4,  "cache_read_rate":0},
         "claude-haiku-4-5":         {"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},
@@ -302,6 +306,7 @@ VALUES
     ('Max 5x', 'max_5x', 'Max 5x', 'Same usage limits as Claude Max (5x)', 500, 49999, 1,
      '[{"window":"5h","window_type":"sliding","max_credits":3300000,"scope":"project"},{"window":"7d","window_type":"sliding","max_credits":41666700,"scope":"project"}]',
      '{
+        "claude-opus-4-7":          {"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},
         "claude-opus-4-6":          {"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},
         "claude-sonnet-4-6":        {"input_rate":0.4,  "output_rate":2.0,  "cache_creation_rate":0.4,  "cache_read_rate":0},
         "claude-haiku-4-5":         {"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},
@@ -317,6 +322,7 @@ VALUES
     ('Max 20x', 'max_20x', 'Max 20x', 'Same usage limits as Claude Max (20x)', 2000, 99999, 1,
      '[{"window":"5h","window_type":"sliding","max_credits":11000000,"scope":"project"},{"window":"7d","window_type":"sliding","max_credits":83333300,"scope":"project"}]',
      '{
+        "claude-opus-4-7":          {"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},
         "claude-opus-4-6":          {"input_rate":0.667,"output_rate":3.333,"cache_creation_rate":0.667,"cache_read_rate":0},
         "claude-sonnet-4-6":        {"input_rate":0.4,  "output_rate":2.0,  "cache_creation_rate":0.4,  "cache_read_rate":0},
         "claude-haiku-4-5":         {"input_rate":0.133,"output_rate":0.667,"cache_creation_rate":0.133,"cache_read_rate":0},

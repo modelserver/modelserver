@@ -212,6 +212,7 @@ func handleUtilizationAnalysis(st *store.Store) http.HandlerFunc {
 		// Anchored configurations.
 		// Known base input rates per model (from API pricing / 7.5).
 		knownInputRates := map[string]float64{
+			"claude-opus-4-7":           0.667,
 			"claude-opus-4-6":           0.667,
 			"claude-sonnet-4-6":         0.4,
 			"claude-haiku-4-5":          0.133,

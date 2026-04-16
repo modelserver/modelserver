@@ -39,6 +39,12 @@ import { toast } from "sonner";
 // Cache writes are charged at the regular input price (not 1.25x like API).
 // Cache reads are entirely free on subscription plans.
 const DEFAULT_MODEL_CREDIT_RATES: Record<string, CreditRate> = {
+  "claude-opus-4-7": {
+    input_rate: 0.667,
+    output_rate: 3.333,
+    cache_creation_rate: 0.667,
+    cache_read_rate: 0,
+  },
   "claude-opus-4-6": {
     input_rate: 0.667,
     output_rate: 3.333,
