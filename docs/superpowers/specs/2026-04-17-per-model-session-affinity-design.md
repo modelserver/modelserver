@@ -80,15 +80,19 @@ strings, so the call site in `SelectWithRetry` does the composition once.
 
 ### Affinity short-circuit
 
-`SelectWithRetry` skips the affinity path (and falls through to plain
-balancer ranking) whenever **either** `sessionID == ""` **or**
-`model == ""`. Today only `sessionID == ""` short-circuits; broadening it
-to also short-circuit on empty model means:
+Both `SelectWithRetry` and `BindSession` skip the affinity path (no read,
+no write) whenever **either** `sessionID == ""` **or** `model == ""`.
+
+Today only `sessionID == ""` short-circuits in either function. Broadening
+to "either empty" means:
 
 - `handler.go:312` (count_tokens) keeps working unchanged — it already
   passes empty `sessionID`.
 - A future caller that supplies `sessionID` but happens to have an empty
-  `model` will not write a meaningless `(sess, "")` binding.
+  `model` cannot write a meaningless `(sess, "")` binding.
+
+`BindSession` therefore changes from `if sessionID == "" { return }` to
+`if sessionID == "" || model == "" { return }`.
 
 ### Cleanup goroutine
 
@@ -96,6 +100,18 @@ to also short-circuit on empty model means:
 assertion inside the `Range` callback: the `key any` is now a `sessionKey`,
 not a `string`. The eviction predicate (`time.Since(usedAt) > sessionTTL`)
 is identical.
+
+### Comments to refresh
+
+Two existing comments in `router_engine.go` reference "session" / "sessionID"
+in ways that become misleading once the key is `(sessionID, model)`:
+
+- Line 18 — `sessionBinding` doc: "tracks which upstream a session (trace)
+  is pinned to" → reword to mention `(session, model)`.
+- Lines 345–352 — the affinity rationale block in `SelectWithRetry`:
+  "Concurrent requests with the same sessionID..." → reword to "Concurrent
+  requests with the same (sessionID, model)...". The race-window argument
+  is unchanged; only the key name in the prose needs updating.
 
 ### Call sites
 
@@ -118,8 +134,10 @@ The two production call sites in `executor.go`:
 - The same client-facing model should land on the same upstream
   regardless of how each upstream's ModelMap chooses to rewrite it.
 
-The non-proxy `handler.go:312` call (count_tokens) gets a second empty
-string argument and is otherwise unchanged.
+The non-proxy `handler.go:312` call (count_tokens) passes `reqShape.Model`
+as the new model argument. The existing empty `sessionID` still
+short-circuits affinity, so behavior is unchanged — but the call site is
+more honest about which model is being counted.
 
 ## Behavior summary
 
