@@ -200,12 +200,16 @@ export function ModelsPage() {
 
     try {
       if (editingName) {
+        // Explicit null clears the column when the toggle is off. Sending
+        // undefined would drop the key from the JSON body and leave the
+        // existing rate intact, so the user could never unset a rate
+        // they had previously set.
         await updateModel.mutateAsync({
           name: editingName,
           display_name: form.display_name || editingName,
           description: form.description,
           aliases: form.aliases,
-          default_credit_rate: defaultRate,
+          default_credit_rate: form.has_default_rate ? defaultRate : null,
           status: form.status,
           metadata,
         });

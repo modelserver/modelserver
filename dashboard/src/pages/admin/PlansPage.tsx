@@ -557,6 +557,31 @@ export function PlansPage() {
                     <Button
                       variant="outline"
                       size="sm"
+                      disabled={form.model_credit_rates.some((r) => r.model === "_default")}
+                      onClick={() =>
+                        setForm((p) => ({
+                          ...p,
+                          model_credit_rates: [
+                            ...p.model_credit_rates,
+                            {
+                              model: "_default",
+                              rate: {
+                                input_rate: 0,
+                                output_rate: 0,
+                                cache_creation_rate: 0,
+                                cache_read_rate: 0,
+                              },
+                            },
+                          ],
+                        }))
+                      }
+                      title="Add the plan-wide _default rate sentinel"
+                    >
+                      + _default
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() =>
                         setForm((p) => ({
                           ...p,

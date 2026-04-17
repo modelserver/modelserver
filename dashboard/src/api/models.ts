@@ -38,10 +38,14 @@ export function useCreateModel() {
   });
 }
 
+// The body is intentionally typed loosely so callers can send explicit null
+// for clearable fields (e.g. default_credit_rate) — Partial<Model> would
+// forbid that since the Model type has no nullable fields. The server
+// validates the shape.
 export function useUpdateModel() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ name, ...body }: Partial<Model> & { name: string }) =>
+    mutationFn: ({ name, ...body }: { name: string } & Record<string, unknown>) =>
       api.patch<DataResponse<Model>>(`/api/v1/models/${name}`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "models"] }),
   });
