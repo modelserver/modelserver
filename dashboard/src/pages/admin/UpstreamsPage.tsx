@@ -43,6 +43,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { Upstream, UpstreamTestResult } from "@/api/types";
+import { ModelMultiSelect, ModelSingleSelect } from "@/components/shared/ModelCombobox";
 import { Plus, MoreHorizontal, Pencil, Trash2, Loader2, Zap, RefreshCw, ExternalLink, KeyRound, Clock, Check, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -220,7 +221,7 @@ export function UpstreamsPage() {
     name: "",
     base_url: "",
     api_key: "",
-    supported_models: "",
+    supported_models: [] as string[],
     model_map: [] as { from: string; to: string }[],
     weight: "1",
     max_concurrent: "10",
@@ -253,7 +254,7 @@ export function UpstreamsPage() {
       name: "",
       base_url: "",
       api_key: "",
-      supported_models: "",
+      supported_models: [],
       model_map: [],
       weight: "1",
       max_concurrent: "10",
@@ -274,7 +275,7 @@ export function UpstreamsPage() {
       name: u.name,
       base_url: u.base_url,
       api_key: "",
-      supported_models: u.supported_models?.join(", ") ?? "",
+      supported_models: [...(u.supported_models ?? [])],
       model_map: modelMapEntries,
       weight: String(u.weight),
       max_concurrent: String(u.max_concurrent),
@@ -287,10 +288,7 @@ export function UpstreamsPage() {
 
   async function handleSave() {
     try {
-      const models = form.supported_models
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
+      const models = form.supported_models;
       const modelMap: Record<string, string> = {};
       for (const entry of form.model_map) {
         if (entry.from && entry.to) {
@@ -753,12 +751,16 @@ export function UpstreamsPage() {
               </div>
             )}
             <div className="space-y-2">
-              <Label>Supported Models (comma-separated)</Label>
-              <Input
+              <Label>Supported Models</Label>
+              <ModelMultiSelect
                 value={form.supported_models}
-                onChange={(e) => setForm((p) => ({ ...p, supported_models: e.target.value }))}
-                placeholder="claude-opus-4, claude-sonnet-4"
+                onChange={(next) => setForm((p) => ({ ...p, supported_models: next }))}
+                placeholder="Pick models this upstream can serve..."
               />
+              <p className="text-xs text-muted-foreground">
+                Canonical names from the Models catalog. Register a new model
+                in the Models page first if the one you need isn't listed.
+              </p>
             </div>
             <div className="space-y-2">
               <Label>Model Map</Label>
@@ -766,18 +768,19 @@ export function UpstreamsPage() {
                 Map request model names to upstream model names. Routing uses the original model; the mapped name is sent to the upstream.
               </p>
               {form.model_map.map((entry, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <Input
-                    value={entry.from}
-                    onChange={(e) => {
-                      const updated = [...form.model_map];
-                      updated[i] = { ...entry, from: e.target.value };
-                      setForm((p) => ({ ...p, model_map: updated }));
-                    }}
-                    placeholder="request model"
-                    className="flex-1"
-                  />
-                  <span className="text-muted-foreground text-sm">&rarr;</span>
+                <div key={i} className="flex items-start gap-2">
+                  <div className="flex-1">
+                    <ModelSingleSelect
+                      value={entry.from}
+                      onChange={(next) => {
+                        const updated = [...form.model_map];
+                        updated[i] = { ...entry, from: next };
+                        setForm((p) => ({ ...p, model_map: updated }));
+                      }}
+                      placeholder="catalog name"
+                    />
+                  </div>
+                  <span className="text-muted-foreground text-sm pt-2">&rarr;</span>
                   <Input
                     value={entry.to}
                     onChange={(e) => {

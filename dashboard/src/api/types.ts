@@ -396,6 +396,42 @@ export interface UpstreamGroupMemberDetail extends UpstreamGroupMember {
   upstream?: Upstream;
 }
 
+// --- Model catalog ---
+export interface ModelMetadata {
+  context_window?: number;
+  capabilities?: string[];
+  provider_hint?: string;
+  icon?: string;
+  category?: string;
+  replaced_by?: string;
+}
+
+// Keys match the Go struct in internal/store/models.go ModelReferenceCounts.
+export interface ModelReferenceCounts {
+  upstreams: number;
+  routes: number;
+  plans: number;
+  policies: number;
+  api_keys: number;
+}
+
+export interface Model {
+  name: string;
+  display_name: string;
+  description?: string;
+  aliases: string[];
+  default_credit_rate?: CreditRate;
+  status: string;
+  metadata: ModelMetadata;
+  created_at: string;
+  updated_at: string;
+}
+
+// Shape of one row in GET /api/v1/models — the server embeds ModelReferenceCounts alongside the model fields.
+export interface ModelListRow extends Model {
+  reference_counts: ModelReferenceCounts;
+}
+
 // --- Route (new routing system) ---
 // model_names is the list of canonical catalog names this route matches
 // against the post-alias-resolution model. Replaces the legacy glob-based

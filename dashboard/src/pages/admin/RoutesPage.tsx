@@ -37,6 +37,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { RoutingRoute, UpstreamGroupWithMembers, Project } from "@/api/types";
+import { ModelMultiSelect } from "@/components/shared/ModelCombobox";
 import { Plus, MoreHorizontal, Pencil, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -54,11 +55,11 @@ export function RoutesPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RoutingRoute | null>(null);
-  // model_names is edited in the UI as a comma-separated string; parsed
-  // into a string[] on save. The legacy glob model_pattern is gone — the
-  // backend now expects exact canonical catalog names.
+  // Canonical names picked from the catalog. Aliases submitted by clients
+  // resolve to the canonical name at ingress; only canonical names are
+  // stored here.
   const [form, setForm] = useState({
-    model_names: "",
+    model_names: [] as string[],
     upstream_group_id: "",
     match_priority: 0,
     status: "active",
@@ -84,14 +85,14 @@ export function RoutesPage() {
 
   function openCreate() {
     setEditingId(null);
-    setForm({ model_names: "", upstream_group_id: "", match_priority: 0, status: "active", project_id: "" });
+    setForm({ model_names: [], upstream_group_id: "", match_priority: 0, status: "active", project_id: "" });
     setDialogOpen(true);
   }
 
   function openEdit(route: RoutingRoute) {
     setEditingId(route.id);
     setForm({
-      model_names: (route.model_names ?? []).join(", "),
+      model_names: [...(route.model_names ?? [])],
       upstream_group_id: route.upstream_group_id,
       match_priority: route.match_priority,
       status: route.status,
@@ -101,16 +102,12 @@ export function RoutesPage() {
   }
 
   async function handleSave() {
-    const parsedNames = form.model_names
-      .split(",")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-    if (parsedNames.length === 0) {
+    if (form.model_names.length === 0) {
       toast.error("At least one model name is required");
       return;
     }
     const payload = {
-      model_names: parsedNames,
+      model_names: form.model_names,
       upstream_group_id: form.upstream_group_id,
       match_priority: form.match_priority,
       status: form.status,
@@ -296,14 +293,14 @@ export function RoutesPage() {
             </div>
             <div className="space-y-2">
               <Label>Model Names</Label>
-              <Input
+              <ModelMultiSelect
                 value={form.model_names}
-                onChange={(e) => setForm((p) => ({ ...p, model_names: e.target.value }))}
-                placeholder="claude-opus-4-7, claude-sonnet-4-6"
+                onChange={(next) => setForm((p) => ({ ...p, model_names: next }))}
+                placeholder="Pick one or more canonical models..."
               />
               <p className="text-xs text-muted-foreground">
-                Comma-separated canonical names from the Models catalog. Aliases
-                resolve to canonical at ingress; only canonical names match here.
+                Canonical names from the Models catalog. Aliases resolve to
+                canonical at ingress; only canonical names match here.
               </p>
             </div>
             <div className="space-y-2">
@@ -363,7 +360,7 @@ export function RoutesPage() {
             </Button>
             <Button
               onClick={handleSave}
-              disabled={!form.model_names.trim() || !form.upstream_group_id || isSaving}
+              disabled={form.model_names.length === 0 || !form.upstream_group_id || isSaving}
             >
               {isSaving ? "Saving..." : editingId ? "Save" : "Create"}
             </Button>

@@ -31,6 +31,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { ModelSingleSelect } from "@/components/shared/ModelCombobox";
 import { Plus, MoreHorizontal, Pencil, Trash2, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -580,19 +581,23 @@ export function PlansPage() {
                 </div>
                 {form.model_credit_rates.map((entry, idx) => (
                   <div key={idx} className="space-y-2 rounded border p-3">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-start gap-2">
                       <div className="flex-1 space-y-1">
                         <Label className="text-xs">Model</Label>
-                        <Input
-                          value={entry.model}
-                          onChange={(e) => setModelRate(idx, "model", e.target.value)}
-                          placeholder="claude-sonnet-4"
-                        />
+                        {entry.model === "_default" ? (
+                          <Input value="_default" disabled />
+                        ) : (
+                          <ModelSingleSelect
+                            value={entry.model}
+                            onChange={(next) => setModelRate(idx, "model", next)}
+                            placeholder="Pick a catalog model"
+                          />
+                        )}
                       </div>
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8 shrink-0 mt-5"
+                        className="h-8 w-8 shrink-0 mt-6"
                         onClick={() =>
                           setForm((p) => ({
                             ...p,

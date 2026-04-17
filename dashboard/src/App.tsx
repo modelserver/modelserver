@@ -46,6 +46,9 @@ import { SubscriptionPage } from "@/pages/subscriptions/SubscriptionPage";
 // Admin Plans
 import { PlansPage } from "@/pages/admin/PlansPage";
 
+// Admin Models
+import { ModelsPage } from "@/pages/admin/ModelsPage";
+
 // Admin Routes
 import { RoutesPage } from "@/pages/admin/RoutesPage";
 
@@ -99,6 +102,7 @@ export function App() {
                 <Route path="admin/users" element={<UsersPage />} />
                 <Route path="admin/projects" element={<AdminProjectsPage />} />
                 <Route path="admin/plans" element={<PlansPage />} />
+                <Route path="admin/models" element={<ModelsPage />} />
                 <Route path="admin/requests" element={<AdminRequestsPage />} />
                 <Route path="admin/routes" element={<RoutesPage />} />
                 <Route path="admin/upstreams" element={<UpstreamsPage />} />

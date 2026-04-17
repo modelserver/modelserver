@@ -22,6 +22,7 @@ import {
   Activity,
   Lock,
   KeyRound,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -141,6 +142,9 @@ export function Sidebar() {
             </SidebarLink>
             <SidebarLink to="/admin/requests" icon={FileText}>
               Requests
+            </SidebarLink>
+            <SidebarLink to="/admin/models" icon={Sparkles}>
+              Models
             </SidebarLink>
             <SidebarLink to="/admin/routes" icon={Route}>
               Routes
