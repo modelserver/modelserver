@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/modelserver/modelserver/internal/crypto"
+	"github.com/modelserver/modelserver/internal/modelcatalog"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
@@ -40,7 +41,7 @@ func handleListKeys(st *store.Store) http.HandlerFunc {
 	}
 }
 
-func handleCreateKey(st *store.Store, encKey []byte) http.HandlerFunc {
+func handleCreateKey(st *store.Store, encKey []byte, catalog modelcatalog.Catalog) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "projectID")
 		user := UserFromContext(r.Context())
@@ -55,6 +56,12 @@ func handleCreateKey(st *store.Store, encKey []byte) http.HandlerFunc {
 		}
 		if body.Name == "" {
 			writeError(w, http.StatusBadRequest, "bad_request", "name is required")
+			return
+		}
+
+		allowed, err := catalog.NormalizeNames(body.AllowedModels)
+		if err != nil {
+			writeUnknownModelsError(w, err)
 			return
 		}
 
@@ -83,7 +90,7 @@ func handleCreateKey(st *store.Store, encKey []byte) http.HandlerFunc {
 			Name:          body.Name,
 			Description:   body.Description,
 			Status:        types.APIKeyStatusActive,
-			AllowedModels: body.AllowedModels,
+			AllowedModels: allowed,
 		}
 
 		if err := st.CreateAPIKey(key); err != nil {
@@ -114,7 +121,7 @@ func handleGetKey(st *store.Store) http.HandlerFunc {
 	}
 }
 
-func handleUpdateKey(st *store.Store) http.HandlerFunc {
+func handleUpdateKey(st *store.Store, catalog modelcatalog.Catalog) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		keyID := chi.URLParam(r, "keyID")
 
@@ -136,9 +143,24 @@ func handleUpdateKey(st *store.Store) http.HandlerFunc {
 
 		updates := make(map[string]interface{})
 		for _, field := range []string{"name", "description", "status", "allowed_models"} {
-			if v, ok := body[field]; ok {
-				updates[field] = v
+			v, ok := body[field]
+			if !ok {
+				continue
 			}
+			if field == "allowed_models" {
+				names, ok := toStringSlice(v)
+				if !ok {
+					writeError(w, http.StatusBadRequest, "bad_request", "allowed_models must be an array of strings")
+					return
+				}
+				canonical, err := catalog.NormalizeNames(names)
+				if err != nil {
+					writeUnknownModelsError(w, err)
+					return
+				}
+				v = canonical
+			}
+			updates[field] = v
 		}
 		if len(updates) == 0 {
 			writeError(w, http.StatusBadRequest, "bad_request", "no valid fields to update")

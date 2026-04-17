@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/modelserver/modelserver/internal/collector"
+	"github.com/modelserver/modelserver/internal/modelcatalog"
 	"github.com/modelserver/modelserver/internal/ratelimit"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
@@ -56,6 +57,7 @@ type Executor struct {
 	store       *store.Store
 	collector   *collector.Collector
 	rateLimiter ratelimit.RateLimiter
+	catalog     modelcatalog.Catalog
 	logger      *slog.Logger
 	maxBodySize int64
 }
@@ -66,11 +68,13 @@ func NewExecutor(
 	st *store.Store,
 	coll *collector.Collector,
 	limiter ratelimit.RateLimiter,
+	catalog modelcatalog.Catalog,
 	logger *slog.Logger,
 	maxBodySize int64,
 ) *Executor {
 	return &Executor{
-		router: router,
+		router:  router,
+		catalog: catalog,
 		httpClient: &http.Client{
 			// No timeout here; streaming responses can be long-lived.
 			// Per-upstream timeouts are applied via request context.
@@ -89,6 +93,20 @@ func NewExecutor(
 		logger:      logger,
 		maxBodySize: maxBodySize,
 	}
+}
+
+// catalogDefaultRate returns the catalog's default credit rate for a
+// (canonical) model name, or nil if the catalog is unwired or the model is
+// unknown / has no default set. Consumed by billing's fallback chain.
+func (e *Executor) catalogDefaultRate(canonical string) *types.CreditRate {
+	if e.catalog == nil {
+		return nil
+	}
+	m, ok := e.catalog.Get(canonical)
+	if !ok {
+		return nil
+	}
+	return m.DefaultCreditRate
 }
 
 // Execute proxies a request through the routing pipeline with retry support.
@@ -685,7 +703,7 @@ func (e *Executor) commitStreamingResponse(
 
 		var credits float64
 		if reqCtx.Policy != nil {
-			credits = reqCtx.Policy.ComputeCredits(model, metrics.InputTokens, metrics.OutputTokens, metrics.CacheCreationTokens, metrics.CacheReadTokens)
+			credits = reqCtx.Policy.ComputeCreditsWithDefault(model, e.catalogDefaultRate(model), metrics.InputTokens, metrics.OutputTokens, metrics.CacheCreationTokens, metrics.CacheReadTokens)
 		}
 
 		req := types.Request{
@@ -806,7 +824,7 @@ func (e *Executor) commitNonStreamingResponse(
 
 	var credits float64
 	if reqCtx.Policy != nil {
-		credits = reqCtx.Policy.ComputeCredits(model, metrics.InputTokens, metrics.OutputTokens, metrics.CacheCreationTokens, metrics.CacheReadTokens)
+		credits = reqCtx.Policy.ComputeCreditsWithDefault(model, e.catalogDefaultRate(model), metrics.InputTokens, metrics.OutputTokens, metrics.CacheCreationTokens, metrics.CacheReadTokens)
 	}
 
 	req := types.Request{

@@ -10,10 +10,33 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/modelserver/modelserver/internal/crypto"
+	"github.com/modelserver/modelserver/internal/modelcatalog"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 	"golang.org/x/oauth2/google"
 )
+
+// normalizeModelMapKeys normalizes every key (left side) of a ModelMap to its
+// canonical catalog name; values (upstream-side names) are NOT checked
+// against the catalog because they are the upstream's own model identifier.
+func normalizeModelMapKeys(catalog modelcatalog.Catalog, in map[string]string) (map[string]string, error) {
+	if len(in) == 0 {
+		return in, nil
+	}
+	keys := make([]string, 0, len(in))
+	for k := range in {
+		keys = append(keys, k)
+	}
+	canonical, err := catalog.NormalizeNames(keys)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(in))
+	for i, k := range keys {
+		out[canonical[i]] = in[k]
+	}
+	return out, nil
+}
 
 func handleListUpstreams(st *store.Store, _ []byte) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -30,7 +53,7 @@ func handleListUpstreams(st *store.Store, _ []byte) http.HandlerFunc {
 	}
 }
 
-func handleCreateUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
+func handleCreateUpstream(st *store.Store, encKey []byte, catalog modelcatalog.Catalog) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Provider        string                   `json:"provider"`
@@ -55,6 +78,17 @@ func handleCreateUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 			return
 		}
 
+		supported, err := catalog.NormalizeNames(body.SupportedModels)
+		if err != nil {
+			writeUnknownModelsError(w, err)
+			return
+		}
+		modelMap, err := normalizeModelMapKeys(catalog, body.ModelMap)
+		if err != nil {
+			writeUnknownModelsError(w, err)
+			return
+		}
+
 		encrypted, err := crypto.Encrypt(encKey, []byte(body.APIKey))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to encrypt API key")
@@ -71,8 +105,8 @@ func handleCreateUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 			Name:            body.Name,
 			BaseURL:         body.BaseURL,
 			APIKeyEncrypted: encrypted,
-			SupportedModels: body.SupportedModels,
-			ModelMap:        body.ModelMap,
+			SupportedModels: supported,
+			ModelMap:        modelMap,
 			Weight:          weight,
 			MaxConcurrent:   body.MaxConcurrent,
 			TestModel:       body.TestModel,
@@ -101,7 +135,7 @@ func handleGetUpstream(st *store.Store) http.HandlerFunc {
 	}
 }
 
-func handleUpdateUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
+func handleUpdateUpstream(st *store.Store, encKey []byte, catalog modelcatalog.Catalog) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		upstreamID := chi.URLParam(r, "upstreamID")
 		var body map[string]interface{}
@@ -116,9 +150,47 @@ func handleUpdateUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 			"weight", "max_concurrent", "test_model", "health_check",
 			"dial_timeout", "read_timeout", "status",
 		} {
-			if v, ok := body[field]; ok {
-				updates[field] = v
+			v, ok := body[field]
+			if !ok {
+				continue
 			}
+			switch field {
+			case "supported_models":
+				names, ok := toStringSlice(v)
+				if !ok {
+					writeError(w, http.StatusBadRequest, "bad_request", "supported_models must be an array of strings")
+					return
+				}
+				canonical, err := catalog.NormalizeNames(names)
+				if err != nil {
+					writeUnknownModelsError(w, err)
+					return
+				}
+				v = canonical
+			case "model_map":
+				raw, ok := v.(map[string]interface{})
+				if !ok {
+					writeError(w, http.StatusBadRequest, "bad_request", "model_map must be an object")
+					return
+				}
+				in := make(map[string]string, len(raw))
+				for k, val := range raw {
+					s, ok := val.(string)
+					if !ok {
+						writeError(w, http.StatusBadRequest, "bad_request", "model_map values must be strings")
+						return
+					}
+					in[k] = s
+				}
+				normalized, err := normalizeModelMapKeys(catalog, in)
+				if err != nil {
+					writeUnknownModelsError(w, err)
+					return
+				}
+				mapJSON, _ := json.Marshal(normalized)
+				v = mapJSON
+			}
+			updates[field] = v
 		}
 
 		// Handle API key re-encryption if provided.

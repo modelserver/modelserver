@@ -2,14 +2,17 @@ package types
 
 import "time"
 
-// Route maps a model pattern to an upstream group (nginx: location block).
+// Route maps a set of canonical model names to an upstream group
+// (nginx: location block). The route matches a request when its
+// canonical model name (post-alias-resolution) appears in ModelNames.
+// Ordering among competing routes is given by MatchPriority.
 type Route struct {
 	ID              string            `json:"id"`
 	ProjectID       string            `json:"project_id,omitempty"` // "" = global route
-	ModelPattern    string            `json:"model_pattern"`        // Glob pattern: "claude-*", "gpt-4o", "*"
-	UpstreamGroupID string            `json:"upstream_group_id"`    // Which upstream group to use
-	MatchPriority   int               `json:"match_priority"`       // Higher = matched first
-	Conditions      map[string]string `json:"conditions,omitempty"` // Extra match conditions for future use (e.g. "streaming": "true", "thinking": "enabled")
+	ModelNames      []string          `json:"model_names"`          // Canonical model names only (no aliases, no globs)
+	UpstreamGroupID string            `json:"upstream_group_id"`
+	MatchPriority   int               `json:"match_priority"` // Higher = matched first
+	Conditions      map[string]string `json:"conditions,omitempty"`
 	Status          string            `json:"status"`
 	CreatedAt       time.Time         `json:"created_at"`
 	UpdatedAt       time.Time         `json:"updated_at"`

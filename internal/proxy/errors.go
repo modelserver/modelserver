@@ -75,6 +75,77 @@ func httpStatusToGRPCStatus(status int) string {
 	}
 }
 
+// Ingress-style constants used by writeUnsupportedModelError to shape the
+// 400 response so that whichever client SDK made the call parses it the same
+// way as other errors from that endpoint.
+const (
+	IngressAnthropic = "anthropic"
+	IngressOpenAI    = "openai"
+	IngressGemini    = "gemini"
+)
+
+// writeUnsupportedModelError emits a 400 "unsupported_model" response in the
+// shape of the ingress provider. The suggestions slice is carried verbatim —
+// callers pass it in already ranked and capped.
+func writeUnsupportedModelError(w http.ResponseWriter, ingress, rawModel string, suggestions []string, reason string) {
+	message := "unsupported model: " + rawModel
+	if reason == "disabled" {
+		message = "model is disabled: " + rawModel
+	}
+	if len(suggestions) > 0 {
+		message += " (did you mean: " + joinWithCommas(suggestions) + "?)"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+
+	switch ingress {
+	case IngressOpenAI:
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]interface{}{
+				"type":        "unsupported_model",
+				"code":        "unsupported_model",
+				"message":     message,
+				"suggestions": suggestions,
+			},
+		})
+	case IngressGemini:
+		details := []map[string]interface{}{{
+			"@type":       "type.googleapis.com/google.rpc.BadRequest",
+			"suggestions": suggestions,
+		}}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]interface{}{
+				"code":    http.StatusBadRequest,
+				"status":  "INVALID_ARGUMENT",
+				"message": message,
+				"details": details,
+			},
+		})
+	default:
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"type": "error",
+			"error": map[string]interface{}{
+				"type":        "unsupported_model",
+				"message":     message,
+				"suggestions": suggestions,
+			},
+		})
+	}
+}
+
+// joinWithCommas is a tiny local helper to avoid pulling in strings.Join for
+// one call in the error path.
+func joinWithCommas(ss []string) string {
+	out := ""
+	for i, s := range ss {
+		if i > 0 {
+			out += ", "
+		}
+		out += s
+	}
+	return out
+}
+
 func httpStatusToErrorType(status int) string {
 	switch status {
 	case http.StatusBadRequest:

@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/modelserver/modelserver/internal/collector"
+	"github.com/modelserver/modelserver/internal/modelcatalog"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 	"github.com/tidwall/sjson"
@@ -24,20 +25,43 @@ type Handler struct {
 	router      *Router
 	store       *store.Store
 	collector   *collector.Collector
+	catalog     modelcatalog.Catalog
 	logger      *slog.Logger
 	maxBodySize int64
 }
 
 // NewHandler creates a new proxy handler.
-func NewHandler(executor *Executor, router *Router, st *store.Store, coll *collector.Collector, logger *slog.Logger, maxBodySize int64) *Handler {
+func NewHandler(executor *Executor, router *Router, st *store.Store, coll *collector.Collector, catalog modelcatalog.Catalog, logger *slog.Logger, maxBodySize int64) *Handler {
 	return &Handler{
 		executor:    executor,
 		router:      router,
 		store:       st,
 		collector:   coll,
+		catalog:     catalog,
 		logger:      logger,
 		maxBodySize: maxBodySize,
 	}
+}
+
+// resolveModel looks up a raw client-supplied model name in the catalog.
+// On success it returns the canonical name. On unknown or disabled the
+// response has already been written in the shape of the ingress provider
+// and the caller must return. `ingress` selects the error envelope.
+func (h *Handler) resolveModel(w http.ResponseWriter, rawModel, ingress string) (string, bool) {
+	if h.catalog == nil {
+		return rawModel, true
+	}
+	m, ok := h.catalog.Lookup(rawModel)
+	if !ok {
+		suggestions := modelcatalog.Suggest(h.catalog, strings.ToLower(rawModel), 2, 3)
+		writeUnsupportedModelError(w, ingress, rawModel, suggestions, "unknown")
+		return "", false
+	}
+	if m.Status == types.ModelStatusDisabled {
+		writeUnsupportedModelError(w, ingress, rawModel, nil, "disabled")
+		return "", false
+	}
+	return m.Name, true
 }
 
 // HandleMessages proxies Anthropic /v1/messages requests.
@@ -125,7 +149,17 @@ func (h *Handler) HandleGemini(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
-	if len(apiKey.AllowedModels) > 0 && !modelInList(apiKey.AllowedModels, model) {
+	// Catalog lookup: unknown/disabled → 400 unsupported_model in Gemini shape.
+	// The canonical name flows downstream through reqCtx.Model; the upstream
+	// URL is built by gemini.go from that context value, so we don't need to
+	// rewrite r.URL.Path here.
+	canonical, ok := h.resolveModel(w, model, IngressGemini)
+	if !ok {
+		return
+	}
+	model = canonical
+
+	if len(apiKey.AllowedModels) > 0 && !modelInList(apiKey.AllowedModels, canonical) {
 		writeGeminiError(w, http.StatusForbidden, "model not allowed for this API key")
 		return
 	}
@@ -208,7 +242,19 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, all
 	}
 	json.Unmarshal(bodyBytes, &reqShape)
 
-	if len(apiKey.AllowedModels) > 0 && !modelInList(apiKey.AllowedModels, reqShape.Model) {
+	ingress := ingressForProviders(allowedProviders)
+	canonical, ok := h.resolveModel(w, reqShape.Model, ingress)
+	if !ok {
+		return
+	}
+	if canonical != reqShape.Model {
+		bodyBytes, _ = sjson.SetBytes(bodyBytes, "model", canonical)
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		r.ContentLength = int64(len(bodyBytes))
+		reqShape.Model = canonical
+	}
+
+	if len(apiKey.AllowedModels) > 0 && !modelInList(apiKey.AllowedModels, canonical) {
 		writeProxyError(w, http.StatusForbidden, "model not allowed for this API key")
 		return
 	}
@@ -298,7 +344,18 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	json.Unmarshal(bodyBytes, &reqShape)
 
-	if len(apiKey.AllowedModels) > 0 && !modelInList(apiKey.AllowedModels, reqShape.Model) {
+	canonical, ok := h.resolveModel(w, reqShape.Model, IngressAnthropic)
+	if !ok {
+		return
+	}
+	if canonical != reqShape.Model {
+		bodyBytes, _ = sjson.SetBytes(bodyBytes, "model", canonical)
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		r.ContentLength = int64(len(bodyBytes))
+		reqShape.Model = canonical
+	}
+
+	if len(apiKey.AllowedModels) > 0 && !modelInList(apiKey.AllowedModels, canonical) {
 		writeProxyError(w, http.StatusForbidden, "model not allowed for this API key")
 		return
 	}
@@ -378,4 +435,21 @@ func modelInList(list []string, model string) bool {
 		}
 	}
 	return false
+}
+
+// ingressForProviders maps the allowlist of upstream provider types (set per
+// endpoint in HandleMessages / HandleResponses / HandleChatCompletions) back
+// to the ingress family whose error envelope clients expect. Body-based
+// endpoints that accept Anthropic-compatible bodies return IngressAnthropic;
+// OpenAI-flavoured endpoints return IngressOpenAI.
+func ingressForProviders(allowed []string) string {
+	for _, p := range allowed {
+		switch p {
+		case types.ProviderOpenAI, types.ProviderVertexOpenAI:
+			return IngressOpenAI
+		case types.ProviderGemini, types.ProviderVertexGoogle:
+			return IngressGemini
+		}
+	}
+	return IngressAnthropic
 }

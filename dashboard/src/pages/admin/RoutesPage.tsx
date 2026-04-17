@@ -37,6 +37,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { RoutingRoute, UpstreamGroupWithMembers, Project } from "@/api/types";
+import { ModelMultiSelect } from "@/components/shared/ModelCombobox";
 import { Plus, MoreHorizontal, Pencil, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -54,8 +55,11 @@ export function RoutesPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RoutingRoute | null>(null);
+  // Canonical names picked from the catalog. Aliases submitted by clients
+  // resolve to the canonical name at ingress; only canonical names are
+  // stored here.
   const [form, setForm] = useState({
-    model_pattern: "",
+    model_names: [] as string[],
     upstream_group_id: "",
     match_priority: 0,
     status: "active",
@@ -81,14 +85,14 @@ export function RoutesPage() {
 
   function openCreate() {
     setEditingId(null);
-    setForm({ model_pattern: "", upstream_group_id: "", match_priority: 0, status: "active", project_id: "" });
+    setForm({ model_names: [], upstream_group_id: "", match_priority: 0, status: "active", project_id: "" });
     setDialogOpen(true);
   }
 
   function openEdit(route: RoutingRoute) {
     setEditingId(route.id);
     setForm({
-      model_pattern: route.model_pattern,
+      model_names: [...(route.model_names ?? [])],
       upstream_group_id: route.upstream_group_id,
       match_priority: route.match_priority,
       status: route.status,
@@ -98,12 +102,23 @@ export function RoutesPage() {
   }
 
   async function handleSave() {
+    if (form.model_names.length === 0) {
+      toast.error("At least one model name is required");
+      return;
+    }
+    const payload = {
+      model_names: form.model_names,
+      upstream_group_id: form.upstream_group_id,
+      match_priority: form.match_priority,
+      status: form.status,
+      project_id: form.project_id,
+    };
     try {
       if (editingId) {
-        await updateRoute.mutateAsync({ id: editingId, ...form });
+        await updateRoute.mutateAsync({ id: editingId, ...payload });
         toast.success("Route updated");
       } else {
-        await createRoute.mutateAsync(form);
+        await createRoute.mutateAsync(payload);
         toast.success("Route created");
       }
       setDialogOpen(false);
@@ -134,8 +149,10 @@ export function RoutesPage() {
       className: "w-24",
     },
     {
-      header: "Model Pattern",
-      accessor: (r) => <code className="text-sm">{r.model_pattern}</code>,
+      header: "Model Names",
+      accessor: (r) => (
+        <code className="text-sm">{(r.model_names ?? []).join(", ")}</code>
+      ),
     },
     {
       header: "Upstream Group",
@@ -208,7 +225,7 @@ export function RoutesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Routes"
-        description="Route model requests to upstream groups based on pattern matching (superadmin only)"
+        description="Route requests to upstream groups by canonical model name (superadmin only)"
         actions={
           <Button onClick={openCreate}>
             <Plus className="mr-2 h-4 w-4" />
@@ -275,14 +292,15 @@ export function RoutesPage() {
               </p>
             </div>
             <div className="space-y-2">
-              <Label>Model Pattern</Label>
-              <Input
-                value={form.model_pattern}
-                onChange={(e) => setForm((p) => ({ ...p, model_pattern: e.target.value }))}
-                placeholder="claude-sonnet-*"
+              <Label>Model Names</Label>
+              <ModelMultiSelect
+                value={form.model_names}
+                onChange={(next) => setForm((p) => ({ ...p, model_names: next }))}
+                placeholder="Pick one or more canonical models..."
               />
               <p className="text-xs text-muted-foreground">
-                Supports glob patterns: * matches any sequence, ? matches a single character
+                Canonical names from the Models catalog. Aliases resolve to
+                canonical at ingress; only canonical names match here.
               </p>
             </div>
             <div className="space-y-2">
@@ -342,7 +360,7 @@ export function RoutesPage() {
             </Button>
             <Button
               onClick={handleSave}
-              disabled={!form.model_pattern || !form.upstream_group_id || isSaving}
+              disabled={form.model_names.length === 0 || !form.upstream_group_id || isSaving}
             >
               {isSaving ? "Saving..." : editingId ? "Save" : "Create"}
             </Button>
@@ -356,7 +374,7 @@ export function RoutesPage() {
           <DialogHeader>
             <DialogTitle>Delete Route</DialogTitle>
             <DialogDescription>
-              Delete the route for pattern "{deleteTarget?.model_pattern}"?
+              Delete the route for models "{(deleteTarget?.model_names ?? []).join(", ")}"?
               Requests will fall back to default upstream group selection.
             </DialogDescription>
           </DialogHeader>

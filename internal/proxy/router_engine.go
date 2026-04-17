@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/modelserver/modelserver/internal/crypto"
+	"github.com/modelserver/modelserver/internal/modelcatalog"
 	"github.com/modelserver/modelserver/internal/proxy/lb"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
@@ -27,15 +28,6 @@ type sessionBinding struct {
 type sessionKey struct {
 	sessionID string
 	model     string
-}
-
-// matchModel checks if a model name matches a glob pattern.
-func matchModel(pattern, model string) bool {
-	if pattern == "*" {
-		return true
-	}
-	matched, _ := filepath.Match(pattern, model)
-	return matched
 }
 
 // Router is the central routing engine (nginx: the config evaluator).
@@ -57,6 +49,8 @@ type Router struct {
 	sessionTTL time.Duration
 
 	vertexTokenManager *VertexTokenManager
+
+	catalog modelcatalog.Catalog // for ActiveModels and status checks
 
 	logger   *slog.Logger
 	oauthMgr *OAuthTokenManager
@@ -81,6 +75,8 @@ type SelectedUpstream struct {
 }
 
 // NewRouter creates a new routing engine from the given configuration.
+// The catalog is used by ActiveModels for status filtering; callers can pass
+// nil during tests that don't exercise that surface.
 func NewRouter(
 	upstreams []types.Upstream,
 	groups []store.UpstreamGroupWithMembers,
@@ -89,11 +85,13 @@ func NewRouter(
 	logger *slog.Logger,
 	sessionTTL time.Duration,
 	oauthMgr *OAuthTokenManager,
+	catalog modelcatalog.Catalog,
 ) *Router {
 	r := &Router{
 		sessionTTL: sessionTTL,
 		logger:     logger,
 		oauthMgr:   oauthMgr,
+		catalog:    catalog,
 	}
 
 	// Create the Vertex AI token manager.
@@ -240,7 +238,7 @@ func (r *Router) Match(projectID, model string) (*resolvedGroup, error) {
 		if route.Status != "active" {
 			continue
 		}
-		if route.ProjectID == projectID && matchModel(route.ModelPattern, model) {
+		if route.ProjectID == projectID && slices.Contains(route.ModelNames, model) {
 			if g, ok := r.groups[route.UpstreamGroupID]; ok {
 				return g, nil
 			}
@@ -252,7 +250,7 @@ func (r *Router) Match(projectID, model string) (*resolvedGroup, error) {
 		if route.Status != "active" {
 			continue
 		}
-		if route.ProjectID == "" && matchModel(route.ModelPattern, model) {
+		if route.ProjectID == "" && slices.Contains(route.ModelNames, model) {
 			if g, ok := r.groups[route.UpstreamGroupID]; ok {
 				return g, nil
 			}
@@ -554,14 +552,14 @@ func (r *Router) HealthChecker() *lb.HealthChecker {
 	return r.healthChecker
 }
 
-// ActiveModels returns models that are actually routable — i.e. supported by
-// an active upstream that belongs to a group referenced by an active route,
-// AND the model name matches that route's pattern.
+// ActiveModels returns canonical names that are actually routable — i.e.
+// the catalog entry is active AND at least one active route lists the name
+// AND at least one active upstream in that route's group lists the name in
+// supported_models. Output contract is unchanged for /v1/models.
 func (r *Router) ActiveModels() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	// Collect candidate models from groups referenced by active routes.
 	seen := make(map[string]bool)
 	var models []string
 	for _, route := range r.routes {
@@ -572,16 +570,31 @@ func (r *Router) ActiveModels() []string {
 		if !ok {
 			continue
 		}
-		for _, m := range g.members {
-			if m.upstream.Status != types.UpstreamStatusActive {
+		for _, name := range route.ModelNames {
+			if seen[name] {
 				continue
 			}
-			for _, model := range m.upstream.SupportedModels {
-				if !seen[model] && matchModel(route.ModelPattern, model) {
-					seen[model] = true
-					models = append(models, model)
+			if r.catalog != nil {
+				m, ok := r.catalog.Get(name)
+				if !ok || m.Status != types.ModelStatusActive {
+					continue
 				}
 			}
+			supported := false
+			for _, mem := range g.members {
+				if mem.upstream.Status != types.UpstreamStatusActive {
+					continue
+				}
+				if slices.Contains(mem.upstream.SupportedModels, name) {
+					supported = true
+					break
+				}
+			}
+			if !supported {
+				continue
+			}
+			seen[name] = true
+			models = append(models, name)
 		}
 	}
 	return models

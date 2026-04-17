@@ -19,6 +19,7 @@ import (
 	"github.com/modelserver/modelserver/internal/collector"
 	"github.com/modelserver/modelserver/internal/config"
 	"github.com/modelserver/modelserver/internal/crypto"
+	"github.com/modelserver/modelserver/internal/modelcatalog"
 	"github.com/modelserver/modelserver/internal/proxy"
 	"github.com/modelserver/modelserver/internal/ratelimit"
 	"github.com/modelserver/modelserver/internal/store"
@@ -112,7 +113,7 @@ func main() {
 	coll.Start()
 	defer coll.Stop()
 
-	// Load upstreams, groups, and routes for the new routing engine.
+	// Load upstreams, groups, routes, and the model catalog for the routing engine.
 	upstreams, err := st.ListUpstreams()
 	if err != nil {
 		log.Fatalf("failed to load upstreams: %v", err)
@@ -128,14 +129,20 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to load routes: %v", err)
 	}
+	initialModels, err := st.ListModels()
+	if err != nil {
+		log.Fatalf("failed to load model catalog: %v", err)
+	}
+	catalog := modelcatalog.New(initialModels)
 
 	oauthMgr := proxy.NewOAuthTokenManager(st, encryptionKey, logger)
-	router := proxy.NewRouter(upstreams, groups, routingRoutes, encryptionKey, logger, cfg.Trace.SessionTTL, oauthMgr)
+	router := proxy.NewRouter(upstreams, groups, routingRoutes, encryptionKey, logger, cfg.Trace.SessionTTL, oauthMgr, catalog)
 	router.StartSessionCleanup(10 * time.Minute)
 	// Start health checker.
 	router.HealthChecker().Start(context.Background())
 
-	// Periodically reload routing configuration.
+	// Periodically reload routing configuration and the catalog together.
+	// Both surfaces are independent atomic swaps — no cross-component lock.
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
@@ -154,6 +161,11 @@ func main() {
 			if err != nil {
 				logger.Error("failed to reload routes", "error", err)
 				continue
+			}
+			if ms, err := st.ListModels(); err != nil {
+				logger.Error("failed to reload models", "error", err)
+			} else {
+				catalog.Swap(ms)
 			}
 			router.Reload(u, g, rt, encryptionKey)
 		}
@@ -175,8 +187,8 @@ func main() {
 	// Initialize rate limiter.
 	rateLimiter := ratelimit.NewCompositeRateLimiter(st, logger)
 
-	executor := proxy.NewExecutor(router, st, coll, rateLimiter, logger, cfg.Server.MaxRequestBody)
-	proxyHandler := proxy.NewHandler(executor, router, st, coll, logger, cfg.Server.MaxRequestBody)
+	executor := proxy.NewExecutor(router, st, coll, rateLimiter, catalog, logger, cfg.Server.MaxRequestBody)
+	proxyHandler := proxy.NewHandler(executor, router, st, coll, catalog, logger, cfg.Server.MaxRequestBody)
 
 	// --- Proxy server ---
 	proxyRouter := chi.NewRouter()
@@ -245,7 +257,7 @@ func main() {
 	jwtMgr := auth.NewJWTManager(cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL)
 
 	// Mount admin API routes.
-	admin.MountRoutes(adminRouter, st, cfg, encryptionKey, jwtMgr)
+	admin.MountRoutes(adminRouter, st, cfg, encryptionKey, jwtMgr, catalog)
 
 	adminServer := &http.Server{
 		Addr:    cfg.Server.AdminAddr,

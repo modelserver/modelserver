@@ -16,11 +16,15 @@ func (s *Store) CreateRoute(r *types.Route) error {
 	if r.Conditions == nil {
 		conditionsJSON = []byte("{}")
 	}
+	modelNames := r.ModelNames
+	if modelNames == nil {
+		modelNames = []string{}
+	}
 	return s.pool.QueryRow(context.Background(), `
-		INSERT INTO routes (project_id, model_pattern, upstream_group_id, match_priority, conditions, status)
+		INSERT INTO routes (project_id, model_names, upstream_group_id, match_priority, conditions, status)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, created_at, updated_at`,
-		nullString(r.ProjectID), r.ModelPattern, r.UpstreamGroupID,
+		nullString(r.ProjectID), modelNames, r.UpstreamGroupID,
 		r.MatchPriority, conditionsJSON, r.Status,
 	).Scan(&r.ID, &r.CreatedAt, &r.UpdatedAt)
 }
@@ -30,10 +34,10 @@ func (s *Store) GetRouteByID(id string) (*types.Route, error) {
 	r := &types.Route{}
 	var conditionsRaw []byte
 	err := s.pool.QueryRow(context.Background(), `
-		SELECT id, COALESCE(project_id::text, ''), model_pattern, upstream_group_id,
+		SELECT id, COALESCE(project_id::text, ''), model_names, upstream_group_id,
 			match_priority, conditions, status, created_at, updated_at
 		FROM routes WHERE id = $1`, id,
-	).Scan(&r.ID, &r.ProjectID, &r.ModelPattern, &r.UpstreamGroupID,
+	).Scan(&r.ID, &r.ProjectID, &r.ModelNames, &r.UpstreamGroupID,
 		&r.MatchPriority, &conditionsRaw, &r.Status, &r.CreatedAt, &r.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
@@ -48,7 +52,7 @@ func (s *Store) GetRouteByID(id string) (*types.Route, error) {
 // ListRoutes returns all routes ordered by match_priority descending.
 func (s *Store) ListRoutes() ([]types.Route, error) {
 	rows, err := s.pool.Query(context.Background(), `
-		SELECT id, COALESCE(project_id::text, ''), model_pattern, upstream_group_id,
+		SELECT id, COALESCE(project_id::text, ''), model_names, upstream_group_id,
 			match_priority, conditions, status, created_at, updated_at
 		FROM routes ORDER BY match_priority DESC`)
 	if err != nil {
@@ -79,7 +83,7 @@ func (s *Store) ListRoutesPaginated(p types.PaginationParams) ([]types.Route, in
 	}
 
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
-		SELECT id, COALESCE(project_id::text, ''), model_pattern, upstream_group_id,
+		SELECT id, COALESCE(project_id::text, ''), model_names, upstream_group_id,
 			match_priority, conditions, status, created_at, updated_at
 		FROM routes ORDER BY %s %s LIMIT $1 OFFSET $2`,
 		sanitizeSort(p.Sort, "match_priority"), sanitizeOrder(p.Order)),
@@ -109,7 +113,7 @@ func (s *Store) ListRoutesPaginated(p types.PaginationParams) ([]types.Route, in
 // routes are ordered by match_priority descending.
 func (s *Store) ListRoutesForProject(projectID string) ([]types.Route, error) {
 	rows, err := s.pool.Query(context.Background(), `
-		SELECT id, COALESCE(project_id::text, ''), model_pattern, upstream_group_id,
+		SELECT id, COALESCE(project_id::text, ''), model_names, upstream_group_id,
 			match_priority, conditions, status, created_at, updated_at
 		FROM routes
 		WHERE (project_id = $1 OR project_id IS NULL) AND status = 'active'
@@ -157,7 +161,7 @@ func (s *Store) DeleteRoute(id string) error {
 func scanRoute(rows pgx.Rows) (*types.Route, error) {
 	r := &types.Route{}
 	var conditionsRaw []byte
-	if err := rows.Scan(&r.ID, &r.ProjectID, &r.ModelPattern, &r.UpstreamGroupID,
+	if err := rows.Scan(&r.ID, &r.ProjectID, &r.ModelNames, &r.UpstreamGroupID,
 		&r.MatchPriority, &conditionsRaw, &r.Status, &r.CreatedAt, &r.UpdatedAt); err != nil {
 		return nil, err
 	}
