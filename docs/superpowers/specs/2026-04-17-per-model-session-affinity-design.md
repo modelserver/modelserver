@@ -96,10 +96,10 @@ to "either empty" means:
 
 ### Cleanup goroutine
 
-`StartSessionCleanup` is unchanged in shape. The only edit is the type
-assertion inside the `Range` callback: the `key any` is now a `sessionKey`,
-not a `string`. The eviction predicate (`time.Since(usedAt) > sessionTTL`)
-is identical.
+`StartSessionCleanup` requires no edit. Its `Range` callback already takes
+`key any` and feeds it back to `sessionMap.Delete(key)`; the only type
+assertion is on the value (`value.(sessionBinding)`), which is unchanged.
+The eviction predicate (`time.Since(usedAt) > sessionTTL`) is identical.
 
 ### Comments to refresh
 
