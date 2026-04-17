@@ -158,7 +158,7 @@ func TestSelectWithRetry_ExpiredBindingIsReplaced(t *testing.T) {
 	r, g := newTestRouterForSession(t)
 
 	// Pre-seed an expired binding pointing at up-a.
-	r.sessionMap.Store("sess-expired", sessionBinding{
+	r.sessionMap.Store(sessionKey{sessionID: "sess-expired", model: "claude-sonnet"}, sessionBinding{
 		upstreamID: "up-a",
 		usedAt:     time.Now().Add(-2 * time.Hour), // older than sessionTTL (1h)
 	})
@@ -169,7 +169,7 @@ func TestSelectWithRetry_ExpiredBindingIsReplaced(t *testing.T) {
 	}
 	// The primary can be any upstream, but whatever it is must now be the
 	// binding — not the expired up-a (unless the balancer re-picked up-a).
-	val, ok := r.sessionMap.Load("sess-expired")
+	val, ok := r.sessionMap.Load(sessionKey{sessionID: "sess-expired", model: "claude-sonnet"})
 	if !ok {
 		t.Fatal("binding was not re-established")
 	}
@@ -212,7 +212,7 @@ func TestSelectWithRetry_BoundUpstreamUnavailableFallsThrough(t *testing.T) {
 	}
 
 	// Binding points at the disabled upstream.
-	r.sessionMap.Store("sess-stale", sessionBinding{
+	r.sessionMap.Store(sessionKey{sessionID: "sess-stale", model: "claude-sonnet"}, sessionBinding{
 		upstreamID: "up-a",
 		usedAt:     time.Now(),
 	})
@@ -224,12 +224,74 @@ func TestSelectWithRetry_BoundUpstreamUnavailableFallsThrough(t *testing.T) {
 	if sel[0].Upstream.ID == "up-a" {
 		t.Fatalf("disabled upstream was selected")
 	}
-	val, ok := r.sessionMap.Load("sess-stale")
+	val, ok := r.sessionMap.Load(sessionKey{sessionID: "sess-stale", model: "claude-sonnet"})
 	if !ok {
 		t.Fatal("binding was not re-established")
 	}
 	b := val.(sessionBinding)
 	if b.upstreamID != sel[0].Upstream.ID {
 		t.Fatalf("binding %q does not match new primary %q", b.upstreamID, sel[0].Upstream.ID)
+	}
+}
+
+// TestSelectWithRetry_PerModelBindingsCoexist verifies that two distinct
+// models inside the same session establish independent bindings, each
+// stable across repeated calls. This is the per-model analogue of
+// TestSelectWithRetry_SessionStickyWithoutExecutor.
+func TestSelectWithRetry_PerModelBindingsCoexist(t *testing.T) {
+	r, g := newTestRouterForSession(t)
+	sessID := "sess-pair"
+
+	a := r.SelectWithRetry(context.Background(), g, sessID, "model-A")
+	if len(a) == 0 {
+		t.Fatal("no candidates for model-A")
+	}
+	pinnedA := a[0].Upstream.ID
+
+	b := r.SelectWithRetry(context.Background(), g, sessID, "model-B")
+	if len(b) == 0 {
+		t.Fatal("no candidates for model-B")
+	}
+	pinnedB := b[0].Upstream.ID
+
+	for i := 0; i < 20; i++ {
+		got := r.SelectWithRetry(context.Background(), g, sessID, "model-A")
+		if len(got) == 0 || got[0].Upstream.ID != pinnedA {
+			t.Fatalf("iter %d: model-A pin drifted to %v", i, got)
+		}
+		got = r.SelectWithRetry(context.Background(), g, sessID, "model-B")
+		if len(got) == 0 || got[0].Upstream.ID != pinnedB {
+			t.Fatalf("iter %d: model-B pin drifted to %v", i, got)
+		}
+	}
+}
+
+// TestSelectWithRetry_DifferentModelsSameSessionDoNotShareBinding asserts
+// that a (session, model-A) pin does NOT drag (session, model-B) onto the
+// same upstream. With keying by sessionID alone, model-B would always
+// inherit model-A's binding and the two would be 100% identical across
+// every trial. With per-(session, model) keying, the balancer is free to
+// pick independently for each model.
+func TestSelectWithRetry_DifferentModelsSameSessionDoNotShareBinding(t *testing.T) {
+	const trials = 200
+	differCount := 0
+	for i := 0; i < trials; i++ {
+		r, g := newTestRouterForSession(t)
+		sessID := "sess-cross"
+
+		a := r.SelectWithRetry(context.Background(), g, sessID, "model-A")
+		b := r.SelectWithRetry(context.Background(), g, sessID, "model-B")
+		if len(a) == 0 || len(b) == 0 {
+			t.Fatalf("iter %d: no candidates", i)
+		}
+		if a[0].Upstream.ID != b[0].Upstream.ID {
+			differCount++
+		}
+	}
+	// With three equal-weight upstreams, expected ~67% trials differ. With
+	// the buggy "shared binding" semantics, differCount is exactly 0.
+	if differCount == 0 {
+		t.Fatalf("expected model-A and model-B to differ in some trials; "+
+			"got 0/%d (suggests shared-binding regression)", trials)
 	}
 }

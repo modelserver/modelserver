@@ -15,10 +15,18 @@ import (
 	"github.com/modelserver/modelserver/internal/types"
 )
 
-// sessionBinding tracks which upstream a session (trace) is pinned to.
+// sessionBinding tracks which upstream a (session, model) pair is pinned to.
 type sessionBinding struct {
 	upstreamID string
 	usedAt     time.Time
+}
+
+// sessionKey buckets affinity by (sessionID, model): same pair pins to the
+// same upstream. Using a struct (rather than a concatenated string) is
+// type-safe and keeps the two-axis intent visible.
+type sessionKey struct {
+	sessionID string
+	model     string
 }
 
 // matchModel checks if a model name matches a glob pattern.
@@ -45,7 +53,7 @@ type Router struct {
 	connTracker    *lb.ConnectionTracker
 	metrics        *lb.UpstreamMetrics
 
-	sessionMap sync.Map // sessionID -> sessionBinding
+	sessionMap sync.Map // sessionKey -> sessionBinding
 	sessionTTL time.Duration
 
 	vertexTokenManager *VertexTokenManager
@@ -342,15 +350,17 @@ func (r *Router) SelectWithRetry(ctx context.Context, group *resolvedGroup, sess
 		balancer = lb.NewBalancer(group.group.LBPolicy, r.connTracker)
 	}
 
-	// 7. Session affinity. Concurrent requests with the same sessionID must
-	//    converge on the same primary upstream. Writing the binding only after
-	//    the upstream responds (as the executor does via BindSession) leaves a
-	//    multi-second window in which parallel requests all observe "no
-	//    binding" and independently balance-pick — silently splitting one
-	//    session across multiple upstreams. Claim the binding here, atomically,
-	//    so that losers in the concurrent race read and follow the winner.
-	if sessionID != "" {
-		if primary := r.pinSessionToUpstream(sessionID, candidates, balancer); primary != nil {
+	// 7. Session affinity. Concurrent requests with the same (sessionID, model)
+	//    must converge on the same primary upstream. Writing the binding only
+	//    after the upstream responds (as the executor does via BindSession)
+	//    leaves a multi-second window in which parallel requests all observe
+	//    "no binding" and independently balance-pick — silently splitting one
+	//    (session, model) across multiple upstreams. Claim the binding here,
+	//    atomically, so that losers in the concurrent race read and follow
+	//    the winner.
+	if sessionID != "" && model != "" {
+		key := sessionKey{sessionID: sessionID, model: model}
+		if primary := r.pinSessionToUpstream(key, candidates, balancer); primary != nil {
 			return r.resultWithPrimary(primary, candidates, balancer, n)
 		}
 		// pinSessionToUpstream returns nil only when the balancer can produce
@@ -370,9 +380,10 @@ func (r *Router) SelectWithRetry(ctx context.Context, group *resolvedGroup, sess
 	return result
 }
 
-// pinSessionToUpstream resolves sessionID to a primary upstream from
-// candidates, establishing or refreshing the binding as a side effect.
-// It handles three cases atomically against concurrent callers:
+// pinSessionToUpstream resolves the (session, model) key to a primary
+// upstream from candidates, establishing or refreshing the binding as a
+// side effect. It handles three cases atomically against concurrent
+// callers:
 //
 //  1. Valid binding pointing at an available upstream — use it, refresh
 //     the timestamp.
@@ -382,7 +393,7 @@ func (r *Router) SelectWithRetry(ctx context.Context, group *resolvedGroup, sess
 //     winner's upstream is available); otherwise our pick wins and overwrites.
 //
 // Returns nil only when the balancer cannot produce a primary.
-func (r *Router) pinSessionToUpstream(sessionID string, candidates []lb.CandidateInfo, balancer *lb.Balancer) *types.Upstream {
+func (r *Router) pinSessionToUpstream(key sessionKey, candidates []lb.CandidateInfo, balancer *lb.Balancer) *types.Upstream {
 	findInCandidates := func(id string) *types.Upstream {
 		for _, c := range candidates {
 			if c.Upstream.ID == id {
@@ -393,11 +404,11 @@ func (r *Router) pinSessionToUpstream(sessionID string, candidates []lb.Candidat
 	}
 
 	// Fast path: existing, fresh binding to an available upstream.
-	if val, ok := r.sessionMap.Load(sessionID); ok {
+	if val, ok := r.sessionMap.Load(key); ok {
 		binding := val.(sessionBinding)
 		if time.Since(binding.usedAt) < r.sessionTTL {
 			if u := findInCandidates(binding.upstreamID); u != nil {
-				r.sessionMap.Store(sessionID, sessionBinding{
+				r.sessionMap.Store(key, sessionBinding{
 					upstreamID: u.ID,
 					usedAt:     time.Now(),
 				})
@@ -406,16 +417,16 @@ func (r *Router) pinSessionToUpstream(sessionID string, candidates []lb.Candidat
 		}
 	}
 
-	// Slow path: pick a fresh primary and try to claim the session.
+	// Slow path: pick a fresh primary and try to claim the (session, model).
 	primary := balancer.Select(candidates)
 	if primary == nil {
 		return nil
 	}
 	newBinding := sessionBinding{upstreamID: primary.ID, usedAt: time.Now()}
 
-	actual, loaded := r.sessionMap.LoadOrStore(sessionID, newBinding)
+	actual, loaded := r.sessionMap.LoadOrStore(key, newBinding)
 	if !loaded {
-		// We won the race for this (previously unbound) session.
+		// We won the race for this previously-unbound (session, model).
 		return primary
 	}
 
@@ -427,7 +438,7 @@ func (r *Router) pinSessionToUpstream(sessionID string, candidates []lb.Candidat
 			return u
 		}
 	}
-	r.sessionMap.Store(sessionID, newBinding)
+	r.sessionMap.Store(key, newBinding)
 	return primary
 }
 
@@ -458,12 +469,12 @@ func (r *Router) resultWithPrimary(primary *types.Upstream, candidates []lb.Cand
 	return result
 }
 
-// BindSession stores a session-to-upstream binding for session stickiness.
+// BindSession stores a (session, model)-to-upstream binding for stickiness.
 func (r *Router) BindSession(sessionID, model, upstreamID string) {
-	if sessionID == "" {
+	if sessionID == "" || model == "" {
 		return
 	}
-	r.sessionMap.Store(sessionID, sessionBinding{upstreamID: upstreamID, usedAt: time.Now()})
+	r.sessionMap.Store(sessionKey{sessionID: sessionID, model: model}, sessionBinding{upstreamID: upstreamID, usedAt: time.Now()})
 }
 
 // StartSessionCleanup runs a background goroutine that periodically removes
