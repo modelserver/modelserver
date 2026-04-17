@@ -259,7 +259,7 @@ func (r *Router) Match(projectID, model string) (*resolvedGroup, error) {
 // Filtering applies: open circuits, HealthDown, MaxConcurrent at capacity, and
 // draining upstreams are excluded. HealthDegraded upstreams have their effective
 // weight reduced to 25% (minimum 1).
-func (r *Router) SelectWithRetry(ctx context.Context, group *resolvedGroup, sessionID string) []*SelectedUpstream {
+func (r *Router) SelectWithRetry(ctx context.Context, group *resolvedGroup, sessionID, model string) []*SelectedUpstream {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -459,7 +459,7 @@ func (r *Router) resultWithPrimary(primary *types.Upstream, candidates []lb.Cand
 }
 
 // BindSession stores a session-to-upstream binding for session stickiness.
-func (r *Router) BindSession(sessionID, upstreamID string) {
+func (r *Router) BindSession(sessionID, model, upstreamID string) {
 	if sessionID == "" {
 		return
 	}

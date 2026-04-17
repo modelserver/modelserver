@@ -83,7 +83,7 @@ func TestSelectWithRetry_ConcurrentFirstRequestsConverge(t *testing.T) {
 			go func(idx int) {
 				defer wg.Done()
 				<-start
-				sel := r.SelectWithRetry(context.Background(), g, sessionID)
+				sel := r.SelectWithRetry(context.Background(), g, sessionID, "claude-sonnet")
 				if len(sel) == 0 {
 					t.Errorf("trial %d: goroutine %d got no candidates", trial, idx)
 					return
@@ -115,14 +115,14 @@ func TestSelectWithRetry_ConcurrentFirstRequestsConverge(t *testing.T) {
 func TestSelectWithRetry_SessionStickyWithoutExecutor(t *testing.T) {
 	r, g := newTestRouterForSession(t)
 
-	first := r.SelectWithRetry(context.Background(), g, "sess-seq")
+	first := r.SelectWithRetry(context.Background(), g, "sess-seq", "claude-sonnet")
 	if len(first) == 0 {
 		t.Fatal("no candidates on first call")
 	}
 	want := first[0].Upstream.ID
 
 	for i := 0; i < 20; i++ {
-		got := r.SelectWithRetry(context.Background(), g, "sess-seq")
+		got := r.SelectWithRetry(context.Background(), g, "sess-seq", "claude-sonnet")
 		if len(got) == 0 {
 			t.Fatalf("iter %d: no candidates", i)
 		}
@@ -141,7 +141,7 @@ func TestSelectWithRetry_NoSessionUnrestricted(t *testing.T) {
 
 	seen := map[string]bool{}
 	for i := 0; i < 200; i++ {
-		sel := r.SelectWithRetry(context.Background(), g, "")
+		sel := r.SelectWithRetry(context.Background(), g, "", "")
 		if len(sel) == 0 {
 			t.Fatalf("iter %d: no candidates", i)
 		}
@@ -163,7 +163,7 @@ func TestSelectWithRetry_ExpiredBindingIsReplaced(t *testing.T) {
 		usedAt:     time.Now().Add(-2 * time.Hour), // older than sessionTTL (1h)
 	})
 
-	sel := r.SelectWithRetry(context.Background(), g, "sess-expired")
+	sel := r.SelectWithRetry(context.Background(), g, "sess-expired", "claude-sonnet")
 	if len(sel) == 0 {
 		t.Fatal("no candidates")
 	}
@@ -217,7 +217,7 @@ func TestSelectWithRetry_BoundUpstreamUnavailableFallsThrough(t *testing.T) {
 		usedAt:     time.Now(),
 	})
 
-	sel := r.SelectWithRetry(context.Background(), g, "sess-stale")
+	sel := r.SelectWithRetry(context.Background(), g, "sess-stale", "claude-sonnet")
 	if len(sel) == 0 {
 		t.Fatal("no candidates")
 	}

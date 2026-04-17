@@ -309,7 +309,7 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 		writeProxyError(w, http.StatusNotFound, "no route configured for model "+reqShape.Model)
 		return
 	}
-	candidates := h.router.SelectWithRetry(r.Context(), group, "")
+	candidates := h.router.SelectWithRetry(r.Context(), group, "", reqShape.Model)
 
 	// Filter to Anthropic/ClaudeCode only (count_tokens isn't supported by other providers).
 	var selected *SelectedUpstream

@@ -103,7 +103,7 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 	}
 
 	// 2. Get ordered list of upstream candidates (primary + retry fallbacks).
-	candidates := e.router.SelectWithRetry(r.Context(), group, reqCtx.SessionID)
+	candidates := e.router.SelectWithRetry(r.Context(), group, reqCtx.SessionID, reqCtx.Model)
 
 	if len(candidates) == 0 {
 		e.logger.Warn("SelectWithRetry returned no candidates",
@@ -458,7 +458,7 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 
 		// Bind the session to this upstream for stickiness (only on success).
 		if reqCtx.SessionID != "" && resp != nil && resp.StatusCode < 500 {
-			e.router.BindSession(reqCtx.SessionID, upstream.ID)
+			e.router.BindSession(reqCtx.SessionID, reqCtx.Model, upstream.ID)
 		}
 
 		e.commitResponse(w, resp, candidate, reqCtx, transformer, startTime, cancelFn, logger)
