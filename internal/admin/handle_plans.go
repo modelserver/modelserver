@@ -6,9 +6,62 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/modelserver/modelserver/internal/modelcatalog"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
+
+// normalizeRateMapKeys normalizes every non-sentinel key of a model-credit-rate
+// map against the catalog. The sentinel `_default` is preserved verbatim —
+// it is a plan-wide fallback, not a model name.
+func normalizeRateMapKeys(catalog modelcatalog.Catalog, in map[string]types.CreditRate) (map[string]types.CreditRate, error) {
+	if len(in) == 0 {
+		return in, nil
+	}
+	keys := make([]string, 0, len(in))
+	for k := range in {
+		if k == "_default" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	canonical, err := catalog.NormalizeNames(keys)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]types.CreditRate, len(in))
+	for i, k := range keys {
+		out[canonical[i]] = in[k]
+	}
+	if def, ok := in["_default"]; ok {
+		out["_default"] = def
+	}
+	return out, nil
+}
+
+// normalizeRateMapKeysRaw is the map[string]interface{} variant used by
+// update handlers whose body is decoded into map[string]interface{}.
+func normalizeRateMapKeysRaw(catalog modelcatalog.Catalog, raw map[string]interface{}) (map[string]interface{}, error) {
+	keys := make([]string, 0, len(raw))
+	for k := range raw {
+		if k == "_default" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	canonical, err := catalog.NormalizeNames(keys)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]interface{}, len(raw))
+	for i, k := range keys {
+		out[canonical[i]] = raw[k]
+	}
+	if def, ok := raw["_default"]; ok {
+		out["_default"] = def
+	}
+	return out, nil
+}
 
 func handleListPlans(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +78,7 @@ func handleListPlans(st *store.Store) http.HandlerFunc {
 	}
 }
 
-func handleCreatePlan(st *store.Store) http.HandlerFunc {
+func handleCreatePlan(st *store.Store, catalog modelcatalog.Catalog) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Name             string                      `json:"name"`
@@ -55,6 +108,11 @@ func handleCreatePlan(st *store.Store) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
+		rates, err := normalizeRateMapKeys(catalog, body.ModelCreditRates)
+		if err != nil {
+			writeUnknownModelsError(w, err)
+			return
+		}
 
 		plan := &types.Plan{
 			Name:             body.Name,
@@ -66,7 +124,7 @@ func handleCreatePlan(st *store.Store) http.HandlerFunc {
 			PricePerPeriod:   body.PricePerPeriod,
 			PeriodMonths:     body.PeriodMonths,
 			CreditRules:      body.CreditRules,
-			ModelCreditRates: body.ModelCreditRates,
+			ModelCreditRates: rates,
 			ClassicRules:     body.ClassicRules,
 			IsActive:         true,
 		}
@@ -89,7 +147,7 @@ func handleGetPlan(st *store.Store) http.HandlerFunc {
 	}
 }
 
-func handleUpdatePlan(st *store.Store) http.HandlerFunc {
+func handleUpdatePlan(st *store.Store, catalog modelcatalog.Catalog) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		planID := chi.URLParam(r, "planID")
 		var body map[string]interface{}
@@ -106,8 +164,22 @@ func handleUpdatePlan(st *store.Store) http.HandlerFunc {
 			}
 		}
 
-		// Handle JSON fields that need marshaling.
-		for _, field := range []string{"credit_rules", "model_credit_rates", "classic_rules"} {
+		if v, ok := body["model_credit_rates"]; ok {
+			raw, ok := v.(map[string]interface{})
+			if !ok {
+				writeError(w, http.StatusBadRequest, "bad_request", "model_credit_rates must be an object")
+				return
+			}
+			normalized, err := normalizeRateMapKeysRaw(catalog, raw)
+			if err != nil {
+				writeUnknownModelsError(w, err)
+				return
+			}
+			b, _ := json.Marshal(normalized)
+			updates["model_credit_rates"] = b
+		}
+
+		for _, field := range []string{"credit_rules", "classic_rules"} {
 			if v, ok := body[field]; ok {
 				b, err := json.Marshal(v)
 				if err == nil {

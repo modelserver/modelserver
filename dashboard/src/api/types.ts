@@ -397,10 +397,13 @@ export interface UpstreamGroupMemberDetail extends UpstreamGroupMember {
 }
 
 // --- Route (new routing system) ---
+// model_names is the list of canonical catalog names this route matches
+// against the post-alias-resolution model. Replaces the legacy glob-based
+// model_pattern as of migration 016_model_catalog.sql.
 export interface RoutingRoute {
   id: string;
   project_id?: string;
-  model_pattern: string;
+  model_names: string[];
   upstream_group_id: string;
   match_priority: number;
   conditions?: Record<string, string>;

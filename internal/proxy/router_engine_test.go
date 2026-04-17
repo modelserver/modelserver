@@ -39,13 +39,13 @@ func newTestRouterForSession(t *testing.T) (*Router, *resolvedGroup) {
 	}}
 	routes := []types.Route{{
 		ID:              "r1",
-		ModelPattern:    "*",
+		ModelNames:      []string{"claude-sonnet"},
 		UpstreamGroupID: "grp",
 		MatchPriority:   1,
 		Status:          "active",
 	}}
 
-	r := NewRouter(upstreams, groups, routes, nil, logger, time.Hour, nil)
+	r := NewRouter(upstreams, groups, routes, nil, logger, time.Hour, nil, nil)
 	g, err := r.Match("", "claude-sonnet")
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
@@ -204,8 +204,8 @@ func TestSelectWithRetry_BoundUpstreamUnavailableFallsThrough(t *testing.T) {
 			{UpstreamGroupMember: types.UpstreamGroupMember{UpstreamGroupID: "grp", UpstreamID: "up-c"}},
 		},
 	}}
-	routes := []types.Route{{ID: "r1", ModelPattern: "*", UpstreamGroupID: "grp", MatchPriority: 1, Status: "active"}}
-	r := NewRouter(upstreams, groups, routes, nil, logger, time.Hour, nil)
+	routes := []types.Route{{ID: "r1", ModelNames: []string{"claude-sonnet"}, UpstreamGroupID: "grp", MatchPriority: 1, Status: "active"}}
+	r := NewRouter(upstreams, groups, routes, nil, logger, time.Hour, nil, nil)
 	g, err := r.Match("", "claude-sonnet")
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)

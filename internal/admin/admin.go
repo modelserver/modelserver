@@ -123,6 +123,12 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	})
 }
 
+func writeErrorWithDetails(w http.ResponseWriter, status int, code, message string, details interface{}) {
+	writeJSON(w, status, types.ErrorResponse{
+		Error: types.ErrorDetail{Code: code, Message: message, Details: details},
+	})
+}
+
 func writeData(w http.ResponseWriter, status int, data interface{}) {
 	writeJSON(w, status, map[string]interface{}{"data": data})
 }

@@ -83,24 +83,41 @@ type CreditRate struct {
 	CacheReadRate     float64 `json:"cache_read_rate"`
 }
 
-// ComputeCredits calculates the credits consumed by a request using the policy's model rates.
-// Returns 0 if no rates are configured.
+// ComputeCredits calculates credits using only the policy's own rate map.
+// Prefer ComputeCreditsWithDefault so the catalog-level default can act as a
+// fallback between the plan override and the plan's "_default".
 func (p *RateLimitPolicy) ComputeCredits(model string, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens int64) float64 {
-	if len(p.ModelCreditRates) == 0 {
-		return 0
-	}
+	return p.ComputeCreditsWithDefault(model, nil, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens)
+}
+
+// ComputeCreditsWithDefault resolves a credit rate in the order:
+//  1. policy.ModelCreditRates[model]  (explicit plan override)
+//  2. catalogDefault                  (per-model truth from the catalog)
+//  3. policy.ModelCreditRates["_default"]  (plan-wide safety net)
+//  4. zero rate                       (no billing)
+//
+// This mirrors the billing-fallback contract described in the model catalog
+// spec: plan overrides are most intentional; catalog defaults are the
+// per-model source of truth; the plan "_default" remains as a legacy safety
+// net for plans that rely on it.
+func (p *RateLimitPolicy) ComputeCreditsWithDefault(model string, catalogDefault *CreditRate, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens int64) float64 {
 	rate, ok := p.ModelCreditRates[model]
 	if !ok {
-		rate, ok = p.ModelCreditRates["_default"]
-		if !ok {
-			return 0
+		if catalogDefault != nil {
+			rate = *catalogDefault
+			ok = true
 		}
 	}
-	credits := rate.InputRate*float64(inputTokens) +
+	if !ok {
+		rate, ok = p.ModelCreditRates["_default"]
+	}
+	if !ok {
+		return 0
+	}
+	return rate.InputRate*float64(inputTokens) +
 		rate.OutputRate*float64(outputTokens) +
 		rate.CacheCreationRate*float64(cacheCreationTokens) +
 		rate.CacheReadRate*float64(cacheReadTokens)
-	return credits
 }
 
 // ClassicRule defines a traditional rate limit.

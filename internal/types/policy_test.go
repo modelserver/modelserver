@@ -75,6 +75,55 @@ func TestComputeCreditsNoRates(t *testing.T) {
 	}
 }
 
+// TestComputeCreditsWithDefault_FallbackOrder pins down the four-step
+// resolution order from the model-catalog spec: plan override → catalog
+// default → plan _default → 0.
+func TestComputeCreditsWithDefault_FallbackOrder(t *testing.T) {
+	planOverride := CreditRate{InputRate: 1, OutputRate: 1}
+	catalogDefault := CreditRate{InputRate: 2, OutputRate: 2}
+	planDefault := CreditRate{InputRate: 3, OutputRate: 3}
+
+	cases := []struct {
+		name      string
+		policy    *RateLimitPolicy
+		catalog   *CreditRate
+		wantInput float64
+	}{
+		{
+			"plan override wins over everything else",
+			&RateLimitPolicy{ModelCreditRates: map[string]CreditRate{"m": planOverride, "_default": planDefault}},
+			&catalogDefault,
+			1,
+		},
+		{
+			"catalog default wins when plan has no override",
+			&RateLimitPolicy{ModelCreditRates: map[string]CreditRate{"_default": planDefault}},
+			&catalogDefault,
+			2,
+		},
+		{
+			"plan _default wins when catalog has no default",
+			&RateLimitPolicy{ModelCreditRates: map[string]CreditRate{"_default": planDefault}},
+			nil,
+			3,
+		},
+		{
+			"zero when nothing is configured",
+			&RateLimitPolicy{},
+			nil,
+			0,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.policy.ComputeCreditsWithDefault("m", tc.catalog, 1, 0, 0, 0)
+			if math.Abs(got-tc.wantInput) > 1e-9 {
+				t.Errorf("got %v, want %v", got, tc.wantInput)
+			}
+		})
+	}
+}
+
 func TestPolicyIsActive(t *testing.T) {
 	now := time.Now()
 	past := now.Add(-time.Hour)

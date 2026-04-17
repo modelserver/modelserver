@@ -54,8 +54,11 @@ export function RoutesPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RoutingRoute | null>(null);
+  // model_names is edited in the UI as a comma-separated string; parsed
+  // into a string[] on save. The legacy glob model_pattern is gone — the
+  // backend now expects exact canonical catalog names.
   const [form, setForm] = useState({
-    model_pattern: "",
+    model_names: "",
     upstream_group_id: "",
     match_priority: 0,
     status: "active",
@@ -81,14 +84,14 @@ export function RoutesPage() {
 
   function openCreate() {
     setEditingId(null);
-    setForm({ model_pattern: "", upstream_group_id: "", match_priority: 0, status: "active", project_id: "" });
+    setForm({ model_names: "", upstream_group_id: "", match_priority: 0, status: "active", project_id: "" });
     setDialogOpen(true);
   }
 
   function openEdit(route: RoutingRoute) {
     setEditingId(route.id);
     setForm({
-      model_pattern: route.model_pattern,
+      model_names: (route.model_names ?? []).join(", "),
       upstream_group_id: route.upstream_group_id,
       match_priority: route.match_priority,
       status: route.status,
@@ -98,12 +101,27 @@ export function RoutesPage() {
   }
 
   async function handleSave() {
+    const parsedNames = form.model_names
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (parsedNames.length === 0) {
+      toast.error("At least one model name is required");
+      return;
+    }
+    const payload = {
+      model_names: parsedNames,
+      upstream_group_id: form.upstream_group_id,
+      match_priority: form.match_priority,
+      status: form.status,
+      project_id: form.project_id,
+    };
     try {
       if (editingId) {
-        await updateRoute.mutateAsync({ id: editingId, ...form });
+        await updateRoute.mutateAsync({ id: editingId, ...payload });
         toast.success("Route updated");
       } else {
-        await createRoute.mutateAsync(form);
+        await createRoute.mutateAsync(payload);
         toast.success("Route created");
       }
       setDialogOpen(false);
@@ -134,8 +152,10 @@ export function RoutesPage() {
       className: "w-24",
     },
     {
-      header: "Model Pattern",
-      accessor: (r) => <code className="text-sm">{r.model_pattern}</code>,
+      header: "Model Names",
+      accessor: (r) => (
+        <code className="text-sm">{(r.model_names ?? []).join(", ")}</code>
+      ),
     },
     {
       header: "Upstream Group",
@@ -208,7 +228,7 @@ export function RoutesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Routes"
-        description="Route model requests to upstream groups based on pattern matching (superadmin only)"
+        description="Route requests to upstream groups by canonical model name (superadmin only)"
         actions={
           <Button onClick={openCreate}>
             <Plus className="mr-2 h-4 w-4" />
@@ -275,14 +295,15 @@ export function RoutesPage() {
               </p>
             </div>
             <div className="space-y-2">
-              <Label>Model Pattern</Label>
+              <Label>Model Names</Label>
               <Input
-                value={form.model_pattern}
-                onChange={(e) => setForm((p) => ({ ...p, model_pattern: e.target.value }))}
-                placeholder="claude-sonnet-*"
+                value={form.model_names}
+                onChange={(e) => setForm((p) => ({ ...p, model_names: e.target.value }))}
+                placeholder="claude-opus-4-7, claude-sonnet-4-6"
               />
               <p className="text-xs text-muted-foreground">
-                Supports glob patterns: * matches any sequence, ? matches a single character
+                Comma-separated canonical names from the Models catalog. Aliases
+                resolve to canonical at ingress; only canonical names match here.
               </p>
             </div>
             <div className="space-y-2">
@@ -342,7 +363,7 @@ export function RoutesPage() {
             </Button>
             <Button
               onClick={handleSave}
-              disabled={!form.model_pattern || !form.upstream_group_id || isSaving}
+              disabled={!form.model_names.trim() || !form.upstream_group_id || isSaving}
             >
               {isSaving ? "Saving..." : editingId ? "Save" : "Create"}
             </Button>
@@ -356,7 +377,7 @@ export function RoutesPage() {
           <DialogHeader>
             <DialogTitle>Delete Route</DialogTitle>
             <DialogDescription>
-              Delete the route for pattern "{deleteTarget?.model_pattern}"?
+              Delete the route for models "{(deleteTarget?.model_names ?? []).join(", ")}"?
               Requests will fall back to default upstream group selection.
             </DialogDescription>
           </DialogHeader>

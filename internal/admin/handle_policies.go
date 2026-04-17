@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/modelserver/modelserver/internal/modelcatalog"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
@@ -22,7 +23,7 @@ func handleListPolicies(st *store.Store) http.HandlerFunc {
 	}
 }
 
-func handleCreatePolicy(st *store.Store) http.HandlerFunc {
+func handleCreatePolicy(st *store.Store, catalog modelcatalog.Catalog) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !requireRole(w, r, types.RoleOwner, types.RoleMaintainer) {
 			return
@@ -46,12 +47,18 @@ func handleCreatePolicy(st *store.Store) http.HandlerFunc {
 			return
 		}
 
+		rates, err := normalizeRateMapKeys(catalog, body.ModelCreditRates)
+		if err != nil {
+			writeUnknownModelsError(w, err)
+			return
+		}
+
 		policy := &types.RateLimitPolicy{
 			ProjectID:        projectID,
 			Name:             body.Name,
 			IsDefault:        body.IsDefault,
 			CreditRules:      body.CreditRules,
-			ModelCreditRates: body.ModelCreditRates,
+			ModelCreditRates: rates,
 			ClassicRules:     body.ClassicRules,
 		}
 		if body.StartsAt != "" {
@@ -84,7 +91,7 @@ func handleGetPolicy(st *store.Store) http.HandlerFunc {
 	}
 }
 
-func handleUpdatePolicy(st *store.Store) http.HandlerFunc {
+func handleUpdatePolicy(st *store.Store, catalog modelcatalog.Catalog) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !requireRole(w, r, types.RoleOwner, types.RoleMaintainer) {
 			return
@@ -102,8 +109,21 @@ func handleUpdatePolicy(st *store.Store) http.HandlerFunc {
 				updates[field] = v
 			}
 		}
-		// JSON fields need marshaling.
-		for _, field := range []string{"credit_rules", "model_credit_rates", "classic_rules"} {
+		if v, ok := body["model_credit_rates"]; ok {
+			raw, ok := v.(map[string]interface{})
+			if !ok {
+				writeError(w, http.StatusBadRequest, "bad_request", "model_credit_rates must be an object")
+				return
+			}
+			normalized, err := normalizeRateMapKeysRaw(catalog, raw)
+			if err != nil {
+				writeUnknownModelsError(w, err)
+				return
+			}
+			b, _ := json.Marshal(normalized)
+			updates["model_credit_rates"] = b
+		}
+		for _, field := range []string{"credit_rules", "classic_rules"} {
 			if v, ok := body[field]; ok {
 				b, _ := json.Marshal(v)
 				updates[field] = b

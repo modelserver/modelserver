@@ -1,9 +1,11 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/modelserver/modelserver/internal/modelcatalog"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
@@ -23,11 +25,11 @@ func handleListRoutingRoutes(st *store.Store) http.HandlerFunc {
 	}
 }
 
-func handleCreateRoutingRoute(st *store.Store) http.HandlerFunc {
+func handleCreateRoutingRoute(st *store.Store, catalog modelcatalog.Catalog) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			ProjectID       string            `json:"project_id"`
-			ModelPattern    string            `json:"model_pattern"`
+			ModelNames      []string          `json:"model_names"`
 			UpstreamGroupID string            `json:"upstream_group_id"`
 			MatchPriority   int               `json:"match_priority"`
 			Conditions      map[string]string `json:"conditions"`
@@ -37,8 +39,14 @@ func handleCreateRoutingRoute(st *store.Store) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
 			return
 		}
-		if body.ModelPattern == "" || body.UpstreamGroupID == "" {
-			writeError(w, http.StatusBadRequest, "bad_request", "model_pattern and upstream_group_id are required")
+		if len(body.ModelNames) == 0 || body.UpstreamGroupID == "" {
+			writeError(w, http.StatusBadRequest, "bad_request", "model_names and upstream_group_id are required")
+			return
+		}
+
+		canonical, err := catalog.NormalizeNames(body.ModelNames)
+		if err != nil {
+			writeUnknownModelsError(w, err)
 			return
 		}
 
@@ -49,7 +57,7 @@ func handleCreateRoutingRoute(st *store.Store) http.HandlerFunc {
 
 		route := &types.Route{
 			ProjectID:       body.ProjectID,
-			ModelPattern:    body.ModelPattern,
+			ModelNames:      canonical,
 			UpstreamGroupID: body.UpstreamGroupID,
 			MatchPriority:   body.MatchPriority,
 			Conditions:      body.Conditions,
@@ -64,7 +72,7 @@ func handleCreateRoutingRoute(st *store.Store) http.HandlerFunc {
 	}
 }
 
-func handleUpdateRoutingRoute(st *store.Store) http.HandlerFunc {
+func handleUpdateRoutingRoute(st *store.Store, catalog modelcatalog.Catalog) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		routeID := chi.URLParam(r, "routeID")
 		var body map[string]interface{}
@@ -74,13 +82,25 @@ func handleUpdateRoutingRoute(st *store.Store) http.HandlerFunc {
 		}
 
 		updates := make(map[string]interface{})
-		for _, field := range []string{"project_id", "model_pattern", "upstream_group_id", "match_priority", "conditions", "status"} {
+		for _, field := range []string{"project_id", "model_names", "upstream_group_id", "match_priority", "conditions", "status"} {
 			if v, ok := body[field]; ok {
-				// Convert empty project_id to NULL for the UUID column.
-				if field == "project_id" {
+				switch field {
+				case "project_id":
 					if s, ok := v.(string); ok && s == "" {
 						v = nil
 					}
+				case "model_names":
+					names, ok := toStringSlice(v)
+					if !ok {
+						writeError(w, http.StatusBadRequest, "bad_request", "model_names must be an array of strings")
+						return
+					}
+					canonical, err := catalog.NormalizeNames(names)
+					if err != nil {
+						writeUnknownModelsError(w, err)
+						return
+					}
+					v = canonical
 				}
 				updates[field] = v
 			}
@@ -108,4 +128,39 @@ func handleDeleteRoutingRoute(st *store.Store) http.HandlerFunc {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// toStringSlice turns an interface{} decoded from JSON into []string.
+// Accepts []string or []interface{}-of-string; returns (nil, false) otherwise.
+func toStringSlice(v interface{}) ([]string, bool) {
+	switch s := v.(type) {
+	case []string:
+		return s, true
+	case []interface{}:
+		out := make([]string, 0, len(s))
+		for _, e := range s {
+			str, ok := e.(string)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, str)
+		}
+		return out, true
+	case nil:
+		return []string{}, true
+	default:
+		return nil, false
+	}
+}
+
+// writeUnknownModelsError maps a *modelcatalog.UnknownModelsError to a 400
+// response whose `details` carries every unknown name. Any other error is
+// treated as a 500.
+func writeUnknownModelsError(w http.ResponseWriter, err error) {
+	var uerr *modelcatalog.UnknownModelsError
+	if errors.As(err, &uerr) {
+		writeErrorWithDetails(w, http.StatusBadRequest, "unknown_model", uerr.Error(), map[string]interface{}{"unknown": uerr.Names})
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "internal", err.Error())
 }

@@ -8,11 +8,15 @@ import (
 	"github.com/modelserver/modelserver/internal/auth"
 	"github.com/modelserver/modelserver/internal/billing"
 	"github.com/modelserver/modelserver/internal/config"
+	"github.com/modelserver/modelserver/internal/modelcatalog"
 	"github.com/modelserver/modelserver/internal/store"
 )
 
-// MountRoutes mounts all admin API routes onto the given router.
-func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byte, jwtMgr *auth.JWTManager) {
+// MountRoutes mounts all admin API routes onto the given router. `catalog`
+// is the in-memory model catalog; admin mutations to /models refresh it in
+// place, and write paths to /upstreams, /routing/routes, /keys, /plans,
+// /policies use it to reject unknown model names.
+func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byte, jwtMgr *auth.JWTManager, catalog modelcatalog.Catalog) {
 	// Construct payment client if configured.
 	var payClient billing.PaymentClient
 	if cfg.Billing.PaymentAPIURL != "" {
@@ -100,11 +104,24 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 			r.Route("/plans", func(r chi.Router) {
 				r.Use(RequireSuperadmin)
 				r.Get("/", handleListPlans(st))
-				r.Post("/", handleCreatePlan(st))
+				r.Post("/", handleCreatePlan(st, catalog))
 				r.Route("/{planID}", func(r chi.Router) {
 					r.Get("/", handleGetPlan(st))
-					r.Put("/", handleUpdatePlan(st))
+					r.Put("/", handleUpdatePlan(st, catalog))
 					r.Delete("/", handleDeletePlan(st))
+				})
+			})
+
+			// Model catalog (superadmin only).
+			r.Route("/models", func(r chi.Router) {
+				r.Use(RequireSuperadmin)
+				r.Get("/", handleListModels(st))
+				r.Post("/", handleCreateModel(st, catalog))
+				r.Route("/{name}", func(r chi.Router) {
+					r.Get("/", handleGetModel(st))
+					r.Patch("/", handleUpdateModel(st, catalog))
+					r.Put("/", handleUpdateModel(st, catalog))
+					r.Delete("/", handleDeleteModel(st, catalog))
 				})
 			})
 
@@ -143,10 +160,10 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 
 					// API Keys.
 					r.Get("/keys", handleListKeys(st))
-					r.Post("/keys", handleCreateKey(st, encKey))
+					r.Post("/keys", handleCreateKey(st, encKey, catalog))
 					r.Route("/keys/{keyID}", func(r chi.Router) {
 						r.Get("/", handleGetKey(st))
-						r.Put("/", handleUpdateKey(st))
+						r.Put("/", handleUpdateKey(st, catalog))
 						r.Delete("/", handleDeleteKey(st))
 					})
 
@@ -156,10 +173,10 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 
 					// Policies.
 					r.Get("/policies", handleListPolicies(st))
-					r.Post("/policies", handleCreatePolicy(st))
+					r.Post("/policies", handleCreatePolicy(st, catalog))
 					r.Route("/policies/{policyID}", func(r chi.Router) {
 						r.Get("/", handleGetPolicy(st))
-						r.Put("/", handleUpdatePolicy(st))
+						r.Put("/", handleUpdatePolicy(st, catalog))
 						r.Delete("/", handleDeletePolicy(st))
 					})
 
@@ -194,13 +211,13 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 			r.Route("/upstreams", func(r chi.Router) {
 				r.Use(RequireSuperadmin)
 				r.Get("/", handleListUpstreams(st, encKey))
-				r.Post("/", handleCreateUpstream(st, encKey))
+				r.Post("/", handleCreateUpstream(st, encKey, catalog))
 				r.Get("/usage", handleUpstreamUsage(st))
 				r.Post("/claudecode/oauth/start", handleClaudeCodeOAuthStart())
 				r.Post("/claudecode/oauth/exchange", handleClaudeCodeOAuthExchange())
 				r.Route("/{upstreamID}", func(r chi.Router) {
 					r.Get("/", handleGetUpstream(st))
-					r.Put("/", handleUpdateUpstream(st, encKey))
+					r.Put("/", handleUpdateUpstream(st, encKey, catalog))
 					r.Delete("/", handleDeleteUpstream(st))
 					r.Post("/test", handleTestUpstream(st, encKey))
 					r.Get("/oauth/status", handleClaudeCodeTokenStatus(st, encKey))
@@ -242,8 +259,8 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 			r.Route("/routing", func(r chi.Router) {
 				r.Use(RequireSuperadmin)
 				r.Get("/routes", handleListRoutingRoutes(st))
-				r.Post("/routes", handleCreateRoutingRoute(st))
-				r.Put("/routes/{routeID}", handleUpdateRoutingRoute(st))
+				r.Post("/routes", handleCreateRoutingRoute(st, catalog))
+				r.Put("/routes/{routeID}", handleUpdateRoutingRoute(st, catalog))
 				r.Delete("/routes/{routeID}", handleDeleteRoutingRoute(st))
 				// TODO: Wire HealthProvider once the Router is integrated.
 				// r.Get("/health", handleRoutingHealth(hp))
