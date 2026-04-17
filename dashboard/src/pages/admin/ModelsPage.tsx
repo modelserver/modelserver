@@ -287,12 +287,15 @@ export function ModelsPage() {
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <button className="flex items-center gap-1 text-sm underline-offset-2 hover:underline">
-                    <span>{total}</span>
-                    <Info className="h-3 w-3 text-muted-foreground" />
-                  </button>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 text-sm underline-offset-2 hover:underline"
+                  />
                 }
-              />
+              >
+                <span>{total}</span>
+                <Info className="h-3 w-3 text-muted-foreground" />
+              </TooltipTrigger>
               <TooltipContent>
                 <div className="text-xs">
                   <div>upstreams: {c.upstreams}</div>
@@ -426,6 +429,7 @@ export function ModelsPage() {
                   <Badge key={a} variant="secondary" className="gap-1">
                     <code className="text-xs">{a}</code>
                     <button
+                      type="button"
                       className="hover:text-destructive-foreground"
                       onClick={() => removeAlias(a)}
                       aria-label={`Remove alias ${a}`}
@@ -577,11 +581,7 @@ export function ModelsPage() {
             </Button>
             <Button
               onClick={handleSave}
-              disabled={
-                isSaving ||
-                (!editingName && !form.name) ||
-                !form.display_name && !form.name
-              }
+              disabled={isSaving || (!editingName && !form.name.trim())}
             >
               {isSaving ? "Saving..." : editingName ? "Save" : "Create"}
             </Button>
