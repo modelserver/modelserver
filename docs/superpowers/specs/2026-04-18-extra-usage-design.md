@@ -14,7 +14,9 @@ modelserver 目前只有 subscription 模型：项目绑定 plan，plan 内含 c
 
 **(a) Credit 规则命中**：用户的订阅 credit 窗口（例如 5h/50000 credits）已消费殆尽。
 
-**(b) 客户端不符合 coding plan 要求**：当前规则——对 `publisher = 'anthropic'` 的模型，只有来自 Claude Code CLI（`TraceSource = claude_code`）的请求才能消费 subscription；其他客户端（OpenCode、OpenClaw、Codex 等）必须走 extra usage。其他 publisher 的模型暂无额外限制。
+**(b) 客户端不符合 coding plan 要求**：当前规则——对 `publisher = 'anthropic'` 的模型，只有来自 Claude Code CLI（`ClientKind = 'claude-code'`）的请求才能消费 subscription；其他客户端（OpenCode、OpenClaw、Codex 等）必须走 extra usage。其他 publisher 的模型暂无额外限制。
+
+> **关于 `ClientKind` vs `TraceSource`**：现有 `TraceMiddleware` 产出 `TraceSource`，但其检测顺序优先尊重 `X-Trace-Id` 等 header，会把带 trace header 的 Claude Code 请求误标为 `"header"`。我们因此**并行**派生一个 `ClientKind` 字段，只做客户端归属检测（与 header/body 的 trace 抽取解耦）。详见 §3.2。
 
 **不触发**：classic 规则（RPM/TPM/RPD/TPD）命中——这些仍是**硬限**，用于保护上游与防滥用，与余额无关。
 
@@ -87,7 +89,11 @@ UPDATE models SET publisher='openai'    WHERE name ~ '^(gpt-|o[0-9]|chatgpt-|tex
 UPDATE models SET publisher='google'    WHERE name LIKE 'gemini-%';
 ```
 
-管理员 UI 创建/编辑模型时要填 `publisher`。需求 (b) 的"Claude 系列"判定：`publisher = 'anthropic'`。将来如要给其他 publisher 做限制（例如"对 openai 模型也限制某些客户端"），只在 `SubscriptionEligibilityMW`（见 3.2）改判定逻辑即可。
+管理员 UI 创建/编辑模型时**必须**填 `publisher`（非空字符串）：`internal/admin/models.go` 的 `UpsertModel` 处校验，空值返 400。需求 (b) 的"Claude 系列"判定：`publisher = 'anthropic'`。将来如要给其他 publisher 做限制（例如"对 openai 模型也限制某些客户端"），只在 `SubscriptionEligibilityMW`（见 3.2）改判定逻辑即可。
+
+**`publisher` vs 既有 `Metadata.ProviderHint`**：`provider_hint` 是 UI 展示用的软提示（可为空、可自由拼写，用于图标/分类）；`publisher` 是**业务决策**字段（必填、受控取值枚举 `anthropic/openai/google/...`）。两者独立存在、互不替代。
+
+**Backfill 后仍为空的兜底**：若运行时遇到 `publisher == ''` 的 model（理论上 migration backfill + admin 校验已封堵），`SubscriptionEligibilityMW` 记 warning 并**按 "allow subscription" 处理**（不影响既有流量），同时 Prometheus `extra_usage_missing_publisher_total` +1。运维看到该指标非 0 即需补数据。
 
 ### 2.5 `orders` 表扩展，支持 extra-usage 充值单
 
@@ -97,10 +103,9 @@ ALTER TABLE orders
         CHECK (order_type IN ('subscription','extra_usage_topup')),
     ADD COLUMN extra_usage_amount_fen BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE orders ALTER COLUMN plan_id DROP NOT NULL;
-ALTER TABLE orders ALTER COLUMN periods DROP NOT NULL;
 ```
 
-Topup 订单约定：`plan_id IS NULL`、`order_type='extra_usage_topup'`、`amount = extra_usage_amount_fen = unit_price`。
+Topup 订单约定：`plan_id IS NULL`、`order_type='extra_usage_topup'`、`periods=1`（沿用现有 NOT NULL 默认值，无需改 schema）、`amount = extra_usage_amount_fen = unit_price`。
 
 ### 2.6 迁移文件
 
@@ -118,23 +123,62 @@ Topup 订单约定：`plan_id IS NULL`、`order_type='extra_usage_topup'`、`amo
          → SubscriptionEligibilityMW → RateLimitMW → ExtraUsageGuardMW → Executor
 ```
 
+`TraceMW` 同时改造：在现有 `TraceSource` 逻辑之外，**独立派生 `ClientKind`** 字段写入 context（详见 3.2）。
+
 新增三个中间件（或从 handler 抽出）：
 
-- `ResolveModelMW`：从 handler 前置 30 行抽出——把 raw model 名解析为 canonical `*Model` 并写入 context。
+- `ResolveModelMW`：从 handler 前置 30 行抽出——把 raw model 名解析为 canonical `*types.Model`，写入 `RequestContext.Model` 字段（或 context value）供下游使用（特别是 executor 的扣费钩子需要读 `DefaultCreditRate`）。
 - `SubscriptionEligibilityMW`：判定需求 (b)，只写 context 标记，不拦截。
 - `ExtraUsageGuardMW`：在 intent 存在时做三项校验（enabled / balance / monthly），通过则标记放行，失败则拒绝。
 
-### 3.2 `SubscriptionEligibilityMW`（需求 b 判定）
+### 3.2 `ClientKind` 派生（TraceMW 改造）与 `SubscriptionEligibilityMW`
+
+**为什么引入 `ClientKind`**：`TraceSource` 的检测顺序优先 `X-Trace-Id` / 自定义 header，带 header 的 Claude Code 请求会被标为 `"header"` 而非 `"claude-code"`，使需求 (b) 误判。`ClientKind` 只做客户端归属判定，与 trace id 来源解耦。
+
+在 `TraceMiddleware` 末尾追加一段 —— **无视** header 检测结果，独立判断：
+
+```go
+// trace_middleware.go：在原 deriveTraceID 之后
+kind := deriveClientKind(r)
+ctx = context.WithValue(ctx, ctxClientKind, kind)
+
+// deriveClientKind 复用已有的 tryExtractClaudeCodeTraceID / isOpenClawRequest，
+// 但不短路于 trace source，只做归属判定。
+func deriveClientKind(r *http.Request) string {
+    if id, _ := tryExtractClaudeCodeTraceID(r); id != "" {
+        return types.ClientKindClaudeCode   // "claude-code"
+    }
+    ua := strings.ToLower(r.Header.Get("User-Agent"))
+    switch {
+    case strings.Contains(ua, "opencode/"),
+         strings.TrimSpace(r.Header.Get("X-Opencode-Session")) != "":
+        return types.ClientKindOpenCode
+    case isOpenClawRequest(r):
+        return types.ClientKindOpenClaw
+    case strings.TrimSpace(r.Header.Get("Session_id")) != "":
+        return types.ClientKindCodex
+    }
+    return types.ClientKindUnknown   // ""
+}
+```
+
+常量集中在 `internal/types/request.go`：`ClientKindClaudeCode = "claude-code"` 等。
+
+`SubscriptionEligibilityMW`：
 
 ```go
 func SubscriptionEligibilityMW(next http.Handler) http.Handler {
     return func(w, r) {
-        m   := ModelFromContext(r.Context())
-        src := TraceSourceFromContext(r.Context())
+        m    := ModelFromContext(r.Context())
+        kind := ClientKindFromContext(r.Context())
 
         eligible := true
         reason   := ""
-        if m.Publisher == "anthropic" && src != types.TraceSourceClaudeCode {
+        switch {
+        case m.Publisher == "":
+            // 数据空洞：记指标但放行 subscription（§2.4 兜底）
+            metrics.ExtraUsageMissingPublisher.Inc()
+        case m.Publisher == "anthropic" && kind != types.ClientKindClaudeCode:
             eligible = false
             reason   = "client_restriction"
         }
@@ -148,27 +192,29 @@ func SubscriptionEligibilityMW(next http.Handler) http.Handler {
 
 ### 3.3 `CompositeRateLimiter` 接口变更
 
-当前：
+当前（`internal/ratelimit/composite.go:32`）：
 
 ```go
-PreCheck(ctx, projectID, apiKeyID, model, policy) (allowed bool, retryAfter time.Duration, err error)
+PreCheck(ctx, projectID, apiKeyID, model, policy) (bool, time.Duration, error)
 ```
 
-改为返回结构体，并新增"仅 classic"版本：
+两处改动：`PreCheck` 返回 `PreCheckResult` 结构体；新增同签名的 `PreCheckClassicOnly`（跳过 credit 规则，只跑 classic）：
 
 ```go
 type PreCheckResult struct {
     Allowed    bool
     RetryAfter time.Duration
     LimitType  string // "credit" | "classic" | ""
-    HitRuleID  string // for audit
+    HitRuleID  string // 可选，便于审计日志
 }
 
-PreCheck(ctx, ...) (PreCheckResult, error)
-PreCheckClassicOnly(ctx, ...) (allowed bool, retryAfter time.Duration, err error)
+PreCheck(ctx, projectID, apiKeyID, model, policy) (PreCheckResult, error)
+PreCheckClassicOnly(ctx, projectID, apiKeyID, model, policy) (PreCheckResult, error)
 ```
 
-`PreCheckClassicOnly` 跳过 credit 规则评估——给需求 (b) bypass 路径使用。
+`PreCheckClassicOnly` 语义：`Allowed=true` 表示 classic 通过（返回 `LimitType=""`）；`Allowed=false` 必定 `LimitType="classic"`。给需求 (b) bypass 路径使用。
+
+现有所有 `PreCheck` 调用点（`internal/proxy/ratelimit_middleware.go` 等）要同步更新到读 `res.Allowed / res.RetryAfter`。
 
 ### 3.4 `RateLimitMW` 改造
 
@@ -178,8 +224,9 @@ func RateLimitMW(next) {
 
     if !elig.Eligible {
         // 需求 b：仍要跑 classic 保护上游
-        if ok, retry, _ := limiter.PreCheckClassicOnly(...); !ok {
-            writeRateLimitError(w, retry)
+        res, _ := limiter.PreCheckClassicOnly(ctx, ...)
+        if !res.Allowed {
+            writeRateLimitError(w, res.RetryAfter)
             return
         }
         ctx = withExtraUsageIntent(ctx, elig.Reason) // "client_restriction"
@@ -187,7 +234,7 @@ func RateLimitMW(next) {
         return
     }
 
-    res, _ := limiter.PreCheck(...)
+    res, _ := limiter.PreCheck(ctx, ...)
     if res.Allowed {
         next.ServeHTTP(w, r)            // 正常走 subscription
         return
@@ -245,7 +292,7 @@ func ExtraUsageGuardMW(next) {
 
 ### 3.6 决策真值表
 
-| Publisher | Client=claude_code | Credit 命中 | Classic 命中 | 结果 |
+| Publisher | ClientKind=claude-code | Credit 命中 | Classic 命中 | 结果 |
 |-----------|:----:|:----:|:----:|------|
 | anthropic | 是 | 否 | 否 | ✅ subscription |
 | anthropic | 是 | ✅ | 否 | ⚡ extra usage (`rate_limited`) |
@@ -263,13 +310,14 @@ func ExtraUsageGuardMW(next) {
 type ctxKey string
 const (
     ctxModel                   ctxKey = "model"
+    ctxClientKind              ctxKey = "client_kind"
     ctxSubscriptionEligibility ctxKey = "subscription_eligibility"
     ctxExtraUsageIntent        ctxKey = "extra_usage_intent"
     ctxExtraUsageContext       ctxKey = "extra_usage_context"
 )
 ```
 
-Executor 只读 `ctxExtraUsageContext`；存在则请求成功后走扣费钩子。
+Executor 只读 `ctxExtraUsageContext` 和 `ctxModel`（扣费时需要 `*Model.DefaultCreditRate`）；存在 extra usage context 则请求成功后走扣费钩子。
 
 ---
 
@@ -278,22 +326,26 @@ Executor 只读 `ctxExtraUsageContext`；存在则请求成功后走扣费钩子
 ### 4.1 Credits → fen 转换
 
 ```go
-// 固定用 catalog default_credit_rate，忽略 plan 折扣覆盖
-func computeExtraUsageCostFen(m *Model, u TokenUsage, creditPriceFen int64) int64 {
+// 固定用 catalog default_credit_rate，忽略 plan 折扣覆盖。
+// 返回 (cost_fen, credits)；DefaultCreditRate 缺失时返回 (0, 0, err) 由上层决定如何处理。
+func computeExtraUsageCostFen(m *types.Model, u types.TokenUsage, creditPriceFen int64) (int64, float64, error) {
+    if m == nil || m.DefaultCreditRate == nil {
+        return 0, 0, ErrMissingDefaultCreditRate
+    }
     rate := m.DefaultCreditRate
-    credits := rate.InputRate*float64(u.Input) +
-               rate.OutputRate*float64(u.Output) +
-               rate.CacheCreationRate*float64(u.CacheCreation) +
-               rate.CacheReadRate*float64(u.CacheRead)
+    credits := rate.InputRate*float64(u.InputTokens) +
+               rate.OutputRate*float64(u.OutputTokens) +
+               rate.CacheCreationRate*float64(u.CacheCreationTokens) +
+               rate.CacheReadRate*float64(u.CacheReadTokens)
     cost := int64(math.Ceil(credits * float64(creditPriceFen) / 1_000_000))
     if cost < 1 && credits > 0 {
         cost = 1   // ceil 防 sub-cent round-down 到 0
     }
-    return cost
+    return cost, credits, nil
 }
 ```
 
-`credit_price_fen` 支持运行时热更新（通过 admin API 写 config），无需重启。
+字段名与 `internal/types/request.go` 的 `TokenUsage`（`InputTokens/OutputTokens/CacheCreationTokens/CacheReadTokens`）对齐。`credit_price_fen` 支持运行时热更新（通过 admin API 写 config），无需重启。
 
 ### 4.2 原子扣费 SQL（单事务）
 
@@ -365,16 +417,25 @@ type TopUpReq struct {
 
 ### 4.4 Executor 扣费钩子
 
+`RequestContext` 要先被 `ResolveModelMW` 或 executor 初始化时填充 `Model *types.Model`（而不只是 model 名字串），这样扣费钩子能直接读 `rc.Model.DefaultCreditRate`。
+
 在 `commitStreamingResponse` / `commitNonStreamingResponse` 已有的 `completeRequest(...)` 之后、`recordMetrics(...)` 之前调用 `settleExtraUsage`：
 
 ```go
-func (e *Executor) settleExtraUsage(ctx context.Context, rc *RequestContext, usage TokenUsage) {
+func (e *Executor) settleExtraUsage(ctx context.Context, rc *RequestContext, usage types.TokenUsage) {
     exc, has := ExtraUsageContextFromContext(ctx)
     if !has {
         return
     }
 
-    costFen := computeExtraUsageCostFen(rc.Model, usage, e.cfg.ExtraUsage.CreditPriceFen)
+    costFen, credits, err := computeExtraUsageCostFen(rc.Model, usage, e.cfg.ExtraUsage.CreditPriceFen)
+    if err != nil {
+        // DefaultCreditRate 缺失：记告警 + 指标，不扣费（管理员修数据后下一单自动恢复）
+        e.logger.Error("extra_usage_missing_default_rate",
+            "model", rc.Model.Name, "project", rc.ProjectID)
+        e.metrics.ExtraUsageMissingRate.Inc()
+        return
+    }
     rc.IsExtraUsage     = true
     rc.ExtraUsageCostFen = costFen
     rc.ExtraUsageReason = exc.Reason
@@ -385,17 +446,23 @@ func (e *Executor) settleExtraUsage(ctx context.Context, rc *RequestContext, usa
         RequestID: rc.RequestID,
         Reason:    exc.Reason,
         Description: fmt.Sprintf("%s | credits=%.2f | model=%s",
-            exc.Reason, usage.Credits(), rc.Model.Name),
+            exc.Reason, credits, rc.Model.Name),
     })
     switch {
     case err == nil:
         rc.ExtraUsageBalanceAfterFen = newBal
+        e.metrics.ExtraUsageDeductions.WithLabelValues("ok").Inc()
     case errors.Is(err, ErrInsufficientBalance):
         e.logger.Warn("extra_usage_underdraft",
             "project", rc.ProjectID, "cost", costFen)
         e.metrics.ExtraUsageUnderdraft.Inc()
+    case errors.Is(err, ErrMonthlyLimitReached):
+        e.logger.Warn("extra_usage_monthly_limit_at_settle",
+            "project", rc.ProjectID, "cost", costFen)
+        e.metrics.ExtraUsageDeductions.WithLabelValues("monthly_limit").Inc()
     default:
         e.logger.Error("extra_usage_deduction_failed", "err", err)
+        e.metrics.ExtraUsageDeductions.WithLabelValues("err").Inc()
     }
 }
 ```
@@ -411,8 +478,8 @@ func (e *Executor) settleExtraUsage(ctx context.Context, rc *RequestContext, usa
 | 请求失败（5xx / 上游错误） | 不扣费；`settleExtraUsage` 仅在 status='success' 时触发 |
 | 流式请求中途断开 | 已消费 token 照扣（provider transformer 已返回 partial usage） |
 | `usage` 数据缺失 | `cost=0`，不写 ledger，记 warning 指标 |
-| 余额竞争/透支 1 次 | 原子 UPDATE 已最大程度防御；发生时容忍并记 underdraft 指标，下次 guard 在 balance≤0 时自恢复 |
-| `default_credit_rate` 缺失 | catalog 加载时已校验；运行时 nil 走 panic 路径修数据 |
+| 余额竞争/并发透支 | 见 §6.1；MVP 接受有界透支，指标触发熔断 |
+| `DefaultCreditRate` 缺失 | `settleExtraUsage` 返回 `ErrMissingDefaultCreditRate`，记 `extra_usage_missing_rate_total` 指标，不扣费、不 panic；管理员补数据后下一单恢复 |
 
 ---
 
@@ -538,11 +605,34 @@ extra_usage:
 
 | 威胁 | 防御 |
 |------|------|
-| 同项目并发扣费透支 | `UPDATE ... WHERE balance_fen >= $amt RETURNING balance_fen` 单行原子；RETURNING 零行 = 扣费失败 |
+| 同项目并发扣费透支 | 见下方"并发透支上界"专项说明 |
 | 充值 webhook 重复投递 | webhook 已按 `payment_ref` 去重；ledger `UNIQUE (order_id) WHERE type='topup'` 做第二层 |
 | Settings PUT 与扣费冲突 | PUT 只改 `enabled` / `monthly_limit_fen`；`balance_fen` 仅通过 `DeductExtraUsage` / `TopUpExtraUsage` 修改 |
 | 缓存读旧余额 | **不缓存 settings**——guard 每次查库（1KB 级查询约 10 ms，可忽略）。QPS 真的成为问题再引入 per-project TTL cache + 写时失效 |
 | 月度聚合慢查询 | 索引 `(project_id, type, created_at) WHERE type='deduction'` 覆盖即可；实测不够再考虑 materialized view |
+
+#### 并发透支上界（MVP 诚实说明）
+
+Guard 的 `balance_fen > 0` 判断与 executor 的原子扣费**不在同一事务**：
+
+- Guard 在 t0 读到 `balance=10`，放行请求 A
+- Guard 在 t0+ε 读到同样的 `balance=10`（A 还没到 settle），再放行 B、C、…
+- t1 时刻 A 上游返回，扣费成功；B/C/… settle 时原子 UPDATE 余额不足，全部 underdraft
+
+**MVP 透支上界 ≈ (项目并发度) × (单次 cost)**，不是"1 次"。在近零余额情形下，如果项目有 N 个并发连接，最坏情况下服务器向上游付出 N 次真实 token 费用却只从用户账户扣回 1 次的量。
+
+**MVP 防御（足够但非零损失）**：
+
+1. 原子扣费 SQL 保证**账户扣款**不会透支成负数（`balance_fen >= $amt` 门槛）
+2. Prometheus `extra_usage_underdraft_total` 计数，运维看板监控
+3. **自动熔断**：监控脚本 / rule 检测到某项目 `underdraft_total` 在 5 分钟内 > 10 次 → 自动 PATCH `extra_usage_settings.enabled = false`，暂停该项目的 extra usage，给运维人工介入时间
+4. 配合 §4.6 里 `DefaultCreditRate` 缺失、`usage` 缺失等不扣费的路径也走同一指标体系
+
+**Phase 2 考虑引入**（超出本 spec）：
+- 基于 `max_tokens` 的乐观预扣 + settle 结算差额（完全避免透支，代价是冻结额度）
+- 项目级 in-flight 信号量：`in_flight_concurrency ≤ floor(balance_fen / p95_cost)` 动态计算
+
+**结论**：MVP 选择接受有界透支 + 指标熔断。前期用户量低，风险可控；上量后再转 Phase 2 方案。
 
 ### 6.2 全局熔断
 
@@ -585,15 +675,24 @@ extra_usage:
 - 未开 extra usage 的项目：所有现有测试通过（行为与旧版一致）
 - `extra_usage.enabled: false`：guard 全拒绝，等同"未开通"
 
-### 7.4 Prometheus 指标
+### 7.4 Prometheus 指标与告警
 
 ```
 extra_usage_requests_total{reason="rate_limited|client_restriction", result="allowed|rejected"}
 extra_usage_deductions_total{result="ok|insufficient|monthly_limit|err"}
-extra_usage_underdraft_total
-extra_usage_balance_fen{project_id}   # gauge
+extra_usage_underdraft_total{project_id}           # 按项目标签，方便熔断
+extra_usage_missing_rate_total                     # DefaultCreditRate 缺失
+extra_usage_missing_publisher_total                # Model.publisher 为空
+extra_usage_balance_fen{project_id}                # gauge
 extra_usage_topups_total{channel}
 ```
+
+**告警规则**（Alertmanager / 运维脚本）：
+
+1. `increase(extra_usage_underdraft_total[5m]) > 10` → 触发自动熔断：PATCH 该项目 `extra_usage_settings.enabled=false`，发送运维通知
+2. `increase(extra_usage_missing_rate_total[5m]) > 0` → 告警（数据一致性）
+3. `increase(extra_usage_missing_publisher_total[5m]) > 0` → 告警（数据一致性）
+4. `extra_usage_balance_fen < monthly_avg_spend / 30` → 低余额 dashboard 提示（Phase 3 再加邮件）
 
 ---
 
@@ -601,18 +700,21 @@ extra_usage_topups_total{channel}
 
 ### Phase 1（核心）
 
-1. Migration `017_extra_usage.sql`（表、列、索引、orders 扩展）
-2. `internal/types/extra_usage.go`（types 定义）
+1. Migration `017_extra_usage.sql`（表、列、索引、orders 扩展；`publisher` 列 + backfill）
+2. `internal/types/extra_usage.go`（types 定义）+ `internal/types/request.go` 加 `ClientKind*` 常量
 3. `internal/store/extra_usage.go`（CRUD + 原子扣费 + 充值）
 4. `internal/config/config.go` 新增 `ExtraUsageConfig`
-5. `internal/ratelimit/composite.go`：`PreCheck` 签名改为 `PreCheckResult`；新增 `PreCheckClassicOnly`
-6. `internal/proxy/resolve_model_middleware.go`（从 handler 抽出）
-7. `internal/proxy/subscription_eligibility_middleware.go`
-8. `internal/proxy/ratelimit_middleware.go` 改造
-9. `internal/proxy/extra_usage_guard_middleware.go`
-10. `internal/proxy/executor.go` 加 `settleExtraUsage` 钩子
-11. `internal/store/requests.go`：`CompleteRequest` 支持新字段
-12. 管理员内部接口 `admin:direct_topup`（不走支付，用于 E2E 测试）
+5. `internal/ratelimit/composite.go`：`PreCheck` 改为 `PreCheckResult`；新增 `PreCheckClassicOnly`；更新所有调用点
+6. `internal/modelcatalog/catalog.go` + `internal/admin/models.go`：`Model.Publisher` 读写 + 非空校验
+7. `internal/proxy/trace_middleware.go`：追加 `deriveClientKind`，写入 context
+8. `internal/proxy/resolve_model_middleware.go`（从 handler 抽出，填充 `RequestContext.Model *types.Model`）
+9. `internal/proxy/subscription_eligibility_middleware.go`
+10. `internal/proxy/ratelimit_middleware.go` 改造
+11. `internal/proxy/extra_usage_guard_middleware.go`
+12. `internal/proxy/executor.go` 加 `settleExtraUsage` 钩子
+13. `internal/store/requests.go`：`CompleteRequest` 支持新字段
+14. 管理员内部接口 `admin:direct_topup`（不走支付，用于 E2E 测试）
+15. Prometheus 指标 + 熔断脚本/rule（§7.4）
 
 ### Phase 2（用户可见）
 
@@ -643,8 +745,11 @@ extra_usage_topups_total{channel}
 | `internal/ratelimit/composite.go` | 修改 | PreCheck 返回结构体；新增 PreCheckClassicOnly |
 | `internal/ratelimit/engine.go` | 修改 | 同上 |
 | `internal/modelcatalog/catalog.go` | 修改 | `Model.Publisher` 字段、读写、JSON |
-| `internal/proxy/resolve_model_middleware.go` | 新增 | 从 handler 抽出 |
-| `internal/proxy/subscription_eligibility_middleware.go` | 新增 | 需求 b 判定 |
+| `internal/types/model.go` | 修改 | 加 `Publisher string` 字段 |
+| `internal/types/request.go` | 修改 | 加 `ClientKind*` 常量 + `TokenUsage` 不变 |
+| `internal/proxy/trace_middleware.go` | 修改 | 追加 `deriveClientKind`（独立于 TraceSource）|
+| `internal/proxy/resolve_model_middleware.go` | 新增 | 从 handler 抽出，写入 `*types.Model` |
+| `internal/proxy/subscription_eligibility_middleware.go` | 新增 | 需求 b 判定（读 ClientKind + Publisher） |
 | `internal/proxy/ratelimit_middleware.go` | 修改 | 三分支逻辑 |
 | `internal/proxy/extra_usage_guard_middleware.go` | 新增 | 通过校验 + intent 写入 |
 | `internal/proxy/executor.go` | 修改 | `settleExtraUsage` 钩子 |
