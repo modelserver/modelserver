@@ -1,5 +1,10 @@
 # Extra Usage 设计方案
 
+> **⚠️ 已废弃（2026-04-18）**：本文档被 `docs/superpowers/specs/2026-04-18-extra-usage-design.md` 取代。
+> 新方案覆盖了原方案未考虑的"客户端限制"场景（非 Claude Code 客户端访问 Claude 系列模型强制走 extra usage），
+> 并对中间件分层、计费口径（catalog `default_credit_rate` 而非 plan 覆盖）、orders 表扩展等做了调整。
+> 本文档仅作历史参考。
+
 ## 一、概述
 
 当用户的套餐 credit 窗口用量达到上限时，目前系统直接返回 `429 rate_limit_error`。Extra Usage 功能允许付费套餐用户在超限后继续使用，超出部分按 API 标准费率从预充值余额中扣费。
