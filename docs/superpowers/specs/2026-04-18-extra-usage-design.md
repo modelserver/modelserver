@@ -304,7 +304,9 @@ WITH month_spend AS (
   FROM extra_usage_transactions
   WHERE project_id = $1
     AND type = 'deduction'
-    AND created_at >= date_trunc('month', NOW() AT TIME ZONE 'Asia/Shanghai')
+    -- 月初（Asia/Shanghai 口径）→ 再转回 timestamptz，避免会话时区影响
+    AND created_at >= (date_trunc('month', NOW() AT TIME ZONE 'Asia/Shanghai')
+                       AT TIME ZONE 'Asia/Shanghai')
 )
 UPDATE extra_usage_settings s
    SET balance_fen = balance_fen - $2, updated_at = NOW()
@@ -321,7 +323,7 @@ INSERT INTO extra_usage_transactions
 VALUES ($1, 'deduction', -$2, $3, $4, $5, $6);
 ```
 
-`UPDATE ... RETURNING` 零行 → 余额/月度/状态校验失败 → 回滚事务并分类错误返回。月度窗口固定 `Asia/Shanghai` 时区（与 plans 计费一致）。
+`UPDATE ... RETURNING` 零行 → 余额/月度/状态校验失败 → 回滚事务并分类错误返回。月度窗口固定 `Asia/Shanghai` 时区（与 plans 计费一致），SQL 中 `date_trunc` 结果再 `AT TIME ZONE 'Asia/Shanghai'` 回到 timestamptz，消除 PostgreSQL 会话时区对边界判定的影响。`GetMonthlyExtraSpendFen` 与用户端 `GET /extra-usage` 使用完全相同的 CTE 口径。
 
 ### 4.3 Store 接口
 
@@ -334,7 +336,8 @@ type Store interface {
     // 原子扣费：失败返 ErrInsufficientBalance / ErrMonthlyLimitReached / ErrNotEnabled
     DeductExtraUsage(ctx, DeductReq) (newBalanceFen int64, err error)
 
-    // 充值：幂等（同一 order_id 二次调用直接返回当前余额）
+    // 充值：settings 行不存在时自动 INSERT ... ON CONFLICT DO UPDATE 创建默认行
+    // （enabled=false，balance=amount）。幂等：同一 order_id 二次调用直接返回当前余额。
     TopUpExtraUsage(ctx, TopUpReq) (newBalanceFen int64, err error)
 
     // 查询
