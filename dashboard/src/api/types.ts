@@ -163,7 +163,17 @@ export interface Request {
   error_message?: string;
   client_ip?: string;
   metadata?: Record<string, string>;
+  http_log_path?: string;
   created_at: string;
+}
+
+export interface HttpLogDocument {
+  request_headers: Record<string, string[]>;
+  request_body: unknown;
+  response_headers: Record<string, string[]>;
+  response_body: unknown;
+  response_status_code: number;
+  truncated?: boolean;
 }
 
 // --- Rate Limit Policy ---

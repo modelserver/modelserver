@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { useCurrentProject } from "@/hooks/useCurrentProject";
+import { useAuth } from "@/hooks/useAuth";
 import { useRequests, type RequestFilters } from "@/api/requests";
+import { useHttpLog } from "@/api/httpLog";
 import { useKeys } from "@/api/keys";
 import { useMembers } from "@/api/members";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -24,6 +26,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { Button } from "@/components/ui/button";
+import { HttpLogViewer } from "@/components/shared/HttpLogViewer";
 import type { Request } from "@/api/types";
 
 function formatTokens(n: number): string {
@@ -52,6 +56,13 @@ export function RequestsPage() {
   const [until, setUntil] = useState(defaultUntil);
   const [createdBy, setCreatedBy] = useState("");
   const [selected, setSelected] = useState<Request | null>(null);
+  const [showHttpLog, setShowHttpLog] = useState(false);
+  const { user } = useAuth();
+  const { data: httpLogData, isLoading: httpLogLoading } = useHttpLog(
+    projectId,
+    selected?.id,
+    showHttpLog,
+  );
 
   const { data: keysData } = useKeys(projectId);
   const apiKeys = keysData?.data ?? [];
@@ -278,7 +289,7 @@ export function RequestsPage() {
       )}
 
       {/* Detail drawer */}
-      <Sheet open={!!selected} onOpenChange={() => setSelected(null)}>
+      <Sheet open={!!selected} onOpenChange={() => { setSelected(null); setShowHttpLog(false); }}>
         <SheetContent className="overflow-y-auto">
           <SheetHeader>
             <SheetTitle>Request Details</SheetTitle>
@@ -321,6 +332,26 @@ export function RequestsPage() {
                   <pre className="whitespace-pre-wrap break-all rounded bg-destructive/10 p-3 text-xs text-destructive">
                     {selected.error_message}
                   </pre>
+                </div>
+              )}
+              {user?.is_superadmin && selected.http_log_path && (
+                <div className="space-y-2 border-t pt-3">
+                  {!showHttpLog ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => setShowHttpLog(true)}
+                    >
+                      View HTTP Log
+                    </Button>
+                  ) : httpLogLoading ? (
+                    <p className="text-xs text-muted-foreground">Loading HTTP log...</p>
+                  ) : httpLogData ? (
+                    <HttpLogViewer data={httpLogData} />
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Failed to load HTTP log.</p>
+                  )}
                 </div>
               )}
               <DetailRow label="Time" value={new Date(selected.created_at).toLocaleString()} />

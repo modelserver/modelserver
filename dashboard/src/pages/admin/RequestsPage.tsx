@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { useAdminRequests, type AdminRequestFilters } from "@/api/adminRequests";
+import { useAdminHttpLog } from "@/api/httpLog";
 import { useUpstreams } from "@/api/upstreams";
 import { useUsers } from "@/api/users";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -23,6 +24,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { Button } from "@/components/ui/button";
+import { HttpLogViewer } from "@/components/shared/HttpLogViewer";
 import type { Request } from "@/api/types";
 
 function formatTokens(n: number): string {
@@ -49,6 +52,11 @@ export function AdminRequestsPage() {
   const [until, setUntil] = useState(defaultUntil);
   const [createdBy, setCreatedBy] = useState("");
   const [selected, setSelected] = useState<Request | null>(null);
+  const [showHttpLog, setShowHttpLog] = useState(false);
+  const { data: httpLogData, isLoading: httpLogLoading } = useAdminHttpLog(
+    selected?.id,
+    showHttpLog,
+  );
 
   const { data: upstreamsData } = useUpstreams(1, 100);
   const { data: usersData } = useUsers(1, 100);
@@ -237,7 +245,7 @@ export function AdminRequestsPage() {
       )}
 
       {/* Detail drawer */}
-      <Sheet open={!!selected} onOpenChange={() => setSelected(null)}>
+      <Sheet open={!!selected} onOpenChange={() => { setSelected(null); setShowHttpLog(false); }}>
         <SheetContent className="overflow-y-auto">
           <SheetHeader>
             <SheetTitle>Request Details</SheetTitle>
@@ -275,6 +283,26 @@ export function AdminRequestsPage() {
                   <pre className="whitespace-pre-wrap break-all rounded bg-destructive/10 p-3 text-xs text-destructive">
                     {selected.error_message}
                   </pre>
+                </div>
+              )}
+              {selected.http_log_path && (
+                <div className="space-y-2 border-t pt-3">
+                  {!showHttpLog ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => setShowHttpLog(true)}
+                    >
+                      View HTTP Log
+                    </Button>
+                  ) : httpLogLoading ? (
+                    <p className="text-xs text-muted-foreground">Loading HTTP log...</p>
+                  ) : httpLogData ? (
+                    <HttpLogViewer data={httpLogData} />
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Failed to load HTTP log.</p>
+                  )}
                 </div>
               )}
               <DetailRow label="Time" value={new Date(selected.created_at).toLocaleString()} />
