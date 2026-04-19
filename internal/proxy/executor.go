@@ -291,6 +291,9 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 				// Transform failure is not retryable; skip this upstream.
 				continue
 			}
+			if upstream.Provider == types.ProviderClaudeCode {
+				transformedBody = normalizeRequestBody(transformedBody)
+			}
 			bodyCache[cacheKey] = transformedBody
 		}
 
@@ -370,6 +373,11 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 		if err := transformer.SetUpstream(outReq, upstream, apiKeyForUpstream); err != nil {
 			logger.Error("set upstream failed", "error", err)
 			continue
+		}
+
+		// 6d1. Normalize client identity for ClaudeCode upstreams.
+		if upstream.Provider == types.ProviderClaudeCode {
+			normalizeClientIdentity(outReq)
 		}
 
 		// 6d2. Defensive whitelist: strip any header not explicitly allowed.

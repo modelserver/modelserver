@@ -61,25 +61,7 @@ func directorSetClaudeCodeUpstream(req *http.Request, baseURL, accessToken strin
 	}
 	req.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
 
-	// X-App: always set (simple identifier the client also sends).
 	req.Header.Set("X-App", "cli")
-
-	// User-Agent and X-Stainless-* headers: pass through client values.
-	// Only set defaults when the client doesn't provide them.
-	setHeaderDefault(req, "User-Agent", "claude-cli/0.0.0 (external, cli)")
-	setHeaderDefault(req, "X-Stainless-Lang", "js")
-	setHeaderDefault(req, "X-Stainless-Package-Version", "0.0.0")
-	setHeaderDefault(req, "X-Stainless-OS", "Linux")
-	setHeaderDefault(req, "X-Stainless-Runtime", "bun")
-	setHeaderDefault(req, "X-Stainless-Runtime-Version", "0.0.0")
-	setHeaderDefault(req, "X-Stainless-Arch", "x64")
-}
-
-// setHeaderDefault sets a header only if the request does not already carry it.
-func setHeaderDefault(req *http.Request, key, fallback string) {
-	if req.Header.Get(key) == "" {
-		req.Header.Set(key, fallback)
-	}
 }
 
 // mergeClaudeCodeBetaHeaders ensures claudeCodeRequiredBetas are present,

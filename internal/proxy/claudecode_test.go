@@ -45,20 +45,8 @@ func TestDirectorSetClaudeCodeUpstream(t *testing.T) {
 	if got := req.Header.Get("Anthropic-Beta"); got != wantBeta {
 		t.Errorf("Anthropic-Beta = %s, want %s", got, wantBeta)
 	}
-	// No client User-Agent → default should be set.
-	if got := req.Header.Get("User-Agent"); got != "claude-cli/0.0.0 (external, cli)" {
-		t.Errorf("User-Agent = %s, want claude-cli/0.0.0 (external, cli)", got)
-	}
-	// No client X-Stainless-* → defaults should be set.
-	if got := req.Header.Get("X-Stainless-Package-Version"); got != "0.0.0" {
-		t.Errorf("X-Stainless-Package-Version = %s, want 0.0.0", got)
-	}
-	if got := req.Header.Get("X-Stainless-Runtime"); got != "bun" {
-		t.Errorf("X-Stainless-Runtime = %s, want bun", got)
-	}
-	if got := req.Header.Get("X-Stainless-Runtime-Version"); got != "0.0.0" {
-		t.Errorf("X-Stainless-Runtime-Version = %s, want 0.0.0", got)
-	}
+	// User-Agent and X-Stainless-* are set by normalizeClientIdentity
+	// (called from executor), not by directorSetClaudeCodeUpstream.
 	if req.Header.Get("Connection") != "keep-alive" {
 		t.Errorf("Connection = %s, want keep-alive", req.Header.Get("Connection"))
 	}
