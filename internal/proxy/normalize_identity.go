@@ -19,13 +19,13 @@ var (
 const (
 	fixedUserAgent      = "claude-cli/2.1.114 (external, cli)"
 	fixedStainlessOS    = "Linux"
-	fixedStainlessRtVer = "v22.14.0"
+	fixedStainlessRtVer = "v24.3.0"
 	fixedStainlessPkgV  = "0.81.0"
 	fixedStainlessArch  = "x64"
 	fixedStainlessLang  = "js"
 	fixedStainlessRt    = "node"
 	fixedCCVersion      = "2.1.114"
-	fixedDeviceID       = "a01b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b"
+	fixedDeviceID       = "adf5123b3cacb7639ac3cf1e619d38e8b7f1a7ca37643f6bdee10807d710194b"
 )
 
 func normalizeClientIdentity(req *http.Request) {
