@@ -65,12 +65,11 @@ type RequestContext struct {
 
 	// HTTP logging state. HttpLogEnabled is set by the handler based on
 	// model publisher. The Captured* fields are populated by Execute()
-	// just before committing the response, capturing the actual upstream
-	// request data (after TransformBody + SetUpstream + sanitize).
-	HttpLogEnabled            bool
-	CapturedUpstreamBody      []byte
-	CapturedUpstreamHeaders   http.Header
-	CapturedRequestTruncated  bool
+	// before the retry loop, capturing the original client request data.
+	HttpLogEnabled           bool
+	CapturedClientBody       []byte
+	CapturedClientHeaders    http.Header
+	CapturedClientTruncated  bool
 }
 
 // proxyResult classifies the outcome of a single upstream attempt.
@@ -236,6 +235,19 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 	}
 
 	startTime := time.Now()
+
+	// Capture the original client request for HTTP logging (before any
+	// provider transforms). This only needs to happen once, outside the
+	// retry loop.
+	if e.httpLogger != nil && reqCtx.HttpLogEnabled {
+		captured := append([]byte(nil), originalBody...)
+		if e.httpLogCfg.MaxRequestBody > 0 && int64(len(captured)) > e.httpLogCfg.MaxRequestBody {
+			captured = captured[:e.httpLogCfg.MaxRequestBody]
+			reqCtx.CapturedClientTruncated = true
+		}
+		reqCtx.CapturedClientBody = captured
+		reqCtx.CapturedClientHeaders = r.Header.Clone()
+	}
 
 	// Track whether we've already attempted an OAuth token refresh for a
 	// claudecode upstream on this request. We retry at most once per request
@@ -528,16 +540,6 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			e.router.BindSession(reqCtx.SessionID, reqCtx.Model, upstream.ID)
 		}
 
-		if e.httpLogger != nil && reqCtx.HttpLogEnabled {
-			captured := append([]byte(nil), transformedBody...)
-			if e.httpLogCfg.MaxRequestBody > 0 && int64(len(captured)) > e.httpLogCfg.MaxRequestBody {
-				captured = captured[:e.httpLogCfg.MaxRequestBody]
-				reqCtx.CapturedRequestTruncated = true
-			}
-			reqCtx.CapturedUpstreamBody = captured
-			reqCtx.CapturedUpstreamHeaders = outReq.Header.Clone()
-		}
-
 		e.commitResponse(w, resp, candidate, reqCtx, transformer, startTime, cancelFn, logger)
 		return
 	}
@@ -715,12 +717,12 @@ func (e *Executor) commitErrorResponse(
 		rec := &httplog.Record{
 			RequestID:       reqCtx.RequestID,
 			ProjectID:       reqCtx.ProjectID,
-			RequestHeaders:  reqCtx.CapturedUpstreamHeaders,
-			RequestBody:     reqCtx.CapturedUpstreamBody,
+			RequestHeaders:  reqCtx.CapturedClientHeaders,
+			RequestBody:     reqCtx.CapturedClientBody,
 			ResponseHeaders: resp.Header.Clone(),
 			ResponseBody:    errBody,
 			ResponseStatus:  resp.StatusCode,
-			Truncated:       reqCtx.CapturedRequestTruncated,
+			Truncated:       reqCtx.CapturedClientTruncated,
 		}
 		e.httpLogger.Enqueue(rec)
 	}
@@ -864,13 +866,13 @@ func (e *Executor) commitStreamingResponse(
 			rec := &httplog.Record{
 				RequestID:       reqCtx.RequestID,
 				ProjectID:       reqCtx.ProjectID,
-				RequestHeaders:  reqCtx.CapturedUpstreamHeaders,
-				RequestBody:     reqCtx.CapturedUpstreamBody,
+				RequestHeaders:  reqCtx.CapturedClientHeaders,
+				RequestBody:     reqCtx.CapturedClientBody,
 				ResponseHeaders: respHeaders,
 				ResponseBody:    data,
 				ResponseStatus:  resp.StatusCode,
 				Streaming:       true,
-				Truncated:       truncated || reqCtx.CapturedRequestTruncated,
+				Truncated:       truncated || reqCtx.CapturedClientTruncated,
 			}
 			e.httpLogger.Enqueue(rec)
 		})
@@ -1028,12 +1030,12 @@ func (e *Executor) commitNonStreamingResponse(
 		rec := &httplog.Record{
 			RequestID:       reqCtx.RequestID,
 			ProjectID:       reqCtx.ProjectID,
-			RequestHeaders:  reqCtx.CapturedUpstreamHeaders,
-			RequestBody:     reqCtx.CapturedUpstreamBody,
+			RequestHeaders:  reqCtx.CapturedClientHeaders,
+			RequestBody:     reqCtx.CapturedClientBody,
 			ResponseHeaders: resp.Header.Clone(),
 			ResponseBody:    body,
 			ResponseStatus:  resp.StatusCode,
-			Truncated:       reqCtx.CapturedRequestTruncated,
+			Truncated:       reqCtx.CapturedClientTruncated,
 		}
 		if e.httpLogCfg.MaxResponseBody > 0 && int64(len(rec.ResponseBody)) > e.httpLogCfg.MaxResponseBody {
 			rec.ResponseBody = rec.ResponseBody[:e.httpLogCfg.MaxResponseBody]

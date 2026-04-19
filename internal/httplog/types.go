@@ -2,7 +2,7 @@ package httplog
 
 import "net/http"
 
-// Record holds all data to be logged for a single upstream request/response pair.
+// Record holds all data to be logged for a single client request / upstream response pair.
 type Record struct {
 	RequestID       string      `json:"request_id"`
 	ProjectID       string      `json:"project_id"`
