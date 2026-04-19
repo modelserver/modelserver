@@ -4,11 +4,12 @@ import "time"
 
 // Predefined plan names.
 const (
-	PlanPro    = "pro"
-	PlanMax5x  = "max_5x"
-	PlanMax20x = "max_20x"
-	PlanMax40x = "max_40x"
-	PlanMax80x = "max_80x"
+	PlanPro     = "pro"
+	PlanMax5x   = "max_5x"
+	PlanMax20x  = "max_20x"
+	PlanMax40x  = "max_40x"
+	PlanMax80x  = "max_80x"
+	PlanMax120x = "max_120x"
 )
 
 // Subscription status constants.
@@ -60,8 +61,8 @@ func (p *RateLimitPolicy) IsActive() bool {
 
 // CreditRule defines a credit budget for a time window.
 type CreditRule struct {
-	Window     string     `json:"window"`                // "5h", "1w", "1M"
-	WindowType string     `json:"window_type"`           // "sliding", "calendar", or "fixed"
+	Window     string     `json:"window"`      // "5h", "1w", "1M"
+	WindowType string     `json:"window_type"` // "sliding", "calendar", or "fixed"
 	MaxCredits int64      `json:"max_credits"`
 	Scope      string     `json:"scope,omitempty"`       // "project" or "key"; defaults to "project"
 	AnchorTime *time.Time `json:"anchor_time,omitempty"` // runtime-injected for fixed windows
@@ -122,7 +123,7 @@ func (p *RateLimitPolicy) ComputeCreditsWithDefault(model string, catalogDefault
 
 // ClassicRule defines a traditional rate limit.
 type ClassicRule struct {
-	Metric   string `json:"metric"`    // "rpm", "rpd", "tpm", "tpd"
+	Metric   string `json:"metric"` // "rpm", "rpd", "tpm", "tpd"
 	Limit    int64  `json:"limit"`
 	PerModel bool   `json:"per_model"`
 }
@@ -132,7 +133,7 @@ type Subscription struct {
 	ID        string    `json:"id"`
 	ProjectID string    `json:"project_id"`
 	PlanID    string    `json:"plan_id,omitempty"`
-	PlanName  string    `json:"plan_name"` // "pro", "max_5x", "max_20x", "max_40x", "max_80x", or custom
+	PlanName  string    `json:"plan_name"` // "pro", "max_5x", "max_20x", "max_40x", "max_80x", "max_120x", or custom
 	Status    string    `json:"status"`
 	StartsAt  time.Time `json:"starts_at"`
 	ExpiresAt time.Time `json:"expires_at"`
