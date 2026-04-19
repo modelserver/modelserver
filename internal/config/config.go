@@ -20,6 +20,7 @@ type Config struct {
 	CORS       CORSConfig       `yaml:"cors"       mapstructure:"cors"`
 	Billing    BillingConfig    `yaml:"billing"    mapstructure:"billing"`
 	ExtraUsage ExtraUsageConfig `yaml:"extra_usage" mapstructure:"extra_usage"`
+	HttpLog    HttpLogConfig    `yaml:"http_log"    mapstructure:"http_log"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -142,6 +143,20 @@ type ExtraUsageConfig struct {
 	MonthlyWindowTZ    string `yaml:"monthly_window_tz"    mapstructure:"monthly_window_tz"`
 }
 
+// HttpLogConfig controls HTTP body+header logging to S3-compatible storage.
+type HttpLogConfig struct {
+	Enabled         bool   `yaml:"enabled"           mapstructure:"enabled"`
+	Bucket          string `yaml:"bucket"            mapstructure:"bucket"`
+	Region          string `yaml:"region"             mapstructure:"region"`
+	Endpoint        string `yaml:"endpoint"           mapstructure:"endpoint"`
+	AccessKeyID     string `yaml:"access_key_id"      mapstructure:"access_key_id"`
+	SecretAccessKey  string `yaml:"secret_access_key"  mapstructure:"secret_access_key"`
+	PathStyle       bool   `yaml:"path_style"         mapstructure:"path_style"`
+	MaxRequestBody  int64  `yaml:"max_request_body"   mapstructure:"max_request_body"`
+	MaxResponseBody int64  `yaml:"max_response_body"  mapstructure:"max_response_body"`
+	BufferSize      int    `yaml:"buffer_size"        mapstructure:"buffer_size"`
+}
+
 // setDefaults registers all default values with the viper instance.
 // Keys without meaningful defaults are bound via BindEnv so they can
 // still be populated from MODELSERVER_* environment variables.
@@ -224,6 +239,18 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("extra_usage.max_topup_fen", 200000)
 	v.SetDefault("extra_usage.daily_topup_limit_fen", 500000)
 	v.SetDefault("extra_usage.monthly_window_tz", "Asia/Shanghai")
+
+	// HTTP logging (default: off).
+	v.SetDefault("http_log.enabled", false)
+	v.SetDefault("http_log.path_style", true)
+	v.SetDefault("http_log.max_request_body", 52428800)
+	v.SetDefault("http_log.max_response_body", 52428800)
+	v.SetDefault("http_log.buffer_size", 1000)
+	_ = v.BindEnv("http_log.bucket")
+	_ = v.BindEnv("http_log.region")
+	_ = v.BindEnv("http_log.endpoint")
+	_ = v.BindEnv("http_log.access_key_id")
+	_ = v.BindEnv("http_log.secret_access_key")
 }
 
 // newViper creates a pre-configured viper instance with defaults, env binding,

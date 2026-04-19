@@ -57,6 +57,7 @@ type Request struct {
 	IsExtraUsage      bool   `json:"is_extra_usage,omitempty"`
 	ExtraUsageCostFen int64  `json:"extra_usage_cost_fen,omitempty"`
 	ExtraUsageReason  string `json:"extra_usage_reason,omitempty"`
+	HttpLogPath       string `json:"http_log_path,omitempty"`
 	CreatedAt   time.Time          `json:"created_at"`
 }
 

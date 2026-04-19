@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/modelserver/modelserver/internal/httplog"
 	"github.com/modelserver/modelserver/internal/collector"
 	"github.com/modelserver/modelserver/internal/modelcatalog"
 	"github.com/modelserver/modelserver/internal/store"
@@ -28,10 +29,11 @@ type Handler struct {
 	catalog     modelcatalog.Catalog
 	logger      *slog.Logger
 	maxBodySize int64
+	httpLogger  *httplog.Logger
 }
 
 // NewHandler creates a new proxy handler.
-func NewHandler(executor *Executor, router *Router, st *store.Store, coll *collector.Collector, catalog modelcatalog.Catalog, logger *slog.Logger, maxBodySize int64) *Handler {
+func NewHandler(executor *Executor, router *Router, st *store.Store, coll *collector.Collector, catalog modelcatalog.Catalog, logger *slog.Logger, maxBodySize int64, bl *httplog.Logger) *Handler {
 	return &Handler{
 		executor:    executor,
 		router:      router,
@@ -40,6 +42,7 @@ func NewHandler(executor *Executor, router *Router, st *store.Store, coll *colle
 		catalog:     catalog,
 		logger:      logger,
 		maxBodySize: maxBodySize,
+		httpLogger:  bl,
 	}
 }
 
@@ -320,6 +323,12 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, all
 		APIKey:           apiKey,
 		Project:          project,
 		RequestID:        pendingReq.ID,
+	}
+
+	if h.httpLogger != nil {
+		if m := ModelFromContext(r.Context()); m != nil && m.Publisher == types.PublisherAnthropic {
+			reqCtx.HttpLogEnabled = true
+		}
 	}
 
 	h.executor.Execute(w, r, reqCtx)

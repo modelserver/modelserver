@@ -113,7 +113,8 @@ func (s *Store) ListRequests(projectID string, p types.PaginationParams, filters
 			r.provider, r.model, r.streaming, r.status, r.input_tokens, r.output_tokens, r.cache_creation_tokens, r.cache_read_tokens,
 			r.credits_consumed, r.latency_ms, r.ttft_ms, COALESCE(r.error_message, ''), r.client_ip, r.created_at,
 			COALESCE(og.client_name, '') as oauth_grant_client_name,
-			r.metadata
+			r.metadata,
+			COALESCE(r.http_log_path, '')
 		FROM requests r
 		LEFT JOIN oauth_grants og ON og.id = r.oauth_grant_id
 		%s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
@@ -133,7 +134,7 @@ func (s *Store) ListRequests(projectID string, p types.PaginationParams, filters
 			&r.Provider, &r.Model, &r.Streaming, &r.Status,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
 			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt,
-			&r.OAuthGrantClientName, &metadataJSON); err != nil {
+			&r.OAuthGrantClientName, &metadataJSON, &r.HttpLogPath); err != nil {
 			return nil, 0, err
 		}
 		scanMetadata(&r, metadataJSON)
@@ -212,7 +213,8 @@ func (s *Store) ListAllRequests(p types.PaginationParams, filters RequestFilters
 			r.provider, r.model, r.streaming, r.status, r.input_tokens, r.output_tokens, r.cache_creation_tokens, r.cache_read_tokens,
 			r.credits_consumed, r.latency_ms, r.ttft_ms, COALESCE(r.error_message, ''), r.client_ip, r.created_at,
 			COALESCE(og.client_name, '') as oauth_grant_client_name,
-			r.metadata
+			r.metadata,
+			COALESCE(r.http_log_path, '')
 		FROM requests r
 		LEFT JOIN oauth_grants og ON og.id = r.oauth_grant_id
 		%s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
@@ -232,7 +234,7 @@ func (s *Store) ListAllRequests(p types.PaginationParams, filters RequestFilters
 			&r.Provider, &r.Model, &r.Streaming, &r.Status,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
 			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt,
-			&r.OAuthGrantClientName, &metadataJSON); err != nil {
+			&r.OAuthGrantClientName, &metadataJSON, &r.HttpLogPath); err != nil {
 			return nil, 0, err
 		}
 		scanMetadata(&r, metadataJSON)
@@ -295,7 +297,8 @@ func (s *Store) ListRequestsByTraceID(traceID string) ([]types.Request, error) {
 			r.provider, r.model, r.streaming, r.status, r.input_tokens, r.output_tokens, r.cache_creation_tokens, r.cache_read_tokens,
 			r.credits_consumed, r.latency_ms, r.ttft_ms, COALESCE(r.error_message, ''), r.client_ip, r.created_at,
 			COALESCE(og.client_name, '') as oauth_grant_client_name,
-			r.metadata
+			r.metadata,
+			COALESCE(r.http_log_path, '')
 		FROM requests r
 		LEFT JOIN oauth_grants og ON og.id = r.oauth_grant_id
 		WHERE r.trace_id = $1 ORDER BY r.created_at ASC`, traceID)
@@ -312,13 +315,49 @@ func (s *Store) ListRequestsByTraceID(traceID string) ([]types.Request, error) {
 			&r.Provider, &r.Model, &r.Streaming, &r.Status,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
 			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt,
-			&r.OAuthGrantClientName, &metadataJSON); err != nil {
+			&r.OAuthGrantClientName, &metadataJSON, &r.HttpLogPath); err != nil {
 			return nil, err
 		}
 		scanMetadata(&r, metadataJSON)
 		requests = append(requests, r)
 	}
 	return requests, rows.Err()
+}
+
+// UpdateHttpLogPath sets the S3 key for the http log on a request row.
+func (s *Store) UpdateHttpLogPath(requestID, path string) error {
+	_, err := s.pool.Exec(context.Background(),
+		`UPDATE requests SET http_log_path = $1 WHERE id = $2`,
+		path, requestID,
+	)
+	return err
+}
+
+// GetRequest returns a single request by ID.
+func (s *Store) GetRequest(id string) (*types.Request, error) {
+	var r types.Request
+	var metadataJSON []byte
+	err := s.pool.QueryRow(context.Background(), `
+		SELECT r.id, r.project_id, COALESCE(r.api_key_id::text, ''), COALESCE(r.oauth_grant_id::text, ''),
+			COALESCE(r.upstream_id::text, ''), COALESCE(r.trace_id::text, ''), COALESCE(r.msg_id, ''),
+			r.provider, r.model, r.streaming, r.status, r.input_tokens, r.output_tokens, r.cache_creation_tokens, r.cache_read_tokens,
+			r.credits_consumed, r.latency_ms, r.ttft_ms, COALESCE(r.error_message, ''), r.client_ip, r.created_at,
+			COALESCE(og.client_name, '') as oauth_grant_client_name,
+			r.metadata,
+			COALESCE(r.http_log_path, '')
+		FROM requests r
+		LEFT JOIN oauth_grants og ON og.id = r.oauth_grant_id
+		WHERE r.id = $1`, id,
+	).Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.OAuthGrantID, &r.UpstreamID, &r.TraceID, &r.MsgID,
+		&r.Provider, &r.Model, &r.Streaming, &r.Status,
+		&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
+		&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt,
+		&r.OAuthGrantClientName, &metadataJSON, &r.HttpLogPath)
+	if err != nil {
+		return nil, err
+	}
+	scanMetadata(&r, metadataJSON)
+	return &r, nil
 }
 
 // scanMetadata parses JSONB metadata into the Request's Metadata map.

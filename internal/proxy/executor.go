@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/modelserver/modelserver/internal/httplog"
 	"github.com/modelserver/modelserver/internal/collector"
 	"github.com/modelserver/modelserver/internal/config"
 	"github.com/modelserver/modelserver/internal/metrics"
@@ -61,6 +62,15 @@ type RequestContext struct {
 	ExtraUsageCostFen         int64
 	ExtraUsageReason          string
 	ExtraUsageBalanceAfterFen int64
+
+	// HTTP logging state. HttpLogEnabled is set by the handler based on
+	// model publisher. The Captured* fields are populated by Execute()
+	// just before committing the response, capturing the actual upstream
+	// request data (after TransformBody + SetUpstream + sanitize).
+	HttpLogEnabled            bool
+	CapturedUpstreamBody      []byte
+	CapturedUpstreamHeaders   http.Header
+	CapturedRequestTruncated  bool
 }
 
 // proxyResult classifies the outcome of a single upstream attempt.
@@ -83,6 +93,8 @@ type Executor struct {
 	logger         *slog.Logger
 	maxBodySize    int64
 	extraUsageCfg  config.ExtraUsageConfig
+	httpLogger     *httplog.Logger
+	httpLogCfg     config.HttpLogConfig
 }
 
 // NewExecutor creates a new Executor wired to the given Router and dependencies.
@@ -95,6 +107,8 @@ func NewExecutor(
 	logger *slog.Logger,
 	maxBodySize int64,
 	extraUsageCfg config.ExtraUsageConfig,
+	bl *httplog.Logger,
+	blCfg config.HttpLogConfig,
 ) *Executor {
 	return &Executor{
 		router:        router,
@@ -117,6 +131,8 @@ func NewExecutor(
 		rateLimiter: limiter,
 		logger:      logger,
 		maxBodySize: maxBodySize,
+		httpLogger:  bl,
+		httpLogCfg:  blCfg,
 	}
 }
 
@@ -512,6 +528,16 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			e.router.BindSession(reqCtx.SessionID, reqCtx.Model, upstream.ID)
 		}
 
+		if e.httpLogger != nil && reqCtx.HttpLogEnabled {
+			captured := append([]byte(nil), transformedBody...)
+			if e.httpLogCfg.MaxRequestBody > 0 && int64(len(captured)) > e.httpLogCfg.MaxRequestBody {
+				captured = captured[:e.httpLogCfg.MaxRequestBody]
+				reqCtx.CapturedRequestTruncated = true
+			}
+			reqCtx.CapturedUpstreamBody = captured
+			reqCtx.CapturedUpstreamHeaders = outReq.Header.Clone()
+		}
+
 		e.commitResponse(w, resp, candidate, reqCtx, transformer, startTime, cancelFn, logger)
 		return
 	}
@@ -685,6 +711,20 @@ func (e *Executor) commitErrorResponse(
 		e.collector.Record(req)
 	}
 
+	if e.httpLogger != nil && reqCtx.HttpLogEnabled && reqCtx.RequestID != "" {
+		rec := &httplog.Record{
+			RequestID:       reqCtx.RequestID,
+			ProjectID:       reqCtx.ProjectID,
+			RequestHeaders:  reqCtx.CapturedUpstreamHeaders,
+			RequestBody:     reqCtx.CapturedUpstreamBody,
+			ResponseHeaders: resp.Header.Clone(),
+			ResponseBody:    errBody,
+			ResponseStatus:  resp.StatusCode,
+			Truncated:       reqCtx.CapturedRequestTruncated,
+		}
+		e.httpLogger.Enqueue(rec)
+	}
+
 	// Forward the error response to the client (stripping hop-by-hop headers).
 	for key, values := range resp.Header {
 		if isHopByHopHeader(key) {
@@ -812,10 +852,34 @@ func (e *Executor) commitStreamingResponse(
 		}
 	})
 
+	// Optionally wrap with TeeReadCloser for http logging.
+	var streamReader io.ReadCloser = wrapped
+	if e.httpLogger != nil && reqCtx.HttpLogEnabled && reqCtx.RequestID != "" {
+		maxResp := e.httpLogCfg.MaxResponseBody
+		if maxResp <= 0 {
+			maxResp = 52428800
+		}
+		respHeaders := resp.Header.Clone()
+		streamReader = httplog.NewTeeReadCloser(wrapped, maxResp, func(data []byte, truncated bool) {
+			rec := &httplog.Record{
+				RequestID:       reqCtx.RequestID,
+				ProjectID:       reqCtx.ProjectID,
+				RequestHeaders:  reqCtx.CapturedUpstreamHeaders,
+				RequestBody:     reqCtx.CapturedUpstreamBody,
+				ResponseHeaders: respHeaders,
+				ResponseBody:    data,
+				ResponseStatus:  resp.StatusCode,
+				Streaming:       true,
+				Truncated:       truncated || reqCtx.CapturedRequestTruncated,
+			}
+			e.httpLogger.Enqueue(rec)
+		})
+	}
+
 	// Flush streaming data to the client.
 	flusher, _ := w.(http.Flusher)
 
-	n, copyErr := copyWithFlush(wrapped, w, flusher)
+	n, copyErr := copyWithFlush(streamReader, w, flusher)
 	if copyErr != nil {
 		logger.Warn("stream_interrupted",
 			"request_id", reqCtx.RequestID,
@@ -826,7 +890,7 @@ func (e *Executor) commitStreamingResponse(
 		e.router.Metrics().RecordError(candidate.Upstream.ID)
 	}
 
-	wrapped.Close()
+	streamReader.Close()
 }
 
 // commitNonStreamingResponse reads the full response, parses metrics, and
@@ -958,6 +1022,24 @@ func (e *Executor) commitNonStreamingResponse(
 			CacheCreationTokens: respMetrics.CacheCreationTokens,
 			CacheReadTokens:     respMetrics.CacheReadTokens,
 		})
+	}
+
+	if e.httpLogger != nil && reqCtx.HttpLogEnabled && reqCtx.RequestID != "" {
+		rec := &httplog.Record{
+			RequestID:       reqCtx.RequestID,
+			ProjectID:       reqCtx.ProjectID,
+			RequestHeaders:  reqCtx.CapturedUpstreamHeaders,
+			RequestBody:     reqCtx.CapturedUpstreamBody,
+			ResponseHeaders: resp.Header.Clone(),
+			ResponseBody:    body,
+			ResponseStatus:  resp.StatusCode,
+			Truncated:       reqCtx.CapturedRequestTruncated,
+		}
+		if e.httpLogCfg.MaxResponseBody > 0 && int64(len(rec.ResponseBody)) > e.httpLogCfg.MaxResponseBody {
+			rec.ResponseBody = rec.ResponseBody[:e.httpLogCfg.MaxResponseBody]
+			rec.Truncated = true
+		}
+		e.httpLogger.Enqueue(rec)
 	}
 }
 

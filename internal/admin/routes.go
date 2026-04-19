@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/modelserver/modelserver/internal/auth"
 	"github.com/modelserver/modelserver/internal/billing"
+	"github.com/modelserver/modelserver/internal/httplog"
 	"github.com/modelserver/modelserver/internal/config"
 	"github.com/modelserver/modelserver/internal/modelcatalog"
 	"github.com/modelserver/modelserver/internal/store"
@@ -16,7 +17,7 @@ import (
 // is the in-memory model catalog; admin mutations to /models refresh it in
 // place, and write paths to /upstreams, /routing/routes, /keys, /plans,
 // /policies use it to reject unknown model names.
-func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byte, jwtMgr *auth.JWTManager, catalog modelcatalog.Catalog) {
+func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byte, jwtMgr *auth.JWTManager, catalog modelcatalog.Catalog, httpLogger *httplog.Logger) {
 	// Construct payment client if configured.
 	var payClient billing.PaymentClient
 	if cfg.Billing.PaymentAPIURL != "" {
@@ -135,6 +136,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 			r.Route("/admin/requests", func(r chi.Router) {
 				r.Use(RequireSuperadmin)
 				r.Get("/", handleListAllRequests(st))
+				r.Get("/{requestID}/http-log", handleGetHttpLog(st, httpLogger))
 			})
 
 			// Admin: extra usage overview + direct top-up (superadmin only).
@@ -212,6 +214,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 
 					// Requests & Usage.
 					r.Get("/requests", handleListRequests(st))
+					r.Get("/requests/{requestID}/http-log", handleGetHttpLog(st, httpLogger))
 					r.Get("/usage", handleGetUsage(st))
 
 					// Traces.

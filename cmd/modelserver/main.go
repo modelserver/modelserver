@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/modelserver/modelserver/internal/admin"
 	"github.com/modelserver/modelserver/internal/auth"
+	"github.com/modelserver/modelserver/internal/httplog"
 	"github.com/modelserver/modelserver/internal/collector"
 	"github.com/modelserver/modelserver/internal/config"
 	"github.com/modelserver/modelserver/internal/crypto"
@@ -114,6 +115,19 @@ func main() {
 	coll.Start()
 	defer coll.Stop()
 
+	// Initialize http logger.
+	var httpLogger *httplog.Logger
+	if cfg.HttpLog.Enabled {
+		var blErr error
+		httpLogger, blErr = httplog.New(cfg.HttpLog, st, logger)
+		if blErr != nil {
+			log.Fatalf("failed to initialize http logger: %v", blErr)
+		}
+		httpLogger.Start(4)
+		defer httpLogger.Stop()
+		logger.Info("http logging enabled", "bucket", cfg.HttpLog.Bucket)
+	}
+
 	// Load upstreams, groups, routes, and the model catalog for the routing engine.
 	upstreams, err := st.ListUpstreams()
 	if err != nil {
@@ -188,8 +202,8 @@ func main() {
 	// Initialize rate limiter.
 	rateLimiter := ratelimit.NewCompositeRateLimiter(st, logger)
 
-	executor := proxy.NewExecutor(router, st, coll, rateLimiter, catalog, logger, cfg.Server.MaxRequestBody, cfg.ExtraUsage)
-	proxyHandler := proxy.NewHandler(executor, router, st, coll, catalog, logger, cfg.Server.MaxRequestBody)
+	executor := proxy.NewExecutor(router, st, coll, rateLimiter, catalog, logger, cfg.Server.MaxRequestBody, cfg.ExtraUsage, httpLogger, cfg.HttpLog)
+	proxyHandler := proxy.NewHandler(executor, router, st, coll, catalog, logger, cfg.Server.MaxRequestBody, httpLogger)
 
 	// --- Proxy server ---
 	proxyRouter := chi.NewRouter()
@@ -261,7 +275,7 @@ func main() {
 	jwtMgr := auth.NewJWTManager(cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL)
 
 	// Mount admin API routes.
-	admin.MountRoutes(adminRouter, st, cfg, encryptionKey, jwtMgr, catalog)
+	admin.MountRoutes(adminRouter, st, cfg, encryptionKey, jwtMgr, catalog, httpLogger)
 
 	adminServer := &http.Server{
 		Addr:    cfg.Server.AdminAddr,
