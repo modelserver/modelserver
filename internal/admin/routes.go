@@ -137,6 +137,13 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 				r.Get("/", handleListAllRequests(st))
 			})
 
+			// Admin: extra usage overview + direct top-up (superadmin only).
+			r.Route("/admin/extra-usage", func(r chi.Router) {
+				r.Use(RequireSuperadmin)
+				r.Get("/overview", handleAdminExtraUsageOverview(st))
+				r.Post("/projects/{projectID}/topup", handleAdminExtraUsageDirectTopup(st))
+			})
+
 			// Projects.
 			r.Route("/projects", func(r chi.Router) {
 				r.Get("/", handleListProjects(st))
@@ -195,6 +202,13 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 					r.Post("/orders", handleCreateOrder(st, payClient, cfg.Billing))
 					r.Get("/orders/{orderID}", handleGetOrder(st))
 					r.Post("/orders/{orderID}/cancel", handleCancelOrder(st))
+
+					// Extra usage.
+					r.Get("/extra-usage", handleGetExtraUsage(st, cfg.ExtraUsage))
+					r.Put("/extra-usage", handleUpdateExtraUsage(st))
+					r.Get("/extra-usage/transactions", handleListExtraUsageTransactions(st))
+					r.Post("/extra-usage/topup", handleCreateExtraUsageTopup(st, payClient, cfg.Billing, cfg.ExtraUsage))
+					r.Get("/extra-usage/topup/{orderID}", handleGetExtraUsageTopup(st))
 
 					// Requests & Usage.
 					r.Get("/requests", handleListRequests(st))

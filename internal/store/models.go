@@ -10,13 +10,13 @@ import (
 	"github.com/modelserver/modelserver/internal/types"
 )
 
-const modelColumns = `name, display_name, COALESCE(description, ''), aliases, default_credit_rate, status, metadata, created_at, updated_at`
+const modelColumns = `name, display_name, COALESCE(description, ''), aliases, default_credit_rate, status, publisher, metadata, created_at, updated_at`
 
 func scanModel(row pgx.Row) (*types.Model, error) {
 	m := &types.Model{}
 	var rateRaw, metadataRaw []byte
 	if err := row.Scan(&m.Name, &m.DisplayName, &m.Description, &m.Aliases,
-		&rateRaw, &m.Status, &metadataRaw, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		&rateRaw, &m.Status, &m.Publisher, &metadataRaw, &m.CreatedAt, &m.UpdatedAt); err != nil {
 		return nil, err
 	}
 	if m.Aliases == nil {
@@ -54,10 +54,10 @@ func (s *Store) CreateModel(m *types.Model) error {
 		status = types.ModelStatusActive
 	}
 	return s.pool.QueryRow(context.Background(), `
-		INSERT INTO models (name, display_name, description, aliases, default_credit_rate, status, metadata)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO models (name, display_name, description, aliases, default_credit_rate, status, publisher, metadata)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING created_at, updated_at`,
-		m.Name, m.DisplayName, nullString(m.Description), aliases, nullableJSON(rateJSON), status, metadataJSON,
+		m.Name, m.DisplayName, nullString(m.Description), aliases, nullableJSON(rateJSON), status, m.Publisher, metadataJSON,
 	).Scan(&m.CreatedAt, &m.UpdatedAt)
 }
 

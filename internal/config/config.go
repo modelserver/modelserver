@@ -19,6 +19,7 @@ type Config struct {
 	Log        LogConfig        `yaml:"log"        mapstructure:"log"`
 	CORS       CORSConfig       `yaml:"cors"       mapstructure:"cors"`
 	Billing    BillingConfig    `yaml:"billing"    mapstructure:"billing"`
+	ExtraUsage ExtraUsageConfig `yaml:"extra_usage" mapstructure:"extra_usage"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -127,6 +128,20 @@ type BillingConfig struct {
 	ReturnURL     string `yaml:"return_url"       mapstructure:"return_url"`
 }
 
+// ExtraUsageConfig controls the extra-usage subsystem. `Enabled` is the
+// global circuit breaker (false rejects every guard check regardless of
+// per-project settings). `CreditPriceFen` converts catalog credits into CNY
+// fen and is runtime-writable via admin API. The topup_* limits bound a
+// single call and a project's daily aggregate.
+type ExtraUsageConfig struct {
+	Enabled            bool   `yaml:"enabled"              mapstructure:"enabled"`
+	CreditPriceFen     int64  `yaml:"credit_price_fen"     mapstructure:"credit_price_fen"`
+	MinTopupFen        int64  `yaml:"min_topup_fen"        mapstructure:"min_topup_fen"`
+	MaxTopupFen        int64  `yaml:"max_topup_fen"        mapstructure:"max_topup_fen"`
+	DailyTopupLimitFen int64  `yaml:"daily_topup_limit_fen" mapstructure:"daily_topup_limit_fen"`
+	MonthlyWindowTZ    string `yaml:"monthly_window_tz"    mapstructure:"monthly_window_tz"`
+}
+
 // setDefaults registers all default values with the viper instance.
 // Keys without meaningful defaults are bound via BindEnv so they can
 // still be populated from MODELSERVER_* environment variables.
@@ -199,6 +214,16 @@ func setDefaults(v *viper.Viper) {
 	_ = v.BindEnv("billing.payment_api_key")
 	_ = v.BindEnv("billing.notify_url")
 	_ = v.BindEnv("billing.return_url")
+
+	// Extra usage. Default-off for safe rollout (per spec §6.3): the
+	// subscription-eligibility middleware still annotates requests and the
+	// guard becomes a no-op until an operator flips this to true in config.
+	v.SetDefault("extra_usage.enabled", false)
+	v.SetDefault("extra_usage.credit_price_fen", 5438)
+	v.SetDefault("extra_usage.min_topup_fen", 1000)
+	v.SetDefault("extra_usage.max_topup_fen", 200000)
+	v.SetDefault("extra_usage.daily_topup_limit_fen", 500000)
+	v.SetDefault("extra_usage.monthly_window_tz", "Asia/Shanghai")
 }
 
 // newViper creates a pre-configured viper instance with defaults, env binding,

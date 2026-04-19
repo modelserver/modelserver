@@ -17,6 +17,7 @@ import (
 const (
 	ctxTraceID     contextKey = "trace_id"
 	ctxTraceSource contextKey = "trace_source"
+	ctxClientKind  contextKey = "client_kind"
 
 	openCodeTraceHeader = "X-Opencode-Session"
 	codexTraceHeader    = "Session_id"
@@ -46,6 +47,17 @@ func TraceSourceFromContext(ctx context.Context) string {
 	return ""
 }
 
+// ClientKindFromContext returns the client-kind classification derived by the
+// trace middleware. Unlike TraceSource, this does not prefer X-Trace-Id
+// headers — it identifies the upstream client so subscription-eligibility
+// checks can decide whether to route to extra usage.
+func ClientKindFromContext(ctx context.Context) string {
+	if k, ok := ctx.Value(ctxClientKind).(string); ok {
+		return k
+	}
+	return types.ClientKindUnknown
+}
+
 // TraceMiddleware extracts trace IDs from multiple sources.
 // If no trace ID is found from any source, no trace context is set — except for
 // OpenClaw, which does not send a session ID and uses the API key ID as trace ID.
@@ -68,9 +80,40 @@ func TraceMiddleware(traceCfg config.TraceConfig) func(http.Handler) http.Handle
 				ctx = context.WithValue(ctx, ctxTraceID, traceID)
 				ctx = context.WithValue(ctx, ctxTraceSource, source)
 			}
+
+			// Independent client-kind detection (decoupled from TraceSource
+			// precedence — a Claude Code request carrying X-Trace-Id must
+			// still be classified as claude-code for subscription-eligibility).
+			ctx = context.WithValue(ctx, ctxClientKind, deriveClientKind(r, traceCfg))
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// deriveClientKind classifies the upstream client independent of trace-id
+// extraction. Spec §3.2 requires this to be decoupled from TraceSource
+// precedence AND from the trace_*_enabled config flags — those flags turn
+// off trace-id ingestion, not client classification. If we gated client
+// detection on them, disabling claude_code_trace_enabled would silently
+// force every Claude Code request into the client-restriction extra-usage
+// branch, which is a major surprise for operators.
+func deriveClientKind(r *http.Request, cfg config.TraceConfig) string {
+	_ = cfg // kept for future per-client flags; today all checks run unconditionally.
+	if id, err := tryExtractClaudeCodeTraceID(r); err == nil && id != "" {
+		return types.ClientKindClaudeCode
+	}
+	ua := strings.ToLower(r.Header.Get("User-Agent"))
+	if strings.Contains(ua, "opencode/") ||
+		strings.TrimSpace(r.Header.Get(openCodeTraceHeader)) != "" {
+		return types.ClientKindOpenCode
+	}
+	if isOpenClawRequest(r) {
+		return types.ClientKindOpenClaw
+	}
+	if strings.TrimSpace(r.Header.Get(codexTraceHeader)) != "" {
+		return types.ClientKindCodex
+	}
+	return types.ClientKindUnknown
 }
 
 // extractTraceID tries each source in priority order and returns the trace ID

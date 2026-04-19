@@ -88,3 +88,19 @@ billing:
   # URL the user is redirected to after completing payment.
   # Can also be set via MODELSERVER_BILLING_RETURN_URL environment variable.
   return_url: ""
+
+extra_usage:
+  # Global circuit breaker. When false, every extra-usage guard check
+  # rejects regardless of per-project state. Use for emergencies.
+  enabled: true
+  # Conversion between catalog credits and CNY fen. 5438 = ¥54.38 per
+  # 1M credits. Can be changed at runtime via admin API (hot-reload).
+  credit_price_fen: 5438
+  # Minimum accepted top-up amount (¥10).
+  min_topup_fen: 1000
+  # Maximum accepted per-request top-up amount (¥2000).
+  max_topup_fen: 200000
+  # Per-project daily cumulative top-up cap (¥5000).
+  daily_topup_limit_fen: 500000
+  # Timezone used for the monthly window boundary (shared with plans).
+  monthly_window_tz: "Asia/Shanghai"

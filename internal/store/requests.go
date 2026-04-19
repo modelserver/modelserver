@@ -45,14 +45,18 @@ func (s *Store) CompleteRequest(id string, r *types.Request) error {
 			upstream_group_id = $15,
 			attempt = $16,
 			retry_reason = $17,
-			selection_ms = $18
-		WHERE id = $19`,
+			selection_ms = $18,
+			is_extra_usage = $19,
+			extra_usage_cost_fen = $20,
+			extra_usage_reason = $21
+		WHERE id = $22`,
 		r.Status, nullString(r.MsgID), r.InputTokens, r.OutputTokens,
 		r.CacheCreationTokens, r.CacheReadTokens, r.CreditsConsumed,
 		r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP,
 		nullString(r.UpstreamID), r.Provider,
 		nullString(r.RouteID), nullString(r.GroupID),
 		r.Attempt, nullString(r.RetryReason), r.SelectionMs,
+		r.IsExtraUsage, r.ExtraUsageCostFen, r.ExtraUsageReason,
 		id,
 	)
 	return err

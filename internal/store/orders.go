@@ -8,35 +8,47 @@ import (
 	"github.com/modelserver/modelserver/internal/types"
 )
 
-// CreateOrder inserts a new order.
+// CreateOrder inserts a new order. PlanID may be empty for extra-usage top-up
+// orders (plan_id is nullable in the schema).
 func (s *Store) CreateOrder(o *types.Order) error {
+	orderType := o.OrderType
+	if orderType == "" {
+		orderType = types.OrderTypeSubscription
+	}
 	return s.pool.QueryRow(context.Background(), `
 		INSERT INTO orders (project_id, plan_id, periods, unit_price, amount, currency,
-			status, channel, payment_ref, payment_url, existing_subscription_id, metadata)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			status, channel, payment_ref, payment_url, existing_subscription_id, metadata,
+			order_type, extra_usage_amount_fen)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id, created_at, updated_at`,
-		o.ProjectID, o.PlanID, o.Periods, o.UnitPrice, o.Amount, o.Currency,
+		o.ProjectID, nullString(o.PlanID), o.Periods, o.UnitPrice, o.Amount, o.Currency,
 		o.Status, o.Channel, o.PaymentRef, o.PaymentURL, nullString(o.ExistingSubscriptionID), o.Metadata,
+		orderType, o.ExtraUsageAmountFen,
 	).Scan(&o.ID, &o.CreatedAt, &o.UpdatedAt)
 }
 
 // GetOrderByID returns an order by ID.
 func (s *Store) GetOrderByID(id string) (*types.Order, error) {
 	o := &types.Order{}
-	var existSubID *string
+	var planID, existSubID *string
 	err := s.pool.QueryRow(context.Background(), `
 		SELECT id, project_id, plan_id, periods, unit_price, amount, currency,
 			status, channel, payment_ref, payment_url, existing_subscription_id, metadata,
+			order_type, extra_usage_amount_fen,
 			created_at, updated_at
 		FROM orders WHERE id = $1`, id,
-	).Scan(&o.ID, &o.ProjectID, &o.PlanID, &o.Periods, &o.UnitPrice, &o.Amount,
+	).Scan(&o.ID, &o.ProjectID, &planID, &o.Periods, &o.UnitPrice, &o.Amount,
 		&o.Currency, &o.Status, &o.Channel, &o.PaymentRef, &o.PaymentURL, &existSubID, &o.Metadata,
+		&o.OrderType, &o.ExtraUsageAmountFen,
 		&o.CreatedAt, &o.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get order: %w", err)
+	}
+	if planID != nil {
+		o.PlanID = *planID
 	}
 	if existSubID != nil {
 		o.ExistingSubscriptionID = *existSubID
@@ -55,6 +67,7 @@ func (s *Store) ListOrdersByProject(projectID string, p types.PaginationParams) 
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, project_id, plan_id, periods, unit_price, amount, currency,
 			status, channel, payment_ref, payment_url, existing_subscription_id, metadata,
+			order_type, extra_usage_amount_fen,
 			created_at, updated_at
 		FROM orders WHERE project_id = $1
 		ORDER BY created_at DESC
@@ -67,11 +80,14 @@ func (s *Store) ListOrdersByProject(projectID string, p types.PaginationParams) 
 	var orders []types.Order
 	for rows.Next() {
 		var o types.Order
-		var existSubID *string
-		if err := rows.Scan(&o.ID, &o.ProjectID, &o.PlanID, &o.Periods,
+		var planID, existSubID *string
+		if err := rows.Scan(&o.ID, &o.ProjectID, &planID, &o.Periods,
 			&o.UnitPrice, &o.Amount, &o.Currency, &o.Status, &o.Channel, &o.PaymentRef, &o.PaymentURL,
-			&existSubID, &o.Metadata, &o.CreatedAt, &o.UpdatedAt); err != nil {
+			&existSubID, &o.Metadata, &o.OrderType, &o.ExtraUsageAmountFen, &o.CreatedAt, &o.UpdatedAt); err != nil {
 			return nil, 0, fmt.Errorf("scan order: %w", err)
+		}
+		if planID != nil {
+			o.PlanID = *planID
 		}
 		if existSubID != nil {
 			o.ExistingSubscriptionID = *existSubID
@@ -92,6 +108,27 @@ func (s *Store) HasPayingOrder(projectID string) (bool, error) {
 		projectID,
 	).Scan(&exists)
 	return exists, err
+}
+
+// SumDailyExtraUsageTopupFen returns the total fen (sum of paid/delivered
+// top-up orders) committed today (Asia/Shanghai). Used to enforce the
+// daily_topup_limit_fen config.
+func (s *Store) SumDailyExtraUsageTopupFen(projectID string) (int64, error) {
+	var total int64
+	err := s.pool.QueryRow(context.Background(), `
+		SELECT COALESCE(SUM(extra_usage_amount_fen), 0)::bigint
+		FROM orders
+		WHERE project_id = $1
+		  AND order_type = 'extra_usage_topup'
+		  AND status IN ('paying','paid','delivered')
+		  AND created_at >= (date_trunc('day', NOW() AT TIME ZONE 'Asia/Shanghai')
+		                   AT TIME ZONE 'Asia/Shanghai')`,
+		projectID,
+	).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("sum daily topup: %w", err)
+	}
+	return total, nil
 }
 
 // CancelOrder sets order status to "cancelled" if it is currently "pending" or "paying".

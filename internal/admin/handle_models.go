@@ -80,6 +80,7 @@ func handleCreateModel(st *store.Store, catalog modelcatalog.Catalog) http.Handl
 			Aliases           []string            `json:"aliases"`
 			DefaultCreditRate *types.CreditRate   `json:"default_credit_rate"`
 			Status            string              `json:"status"`
+			Publisher         string              `json:"publisher"`
 			Metadata          types.ModelMetadata `json:"metadata"`
 		}
 		if err := decodeBody(r, &body); err != nil {
@@ -87,6 +88,10 @@ func handleCreateModel(st *store.Store, catalog modelcatalog.Catalog) http.Handl
 			return
 		}
 		if err := validateModelPayload(body.Name, body.Aliases, body.Status, body.DefaultCreditRate); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+		if err := validatePublisher(body.Publisher); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
@@ -101,6 +106,7 @@ func handleCreateModel(st *store.Store, catalog modelcatalog.Catalog) http.Handl
 			Aliases:           body.Aliases,
 			DefaultCreditRate: body.DefaultCreditRate,
 			Status:            body.Status,
+			Publisher:         body.Publisher,
 			Metadata:          body.Metadata,
 		}
 		if err := st.CreateModel(m); err != nil {
@@ -188,6 +194,14 @@ func handleUpdateModel(st *store.Store, catalog modelcatalog.Catalog) http.Handl
 				}
 				updates["default_credit_rate"] = b
 			}
+		}
+		if v, ok := body["publisher"]; ok {
+			pub, _ := v.(string)
+			if err := validatePublisher(pub); err != nil {
+				writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+				return
+			}
+			updates["publisher"] = pub
 		}
 		if v, ok := body["metadata"]; ok {
 			b, _ := json.Marshal(v)
@@ -300,6 +314,18 @@ func validateAliases(canonical string, aliases []string) error {
 			return fmt.Errorf("duplicate alias %q", a)
 		}
 		seen[a] = struct{}{}
+	}
+	return nil
+}
+
+// validatePublisher rejects empty strings. The controlled vocabulary is
+// intentionally not enforced here so new publishers can be rolled out
+// without a code change — admins just enter the string. Subscription
+// eligibility switches on known values; anything unrecognised is treated as
+// "not anthropic" = eligible.
+func validatePublisher(p string) error {
+	if p == "" {
+		return fmt.Errorf("publisher is required (e.g. anthropic, openai, google)")
 	}
 	return nil
 }

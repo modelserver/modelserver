@@ -18,6 +18,7 @@ type Model struct {
 	Aliases           []string      `json:"aliases"`
 	DefaultCreditRate *CreditRate   `json:"default_credit_rate,omitempty"`
 	Status            string        `json:"status"`
+	Publisher         string        `json:"publisher"`
 	Metadata          ModelMetadata `json:"metadata"`
 	CreatedAt         time.Time     `json:"created_at"`
 	UpdatedAt         time.Time     `json:"updated_at"`

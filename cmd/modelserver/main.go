@@ -19,6 +19,7 @@ import (
 	"github.com/modelserver/modelserver/internal/collector"
 	"github.com/modelserver/modelserver/internal/config"
 	"github.com/modelserver/modelserver/internal/crypto"
+	"github.com/modelserver/modelserver/internal/metrics"
 	"github.com/modelserver/modelserver/internal/modelcatalog"
 	"github.com/modelserver/modelserver/internal/proxy"
 	"github.com/modelserver/modelserver/internal/ratelimit"
@@ -187,7 +188,7 @@ func main() {
 	// Initialize rate limiter.
 	rateLimiter := ratelimit.NewCompositeRateLimiter(st, logger)
 
-	executor := proxy.NewExecutor(router, st, coll, rateLimiter, catalog, logger, cfg.Server.MaxRequestBody)
+	executor := proxy.NewExecutor(router, st, coll, rateLimiter, catalog, logger, cfg.Server.MaxRequestBody, cfg.ExtraUsage)
 	proxyHandler := proxy.NewHandler(executor, router, st, coll, catalog, logger, cfg.Server.MaxRequestBody)
 
 	// --- Proxy server ---
@@ -218,7 +219,7 @@ func main() {
 	}
 
 	// Mount proxy routes.
-	proxy.MountRoutes(proxyRouter, st, proxyHandler, cfg.Trace, rateLimiter, encryptionKey, logger, proxyIntrospector)
+	proxy.MountRoutes(proxyRouter, st, proxyHandler, cfg.Trace, rateLimiter, catalog, cfg.ExtraUsage, cfg.Server.MaxRequestBody, encryptionKey, logger, proxyIntrospector)
 
 	proxyServer := &http.Server{
 		Addr:    cfg.Server.ProxyAddr,
@@ -252,6 +253,9 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
+
+	// Prometheus-format metrics exposition (extra-usage counters etc.).
+	adminRouter.Handle("/metrics", metrics.Handler())
 
 	// Initialize JWT manager.
 	jwtMgr := auth.NewJWTManager(cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL)

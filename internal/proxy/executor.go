@@ -7,18 +7,28 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/modelserver/modelserver/internal/collector"
+	"github.com/modelserver/modelserver/internal/config"
+	"github.com/modelserver/modelserver/internal/metrics"
 	"github.com/modelserver/modelserver/internal/modelcatalog"
 	"github.com/modelserver/modelserver/internal/ratelimit"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 	"github.com/tidwall/sjson"
 )
+
+// ErrMissingDefaultCreditRate is returned when an extra-usage settle attempt
+// finds no DefaultCreditRate on the resolved catalog model. We log + skip
+// settlement (no charge, but the request is still logged with
+// is_extra_usage=true) so admins can backfill and the next request succeeds.
+var ErrMissingDefaultCreditRate = errors.New("extra usage: model has no DefaultCreditRate")
 
 // RequestContext carries all request-scoped data through the Executor pipeline.
 // It is populated by the handler before calling Execute.
@@ -27,7 +37,8 @@ type RequestContext struct {
 	APIKeyID         string
 	OAuthGrantID     string
 	UserID           string
-	Model            string   // Original model name from the client request
+	Model            string   // Original canonical model name from the client request
+	ModelRef         *types.Model // Resolved catalog entry (needed for extra-usage billing)
 	ActualModel      string   // After ModelMap resolution (set per-attempt by Executor)
 	IsStream         bool
 	AllowedProviders []string // If non-empty, only route to upstreams with these providers
@@ -39,6 +50,17 @@ type RequestContext struct {
 	APIKey           *types.APIKey
 	Project          *types.Project
 	RequestID        string // DB request ID (pending record)
+
+	// Extra-usage state. `HasExtraUsageCtx`/`ExtraUsageCtx` are filled by
+	// Execute() from the inbound r.Context so the deferred streaming callback
+	// (which fires after r is gone) can still settle. The remaining fields
+	// are outputs populated by settleExtraUsage.
+	HasExtraUsageCtx          bool
+	ExtraUsageCtx             ExtraUsageContext
+	IsExtraUsage              bool
+	ExtraUsageCostFen         int64
+	ExtraUsageReason          string
+	ExtraUsageBalanceAfterFen int64
 }
 
 // proxyResult classifies the outcome of a single upstream attempt.
@@ -52,14 +74,15 @@ const (
 // Executor replaces httputil.ReverseProxy with an http.Client-based proxy engine
 // that supports cross-upstream retry with per-provider body transformations.
 type Executor struct {
-	router      *Router
-	httpClient  *http.Client
-	store       *store.Store
-	collector   *collector.Collector
-	rateLimiter ratelimit.RateLimiter
-	catalog     modelcatalog.Catalog
-	logger      *slog.Logger
-	maxBodySize int64
+	router         *Router
+	httpClient     *http.Client
+	store          *store.Store
+	collector      *collector.Collector
+	rateLimiter    ratelimit.RateLimiter
+	catalog        modelcatalog.Catalog
+	logger         *slog.Logger
+	maxBodySize    int64
+	extraUsageCfg  config.ExtraUsageConfig
 }
 
 // NewExecutor creates a new Executor wired to the given Router and dependencies.
@@ -71,10 +94,12 @@ func NewExecutor(
 	catalog modelcatalog.Catalog,
 	logger *slog.Logger,
 	maxBodySize int64,
+	extraUsageCfg config.ExtraUsageConfig,
 ) *Executor {
 	return &Executor{
-		router:  router,
-		catalog: catalog,
+		router:        router,
+		catalog:       catalog,
+		extraUsageCfg: extraUsageCfg,
 		httpClient: &http.Client{
 			// No timeout here; streaming responses can be long-lived.
 			// Per-upstream timeouts are applied via request context.
@@ -113,6 +138,14 @@ func (e *Executor) catalogDefaultRate(canonical string) *types.CreditRate {
 // It matches the request to an upstream group, selects candidates, and
 // attempts each in order until one succeeds or all are exhausted.
 func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *RequestContext) {
+	// Capture extra-usage context from the inbound request context onto
+	// reqCtx so the deferred streaming callback (which fires after r is
+	// gone) still has what it needs for settlement.
+	if euCtx, has := ExtraUsageContextFromContext(r.Context()); has {
+		reqCtx.HasExtraUsageCtx = true
+		reqCtx.ExtraUsageCtx = euCtx
+	}
+
 	// 1. Match the request to an upstream group.
 	group, err := e.router.Match(reqCtx.ProjectID, reqCtx.Model)
 	if err != nil {
@@ -684,6 +717,14 @@ func (e *Executor) commitStreamingResponse(
 		w.Header().Set("Content-Type", "text/event-stream")
 	}
 
+	// Extra-usage header hints that can be written pre-body. Cost/balance
+	// require post-stream settlement and are therefore NOT emittable here;
+	// clients learn final balance via GET /extra-usage.
+	if reqCtx.HasExtraUsageCtx {
+		w.Header().Set("X-Extra-Usage", "true")
+		w.Header().Set("X-Extra-Usage-Reason", reqCtx.ExtraUsageCtx.Reason)
+	}
+
 	w.WriteHeader(resp.StatusCode)
 
 	// Wrap with provider-specific stream interceptor.
@@ -706,6 +747,15 @@ func (e *Executor) commitStreamingResponse(
 			credits = reqCtx.Policy.ComputeCreditsWithDefault(model, e.catalogDefaultRate(model), metrics.InputTokens, metrics.OutputTokens, metrics.CacheCreationTokens, metrics.CacheReadTokens)
 		}
 
+		// Settle extra-usage BEFORE persisting the request row so the ledger
+		// and the request's is_extra_usage columns stay consistent.
+		e.settleExtraUsage(context.Background(), reqCtx, types.TokenUsage{
+			InputTokens:         metrics.InputTokens,
+			OutputTokens:        metrics.OutputTokens,
+			CacheCreationTokens: metrics.CacheCreationTokens,
+			CacheReadTokens:     metrics.CacheReadTokens,
+		})
+
 		req := types.Request{
 			ProjectID:           reqCtx.Project.ID,
 			APIKeyID:            reqCtx.APIKeyID,
@@ -725,6 +775,9 @@ func (e *Executor) commitStreamingResponse(
 			LatencyMs:           duration,
 			TTFTMs:              metrics.TTFTMs,
 			ClientIP:            reqCtx.ClientIP,
+			IsExtraUsage:        reqCtx.IsExtraUsage,
+			ExtraUsageCostFen:   reqCtx.ExtraUsageCostFen,
+			ExtraUsageReason:    reqCtx.ExtraUsageReason,
 		}
 		if reqCtx.RequestID != "" {
 			go func() {
@@ -803,19 +856,46 @@ func (e *Executor) commitNonStreamingResponse(
 		return
 	}
 
+	// For extra-usage requests we need to parse + settle BEFORE writing
+	// headers so X-Extra-Usage-Cost-Fen / X-Extra-Usage-Balance-Fen can be
+	// included. Otherwise keep the original order (write headers+body first,
+	// parse metrics afterwards) so non-extra-usage traffic's TTFB is not
+	// affected.
+	var respMetrics *ResponseMetrics
+	var parseErr error
+	if reqCtx.HasExtraUsageCtx {
+		respMetrics, parseErr = transformer.ParseResponse(body)
+		if parseErr != nil {
+			logger.Warn("failed to parse response", "error", parseErr)
+		}
+		if respMetrics != nil {
+			e.settleExtraUsage(context.Background(), reqCtx, types.TokenUsage{
+				InputTokens:         respMetrics.InputTokens,
+				OutputTokens:        respMetrics.OutputTokens,
+				CacheCreationTokens: respMetrics.CacheCreationTokens,
+				CacheReadTokens:     respMetrics.CacheReadTokens,
+			})
+		}
+		writeExtraUsageSuccessHeaders(w, reqCtx)
+	}
+
 	// Write the response body to the client.
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
 	w.WriteHeader(resp.StatusCode)
 	w.Write(body)
 
-	// Parse response metrics.
-	metrics, parseErr := transformer.ParseResponse(body)
-	if parseErr != nil {
-		logger.Warn("failed to parse response", "error", parseErr)
-		return
+	if !reqCtx.HasExtraUsageCtx {
+		respMetrics, parseErr = transformer.ParseResponse(body)
+		if parseErr != nil {
+			logger.Warn("failed to parse response", "error", parseErr)
+		}
+	}
+	if respMetrics == nil {
+		// Parse failed entirely; downstream code expects a non-nil value.
+		respMetrics = &ResponseMetrics{}
 	}
 
-	model := metrics.Model
+	model := respMetrics.Model
 	if model == "" {
 		model = reqCtx.Model
 	}
@@ -824,7 +904,7 @@ func (e *Executor) commitNonStreamingResponse(
 
 	var credits float64
 	if reqCtx.Policy != nil {
-		credits = reqCtx.Policy.ComputeCreditsWithDefault(model, e.catalogDefaultRate(model), metrics.InputTokens, metrics.OutputTokens, metrics.CacheCreationTokens, metrics.CacheReadTokens)
+		credits = reqCtx.Policy.ComputeCreditsWithDefault(model, e.catalogDefaultRate(model), respMetrics.InputTokens, respMetrics.OutputTokens, respMetrics.CacheCreationTokens, respMetrics.CacheReadTokens)
 	}
 
 	req := types.Request{
@@ -833,18 +913,21 @@ func (e *Executor) commitNonStreamingResponse(
 		OAuthGrantID:        reqCtx.OAuthGrantID,
 		UpstreamID:          candidate.Upstream.ID,
 		TraceID:             reqCtx.TraceID,
-		MsgID:               metrics.MsgID,
+		MsgID:               respMetrics.MsgID,
 		Provider:            candidate.Upstream.Provider,
 		Model:               model,
 		Streaming:           false,
 		Status:              types.RequestStatusSuccess,
-		InputTokens:         metrics.InputTokens,
-		OutputTokens:        metrics.OutputTokens,
-		CacheCreationTokens: metrics.CacheCreationTokens,
-		CacheReadTokens:     metrics.CacheReadTokens,
+		InputTokens:         respMetrics.InputTokens,
+		OutputTokens:        respMetrics.OutputTokens,
+		CacheCreationTokens: respMetrics.CacheCreationTokens,
+		CacheReadTokens:     respMetrics.CacheReadTokens,
 		CreditsConsumed:     credits,
 		LatencyMs:           duration,
 		ClientIP:            reqCtx.ClientIP,
+		IsExtraUsage:        reqCtx.IsExtraUsage,
+		ExtraUsageCostFen:   reqCtx.ExtraUsageCostFen,
+		ExtraUsageReason:    reqCtx.ExtraUsageReason,
 	}
 	if reqCtx.RequestID != "" {
 		go func() {
@@ -857,23 +940,23 @@ func (e *Executor) commitNonStreamingResponse(
 	}
 
 	logger.Info("request completed",
-		"msg_id", metrics.MsgID,
+		"msg_id", respMetrics.MsgID,
 		"status", types.RequestStatusSuccess,
 		"streaming", false,
-		"input_tokens", metrics.InputTokens,
-		"output_tokens", metrics.OutputTokens,
-		"cache_creation_tokens", metrics.CacheCreationTokens,
-		"cache_read_tokens", metrics.CacheReadTokens,
+		"input_tokens", respMetrics.InputTokens,
+		"output_tokens", respMetrics.OutputTokens,
+		"cache_creation_tokens", respMetrics.CacheCreationTokens,
+		"cache_read_tokens", respMetrics.CacheReadTokens,
 		"credits", credits,
 		"duration_ms", duration,
 	)
 
 	if e.rateLimiter != nil {
 		e.rateLimiter.PostRecord(context.Background(), reqCtx.Project.ID, reqCtx.APIKeyID, reqCtx.UserID, model, types.TokenUsage{
-			InputTokens:         metrics.InputTokens,
-			OutputTokens:        metrics.OutputTokens,
-			CacheCreationTokens: metrics.CacheCreationTokens,
-			CacheReadTokens:     metrics.CacheReadTokens,
+			InputTokens:         respMetrics.InputTokens,
+			OutputTokens:        respMetrics.OutputTokens,
+			CacheCreationTokens: respMetrics.CacheCreationTokens,
+			CacheReadTokens:     respMetrics.CacheReadTokens,
 		})
 	}
 }
@@ -962,6 +1045,120 @@ func isHopByHopHeader(key string) bool {
 	return hopByHopHeaders[http.CanonicalHeaderKey(key)]
 }
 
+
+// computeExtraUsageCostFen converts a TokenUsage to CNY fen using the
+// catalog's DefaultCreditRate. Rate is sourced from the catalog (not the
+// plan override) per spec §4.1 — extra usage is always priced at official
+// API rates. Returns (cost_fen, credits_used, err). Cost is ceil so
+// sub-fen fractions round up to 1.
+func computeExtraUsageCostFen(m *types.Model, u types.TokenUsage, creditPriceFen int64) (int64, float64, error) {
+	if m == nil || m.DefaultCreditRate == nil {
+		return 0, 0, ErrMissingDefaultCreditRate
+	}
+	if creditPriceFen <= 0 {
+		return 0, 0, fmt.Errorf("extra usage: credit_price_fen must be > 0")
+	}
+	rate := m.DefaultCreditRate
+	credits := rate.InputRate*float64(u.InputTokens) +
+		rate.OutputRate*float64(u.OutputTokens) +
+		rate.CacheCreationRate*float64(u.CacheCreationTokens) +
+		rate.CacheReadRate*float64(u.CacheReadTokens)
+	if credits <= 0 {
+		return 0, credits, nil
+	}
+	cost := int64(math.Ceil(credits * float64(creditPriceFen) / 1_000_000))
+	if cost < 1 {
+		cost = 1
+	}
+	return cost, credits, nil
+}
+
+// settleExtraUsage charges the per-project balance when the request was
+// routed through the extra-usage path. Call after the response has been
+// successfully committed (status=success) and before the pending-request
+// row is updated. Mutates rc with the settlement fields so CompleteRequest
+// can persist them in the same UPDATE.
+//
+// All failure modes record metrics + logs and return silently. The request
+// itself is still recorded (with is_extra_usage=true) so audit traces reflect
+// user intent even when settlement is skipped.
+func (e *Executor) settleExtraUsage(ctx context.Context, rc *RequestContext, usage types.TokenUsage) {
+	if !rc.HasExtraUsageCtx {
+		return
+	}
+	euCtx := rc.ExtraUsageCtx
+
+	rc.IsExtraUsage = true
+	rc.ExtraUsageReason = euCtx.Reason
+
+	if usage.InputTokens+usage.OutputTokens+usage.CacheCreationTokens+usage.CacheReadTokens == 0 {
+		// Provider returned no usage — don't synthesise a charge.
+		e.logger.Warn("extra_usage_settle_no_usage",
+			"project_id", rc.ProjectID, "request_id", rc.RequestID)
+		metrics.IncExtraUsageDeduction("no_usage")
+		return
+	}
+
+	costFen, credits, err := computeExtraUsageCostFen(rc.ModelRef, usage, e.extraUsageCfg.CreditPriceFen)
+	if err != nil {
+		modelName := rc.Model
+		if rc.ModelRef != nil {
+			modelName = rc.ModelRef.Name
+		}
+		e.logger.Error("extra_usage_missing_default_rate",
+			"project_id", rc.ProjectID, "model", modelName, "error", err)
+		metrics.IncExtraUsageMissingRate(modelName)
+		return
+	}
+	rc.ExtraUsageCostFen = costFen
+
+	newBal, err := e.store.DeductExtraUsage(store.DeductExtraUsageReq{
+		ProjectID:   rc.ProjectID,
+		AmountFen:   costFen,
+		RequestID:   rc.RequestID,
+		Reason:      euCtx.Reason,
+		Description: fmt.Sprintf("%s | credits=%.2f | model=%s", euCtx.Reason, credits, rc.Model),
+	})
+	switch {
+	case err == nil:
+		rc.ExtraUsageBalanceAfterFen = newBal
+		metrics.IncExtraUsageDeduction("ok")
+		metrics.SetExtraUsageBalance(rc.ProjectID, newBal)
+	case errors.Is(err, store.ErrInsufficientBalance):
+		e.logger.Warn("extra_usage_underdraft",
+			"project_id", rc.ProjectID, "cost_fen", costFen)
+		metrics.IncExtraUsageDeduction("insufficient")
+		metrics.IncExtraUsageUnderdraft(rc.ProjectID)
+	case errors.Is(err, store.ErrMonthlyLimitReached):
+		e.logger.Warn("extra_usage_monthly_limit_at_settle",
+			"project_id", rc.ProjectID, "cost_fen", costFen)
+		metrics.IncExtraUsageDeduction("monthly_limit")
+	case errors.Is(err, store.ErrExtraUsageNotEnabled):
+		e.logger.Warn("extra_usage_disabled_at_settle",
+			"project_id", rc.ProjectID)
+		metrics.IncExtraUsageDeduction("not_enabled")
+	default:
+		e.logger.Error("extra_usage_deduction_failed",
+			"project_id", rc.ProjectID, "error", err)
+		metrics.IncExtraUsageDeduction("err")
+	}
+}
+
+// writeExtraUsageSuccessHeaders writes the X-Extra-Usage-* response headers
+// onto a successful response. Must be called before the first WriteHeader.
+func writeExtraUsageSuccessHeaders(w http.ResponseWriter, rc *RequestContext) {
+	if !rc.IsExtraUsage {
+		return
+	}
+	w.Header().Set("X-Extra-Usage", "true")
+	if rc.ExtraUsageReason != "" {
+		w.Header().Set("X-Extra-Usage-Reason", rc.ExtraUsageReason)
+	}
+	if rc.ExtraUsageCostFen > 0 {
+		w.Header().Set("X-Extra-Usage-Cost-Fen", strconv.FormatInt(rc.ExtraUsageCostFen, 10))
+	}
+	w.Header().Set("X-Extra-Usage-Balance-Fen", strconv.FormatInt(rc.ExtraUsageBalanceAfterFen, 10))
+}
 
 // sanitizeOutboundHeaders returns a new header map containing only headers
 // that are safe to send to upstream AI providers. Applied as a defensive

@@ -52,6 +52,11 @@ type Request struct {
 	RetryReason string  `json:"retry_reason,omitempty"`
 	SelectionMs float64            `json:"selection_ms,omitempty"`
 	Metadata    map[string]string  `json:"metadata,omitempty"`
+	// Extra-usage attribution. Set by Executor.settleExtraUsage when the
+	// request was routed through the extra-usage path; zeroed otherwise.
+	IsExtraUsage      bool   `json:"is_extra_usage,omitempty"`
+	ExtraUsageCostFen int64  `json:"extra_usage_cost_fen,omitempty"`
+	ExtraUsageReason  string `json:"extra_usage_reason,omitempty"`
 	CreatedAt   time.Time          `json:"created_at"`
 }
 

@@ -117,6 +117,9 @@ export function Sidebar() {
             <SidebarLink to={`/projects/${projectId}/subscription`} icon={Zap}>
               Subscription
             </SidebarLink>
+            <SidebarLink to={`/projects/${projectId}/extra-usage`} icon={Zap}>
+              Extra Usage
+            </SidebarLink>
             <SidebarLink
               to={`/projects/${projectId}/settings`}
               icon={Settings}

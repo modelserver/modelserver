@@ -28,13 +28,19 @@ func NewCompositeRateLimiter(st *store.Store, logger *slog.Logger) *CompositeRat
 	}
 }
 
-// PreCheck validates all rate limit rules for the API key.
-func (c *CompositeRateLimiter) PreCheck(ctx context.Context, projectID, apiKeyID, model string, policy *types.RateLimitPolicy) (bool, time.Duration, error) {
+// PreCheck validates all rate limit rules (credit + classic) for the API key.
+// LimitType on the result distinguishes credit-window exhaustion (caller may
+// fall through to extra usage) from classic hard-limits (caller must 429).
+func (c *CompositeRateLimiter) PreCheck(ctx context.Context, projectID, apiKeyID, model string, policy *types.RateLimitPolicy) (PreCheckResult, error) {
 	if policy == nil {
-		return true, 0, nil
+		return PreCheckResult{Allowed: true}, nil
 	}
 
-	// Check credit rules.
+	// Check credit rules first — classic limits protect upstreams and should
+	// fire regardless of credit state, but we still need to report credit-hit
+	// cleanly so extra-usage can take over. Classic is checked after and
+	// overrides.
+	var creditHit *PreCheckResult
 	for _, rule := range policy.CreditRules {
 		windowStart := WindowStartTime(rule.Window, rule.WindowType, rule.AnchorTime)
 		cacheKey := fmt.Sprintf("%s|%s|%s|%s", projectID, apiKeyID, rule.Window, rule.WindowType)
@@ -54,26 +60,57 @@ func (c *CompositeRateLimiter) PreCheck(ctx context.Context, projectID, apiKeyID
 			}
 			if err != nil {
 				c.logger.Error("credit check query failed", "error", err)
-				return true, 0, nil // Fail open.
+				return PreCheckResult{Allowed: true}, nil // Fail open.
 			}
 			c.cache.Set(cacheKey, used)
 		}
 
 		if used >= float64(rule.MaxCredits) {
 			retryAfter := WindowResetDuration(rule.Window, rule.WindowType, rule.AnchorTime)
-			return false, retryAfter, nil
+			creditHit = &PreCheckResult{
+				Allowed:    false,
+				RetryAfter: retryAfter,
+				LimitType:  LimitTypeCredit,
+			}
+			break
 		}
 	}
 
-	// Check classic rules.
+	// Check classic rules. Classic always wins if both fire (hard limit
+	// protects upstream; spec §3.6 decision table).
 	if len(policy.ClassicRules) > 0 {
 		allowed, retryAfter := c.classic.Check(apiKeyID, model, policy.ClassicRules)
 		if !allowed {
-			return false, retryAfter, nil
+			return PreCheckResult{
+				Allowed:    false,
+				RetryAfter: retryAfter,
+				LimitType:  LimitTypeClassic,
+			}, nil
 		}
 	}
 
-	return true, 0, nil
+	if creditHit != nil {
+		return *creditHit, nil
+	}
+	return PreCheckResult{Allowed: true}, nil
+}
+
+// PreCheckClassicOnly evaluates only classic rules. Used by the extra-usage
+// bypass path (client-restriction case) where credit windows are intentionally
+// skipped but upstream protection via RPM/TPM/RPD/TPD still applies.
+func (c *CompositeRateLimiter) PreCheckClassicOnly(ctx context.Context, projectID, apiKeyID, model string, policy *types.RateLimitPolicy) (PreCheckResult, error) {
+	if policy == nil || len(policy.ClassicRules) == 0 {
+		return PreCheckResult{Allowed: true}, nil
+	}
+	allowed, retryAfter := c.classic.Check(apiKeyID, model, policy.ClassicRules)
+	if !allowed {
+		return PreCheckResult{
+			Allowed:    false,
+			RetryAfter: retryAfter,
+			LimitType:  LimitTypeClassic,
+		}, nil
+	}
+	return PreCheckResult{Allowed: true}, nil
 }
 
 // CheckUserQuota validates per-user credit quota against project-scope rules.

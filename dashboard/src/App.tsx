@@ -43,6 +43,9 @@ import { AdminProjectsPage } from "@/pages/admin/ProjectsPage";
 // Subscription
 import { SubscriptionPage } from "@/pages/subscriptions/SubscriptionPage";
 
+// Extra usage
+import { ExtraUsagePage } from "@/pages/extra-usage/ExtraUsagePage";
+
 // Admin Plans
 import { PlansPage } from "@/pages/admin/PlansPage";
 
@@ -97,6 +100,7 @@ export function App() {
                 <Route path="projects/:projectId/traces" element={<TracesPage />} />
                 <Route path="projects/:projectId/usage" element={<UsagePage />} />
                 <Route path="projects/:projectId/subscription" element={<SubscriptionPage />} />
+                <Route path="projects/:projectId/extra-usage" element={<ExtraUsagePage />} />
                 <Route path="projects/:projectId/settings" element={<ProjectSettingsPage />} />
                 <Route path="settings" element={<UserSettingsPage />} />
                 <Route path="admin/users" element={<UsersPage />} />

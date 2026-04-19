@@ -237,7 +237,7 @@ export interface Subscription {
 export interface Order {
   id: string;
   project_id: string;
-  plan_id: string;
+  plan_id?: string;
   periods: number;
   unit_price: number;
   amount: number;
@@ -248,6 +248,8 @@ export interface Order {
   payment_url?: string;
   existing_subscription_id?: string;
   metadata?: string;
+  order_type: "subscription" | "extra_usage_topup";
+  extra_usage_amount_fen?: number;
   created_at: string;
   updated_at: string;
 }
@@ -422,6 +424,7 @@ export interface Model {
   aliases: string[];
   default_credit_rate?: CreditRate;
   status: string;
+  publisher: string;
   metadata: ModelMetadata;
   created_at: string;
   updated_at: string;

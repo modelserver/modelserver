@@ -7,11 +7,35 @@ import (
 	"github.com/modelserver/modelserver/internal/types"
 )
 
+// PreCheckResult classifies a rate-limit decision. `LimitType` distinguishes
+// credit-window exhaustion (extra-usage intent candidate) from classic
+// hard-limits (always 429) so the caller can branch on the right action.
+type PreCheckResult struct {
+	Allowed    bool
+	RetryAfter time.Duration
+	LimitType  string // "", "credit", or "classic"
+	HitRuleID  string // optional audit hint
+}
+
+// Classifier values for PreCheckResult.LimitType.
+const (
+	LimitTypeNone    = ""
+	LimitTypeCredit  = "credit"
+	LimitTypeClassic = "classic"
+)
+
 // RateLimiter checks and records rate limit usage.
 type RateLimiter interface {
-	// PreCheck validates whether a request should be allowed.
-	// Returns (allowed, retryAfter, error).
-	PreCheck(ctx context.Context, projectID, apiKeyID, model string, policy *types.RateLimitPolicy) (bool, time.Duration, error)
+	// PreCheck validates whether a request should be allowed against the full
+	// set of rules (credit + classic). When denied, LimitType tells the caller
+	// which family triggered.
+	PreCheck(ctx context.Context, projectID, apiKeyID, model string, policy *types.RateLimitPolicy) (PreCheckResult, error)
+
+	// PreCheckClassicOnly checks only classic (RPM/TPM/RPD/TPD) rules,
+	// skipping credit windows. Used by the extra-usage bypass path where
+	// the credit budget is not consulted but classic protection of upstream
+	// providers still applies.
+	PreCheckClassicOnly(ctx context.Context, projectID, apiKeyID, model string, policy *types.RateLimitPolicy) (PreCheckResult, error)
 
 	// CheckUserQuota validates per-user credit quota against project-scope rules.
 	// quotaPct is in [0, 100]. Only project-scope credit rules are checked.

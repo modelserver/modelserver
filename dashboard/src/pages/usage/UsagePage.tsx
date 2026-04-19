@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useCurrentProject } from "@/hooks/useCurrentProject";
 import { useUsageOverview, useUsageByModel, useDailyUsage, useUsageByMember } from "@/api/usage";
+import { useExtraUsage } from "@/api/extra-usage";
+import { Link } from "react-router";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatCard } from "@/components/shared/StatCard";
 import { DateRangePicker } from "@/components/shared/DateRangePicker";
@@ -136,9 +138,10 @@ export function UsagePage() {
         onUntilChange={handleUntilChange}
       />
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard title="Total Requests" value={formatNumber(stats?.request_count ?? 0)} />
         <StatCard title="Total Tokens" value={formatNumber(stats?.total_tokens ?? 0)} />
+        <ExtraUsageCard projectId={projectId} />
       </div>
 
       <Card>
@@ -234,5 +237,39 @@ export function UsagePage() {
         )}
       </Card>
     </div>
+  );
+}
+
+
+function formatFen(fen: number): string {
+  return `¥${(fen / 100).toFixed(2)}`;
+}
+
+function ExtraUsageCard({ projectId }: { projectId: string }) {
+  const { data } = useExtraUsage(projectId);
+  const s = data?.data;
+  return (
+    <Card className="flex flex-col">
+      <CardHeader>
+        <CardTitle className="text-sm font-medium">Extra Usage</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-1 flex-col justify-between">
+        <div>
+          <div className="text-2xl font-semibold">
+            {formatFen(s?.balance_fen ?? 0)}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {s?.enabled ? "Enabled" : "Disabled"} · this month{" "}
+            {formatFen(s?.monthly_spent_fen ?? 0)}
+          </div>
+        </div>
+        <Link
+          to={`/projects/${projectId}/extra-usage`}
+          className="mt-3 text-sm text-primary hover:underline"
+        >
+          Manage extra usage →
+        </Link>
+      </CardContent>
+    </Card>
   );
 }
