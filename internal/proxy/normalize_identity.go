@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"strconv"
+	"strings"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -23,7 +25,7 @@ const (
 	fixedStainlessLang  = "js"
 	fixedStainlessRt    = "node"
 	fixedCCVersion      = "2.1.114"
-	fixedDeviceID       = "a]1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
+	fixedDeviceID       = "a01b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b"
 )
 
 func normalizeClientIdentity(req *http.Request) {
@@ -86,9 +88,9 @@ func normalizeAttributionHeader(body []byte) []byte {
 			if !text.Exists() || text.Type != gjson.String {
 				continue
 			}
-			if len(text.Str) > 30 && text.Str[:26] == "x-anthropic-billing-header" {
+			if strings.HasPrefix(text.Str, "x-anthropic-billing-header") {
 				normalized := normalizeAttributionString(text.Str)
-				path := "system." + itoa(i) + ".text"
+				path := "system." + strconv.Itoa(i) + ".text"
 				if result, err := sjson.SetBytes(body, path, normalized); err == nil {
 					body = result
 				}
@@ -96,7 +98,7 @@ func normalizeAttributionHeader(body []byte) []byte {
 			}
 		}
 	} else if sys.Type == gjson.String {
-		if len(sys.Str) > 30 && sys.Str[:26] == "x-anthropic-billing-header" {
+		if strings.HasPrefix(sys.Str, "x-anthropic-billing-header") {
 			normalized := normalizeAttributionString(sys.Str)
 			if result, err := sjson.SetBytes(body, "system", normalized); err == nil {
 				body = result
@@ -126,9 +128,3 @@ func normalizeAttributionString(s string) string {
 	return s
 }
 
-func itoa(i int) string {
-	if i < 10 {
-		return string(rune('0' + i))
-	}
-	return string(rune('0'+i/10)) + string(rune('0'+i%10))
-}
