@@ -292,7 +292,7 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 				continue
 			}
 			if upstream.Provider == types.ProviderClaudeCode {
-				transformedBody = normalizeRequestBody(transformedBody)
+				transformedBody = normalizeRequestBody(transformedBody, DeriveClaudeCodeDeviceID(upstream.ID))
 			}
 			bodyCache[cacheKey] = transformedBody
 		}

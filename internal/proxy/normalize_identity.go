@@ -2,6 +2,9 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -31,8 +34,28 @@ const (
 	fixedStainlessLang  = "js"
 	fixedStainlessRt    = "node"
 	fixedCCVersion      = "2.1.114"
-	fixedDeviceID       = "adf5123b3cacb7639ac3cf1e619d38e8b7f1a7ca37643f6bdee10807d710194b"
 )
+
+// deviceIDHMACKey is the fixed HMAC key used to derive a stable per-upstream
+// device_id from upstream.ID. The real Claude Code CLI generates device_id
+// as randomBytes(32).toString("hex") stored in the user's global config — a
+// stable 64-hex-char ID per install. Mirroring that semantics here, each
+// ClaudeCode upstream gets its own deterministically-derived device_id rather
+// than sharing a single fixed one.
+const deviceIDHMACKey = "modelserver:claudecode:device_id:v1"
+
+// DeriveClaudeCodeDeviceID returns the 64-hex-char device_id for a given
+// ClaudeCode upstream. Deterministic in upstream.ID so the value is stable
+// across restarts without needing DB storage. Panics if upstreamID is empty,
+// which signals a caller-side bug (every upstream row has an ID).
+func DeriveClaudeCodeDeviceID(upstreamID string) string {
+	if upstreamID == "" {
+		panic("DeriveClaudeCodeDeviceID: empty upstreamID")
+	}
+	mac := hmac.New(sha256.New, []byte(deviceIDHMACKey))
+	mac.Write([]byte(upstreamID))
+	return hex.EncodeToString(mac.Sum(nil))
+}
 
 func normalizeClientIdentity(req *http.Request) {
 	req.Header.Set("User-Agent", fixedUserAgent)
@@ -49,14 +72,17 @@ func normalizeClientIdentity(req *http.Request) {
 	req.Header.Del("X-Anthropic-Additional-Protection")
 }
 
-func normalizeRequestBody(body []byte) []byte {
-	body = normalizeMetadataDeviceID(body)
+func normalizeRequestBody(body []byte, deviceID string) []byte {
+	body = normalizeMetadataDeviceID(body, deviceID)
 	body = normalizeAttributionHeader(body)
 	body = recomputeCCH(body)
 	return body
 }
 
-func normalizeMetadataDeviceID(body []byte) []byte {
+func normalizeMetadataDeviceID(body []byte, deviceID string) []byte {
+	if deviceID == "" {
+		panic("normalizeMetadataDeviceID: empty deviceID")
+	}
 	raw := gjson.GetBytes(body, "metadata.user_id")
 	if !raw.Exists() || raw.Type != gjson.String {
 		return body
@@ -70,7 +96,7 @@ func normalizeMetadataDeviceID(body []byte) []byte {
 		return body
 	}
 
-	uid["device_id"] = fixedDeviceID
+	uid["device_id"] = deviceID
 	encoded, err := json.Marshal(uid)
 	if err != nil {
 		return body
