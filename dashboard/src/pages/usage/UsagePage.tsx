@@ -21,12 +21,19 @@ import {
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
+  Legend,
 } from "recharts";
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
+}
+
+function formatCredits(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(2)}K`;
+  return n.toFixed(2);
 }
 
 function defaultSince() {
@@ -138,9 +145,10 @@ export function UsagePage() {
         onUntilChange={handleUntilChange}
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard title="Total Requests" value={formatNumber(stats?.request_count ?? 0)} />
         <StatCard title="Total Tokens" value={formatNumber(stats?.total_tokens ?? 0)} />
+        <StatCard title="Total Credits" value={formatCredits(stats?.total_credits ?? 0)} />
         <ExtraUsageCard projectId={projectId} />
       </div>
 
@@ -160,15 +168,38 @@ export function UsagePage() {
                   stroke="currentColor"
                   opacity={0.5}
                 />
-                <YAxis fontSize={12} stroke="currentColor" opacity={0.5} />
+                <YAxis
+                  yAxisId="left"
+                  fontSize={12}
+                  stroke="currentColor"
+                  opacity={0.5}
+                />
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  fontSize={12}
+                  stroke="currentColor"
+                  opacity={0.5}
+                />
                 <Tooltip contentStyle={tooltipStyle} />
+                <Legend />
                 <Line
+                  yAxisId="left"
                   type="monotone"
                   dataKey="request_count"
                   stroke="oklch(0.488 0.243 264.376)"
                   strokeWidth={2}
                   dot={false}
                   name="Requests"
+                />
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="total_credits"
+                  stroke="oklch(0.696 0.17 162.48)"
+                  strokeWidth={2}
+                  dot={false}
+                  name="Credits"
                 />
               </LineChart>
             </ResponsiveContainer>

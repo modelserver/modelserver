@@ -10,13 +10,19 @@ import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Request } from "@/api/types";
 import { useAuth } from "@/hooks/useAuth";
-import { Activity, Zap, Clock } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { Activity, Zap, Clock, Coins } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
+}
+
+function formatCredits(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(2)}K`;
+  return n.toFixed(2);
 }
 
 const recentColumns: Column<Request>[] = [
@@ -62,7 +68,7 @@ export function OverviewPage() {
         description={project?.data.description}
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Total Requests"
           value={formatNumber(overview?.request_count ?? 0)}
@@ -74,6 +80,12 @@ export function OverviewPage() {
           value={formatNumber(overview?.total_tokens ?? 0)}
           description="Last 30 days"
           icon={<Zap className="h-4 w-4" />}
+        />
+        <StatCard
+          title="Total Credits"
+          value={formatCredits(overview?.total_credits ?? 0)}
+          description="Last 30 days"
+          icon={<Coins className="h-4 w-4" />}
         />
         <StatCard
           title="Avg Daily"
@@ -125,7 +137,7 @@ export function OverviewPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Daily Requests</CardTitle>
+          <CardTitle className="text-base">Daily Requests & Credits</CardTitle>
         </CardHeader>
         <CardContent>
           {dailyData.length > 0 ? (
@@ -138,7 +150,19 @@ export function OverviewPage() {
                   stroke="currentColor"
                   opacity={0.5}
                 />
-                <YAxis fontSize={12} stroke="currentColor" opacity={0.5} />
+                <YAxis
+                  yAxisId="left"
+                  fontSize={12}
+                  stroke="currentColor"
+                  opacity={0.5}
+                />
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  fontSize={12}
+                  stroke="currentColor"
+                  opacity={0.5}
+                />
                 <Tooltip
                   contentStyle={{
                     backgroundColor: "hsl(var(--card))",
@@ -146,9 +170,19 @@ export function OverviewPage() {
                     borderRadius: "var(--radius)",
                   }}
                 />
+                <Legend />
                 <Bar
+                  yAxisId="left"
                   dataKey="request_count"
+                  name="Requests"
                   fill="oklch(0.488 0.243 264.376)"
+                  radius={[4, 4, 0, 0]}
+                />
+                <Bar
+                  yAxisId="right"
+                  dataKey="total_credits"
+                  name="Credits"
+                  fill="oklch(0.696 0.17 162.48)"
                   radius={[4, 4, 0, 0]}
                 />
               </BarChart>

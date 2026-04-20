@@ -22,6 +22,7 @@ type DailyUsage struct {
 	Date         time.Time `json:"date"`
 	RequestCount int64     `json:"request_count"`
 	TotalTokens  int64     `json:"total_tokens"`
+	TotalCredits float64   `json:"total_credits"`
 }
 
 // UpstreamUsageSummary holds aggregated usage data per upstream.
@@ -206,7 +207,8 @@ func (s *Store) GetUsageByMember(projectID string, since, until time.Time, limit
 func (s *Store) GetDailyUsage(projectID string, since, until time.Time) ([]DailyUsage, error) {
 	rows, err := s.pool.Query(context.Background(), `
 		SELECT DATE(created_at) as date, COUNT(*) as request_count,
-			COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens
+			COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
+			COALESCE(SUM(credits_consumed), 0) as total_credits
 		FROM requests
 		WHERE project_id = $1 AND created_at >= $2 AND created_at <= $3
 		GROUP BY DATE(created_at) ORDER BY date ASC`,
@@ -219,7 +221,7 @@ func (s *Store) GetDailyUsage(projectID string, since, until time.Time) ([]Daily
 	var daily []DailyUsage
 	for rows.Next() {
 		var d DailyUsage
-		if err := rows.Scan(&d.Date, &d.RequestCount, &d.TotalTokens); err != nil {
+		if err := rows.Scan(&d.Date, &d.RequestCount, &d.TotalTokens, &d.TotalCredits); err != nil {
 			return nil, err
 		}
 		daily = append(daily, d)
@@ -414,11 +416,12 @@ func (s *Store) SumTokensInWindowByProject(projectID string, windowStart time.Ti
 func (s *Store) GetUsageOverview(projectID string, since, until time.Time) (map[string]interface{}, error) {
 	var requestCount int64
 	var totalTokens int64
+	var totalCredits float64
 	err := s.pool.QueryRow(context.Background(), `
-		SELECT COUNT(*), COALESCE(SUM(input_tokens + output_tokens), 0)
+		SELECT COUNT(*), COALESCE(SUM(input_tokens + output_tokens), 0), COALESCE(SUM(credits_consumed), 0)
 		FROM requests WHERE project_id = $1 AND created_at >= $2 AND created_at <= $3`,
 		projectID, since, until,
-	).Scan(&requestCount, &totalTokens)
+	).Scan(&requestCount, &totalTokens, &totalCredits)
 	if err != nil {
 		return nil, fmt.Errorf("usage overview: %w", err)
 	}
@@ -426,6 +429,7 @@ func (s *Store) GetUsageOverview(projectID string, since, until time.Time) (map[
 	return map[string]interface{}{
 		"request_count": requestCount,
 		"total_tokens":  totalTokens,
+		"total_credits": totalCredits,
 		"since":         since.Format(time.RFC3339),
 		"until":         until.Format(time.RFC3339),
 	}, nil
