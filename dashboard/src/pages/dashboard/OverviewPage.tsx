@@ -11,7 +11,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Request } from "@/api/types";
 import { useAuth } from "@/hooks/useAuth";
 import { Activity, Zap, Clock, Coins } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+  Legend,
+} from "recharts";
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -136,7 +145,8 @@ export function OverviewPage() {
         <CardContent>
           {dailyData.length > 0 ? (
             <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={dailyData}>
+              <LineChart data={dailyData}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
                 <XAxis
                   dataKey="date"
                   tickFormatter={(d: string) => d.slice(5)}
@@ -165,21 +175,25 @@ export function OverviewPage() {
                   }}
                 />
                 <Legend />
-                <Bar
+                <Line
                   yAxisId="left"
+                  type="monotone"
                   dataKey="request_count"
+                  stroke="oklch(0.488 0.243 264.376)"
+                  strokeWidth={2}
+                  dot={false}
                   name="Requests"
-                  fill="oklch(0.488 0.243 264.376)"
-                  radius={[4, 4, 0, 0]}
                 />
-                <Bar
+                <Line
                   yAxisId="right"
+                  type="monotone"
                   dataKey="total_credits_k"
+                  stroke="oklch(0.696 0.17 162.48)"
+                  strokeWidth={2}
+                  dot={false}
                   name="Credits (K)"
-                  fill="oklch(0.696 0.17 162.48)"
-                  radius={[4, 4, 0, 0]}
                 />
-              </BarChart>
+              </LineChart>
             </ResponsiveContainer>
           ) : (
             <p className="py-8 text-center text-muted-foreground">
