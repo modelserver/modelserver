@@ -1,12 +1,15 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/OneOfOne/xxhash"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -14,7 +17,10 @@ import (
 var (
 	ccVersionRe    = regexp.MustCompile(`cc_version=[^;]*;`)
 	ccEntrypointRe = regexp.MustCompile(`cc_entrypoint=[^;]*;`)
+	cchRe          = regexp.MustCompile(`cch=[0-9a-fA-F]{5};`)
 )
+
+const cchSeed uint64 = 0x6E52736AC806831E
 
 const (
 	fixedUserAgent      = "claude-cli/2.1.114 (external, cli)"
@@ -46,6 +52,7 @@ func normalizeClientIdentity(req *http.Request) {
 func normalizeRequestBody(body []byte) []byte {
 	body = normalizeMetadataDeviceID(body)
 	body = normalizeAttributionHeader(body)
+	body = recomputeCCH(body)
 	return body
 }
 
@@ -126,5 +133,19 @@ func normalizeAttributionString(s string) string {
 	})
 	s = ccEntrypointRe.ReplaceAllString(s, "cc_entrypoint=cli;")
 	return s
+}
+
+func recomputeCCH(body []byte) []byte {
+	if !cchRe.Match(body) {
+		return body
+	}
+	withPlaceholder := cchRe.ReplaceAll(body, []byte("cch=00000;"))
+
+	h := xxhash.NewS64(cchSeed)
+	h.Write(withPlaceholder)
+	hash := h.Sum64() & 0xFFFFF
+	cchValue := fmt.Sprintf("%05x", hash)
+
+	return bytes.Replace(withPlaceholder, []byte("cch=00000;"), []byte("cch="+cchValue+";"), 1)
 }
 
