@@ -90,8 +90,10 @@ func TraceMiddleware(traceCfg config.TraceConfig, st *store.Store, logger *slog.
 				ctx = context.WithValue(ctx, ctxTraceSource, source)
 
 				// Ensure the trace row exists so downstream writes to
-				// requests.trace_id don't violate the FK.
-				if st != nil {
+				// requests.trace_id don't violate the FK. Only for POST
+				// (completion endpoints that write request rows); GET
+				// endpoints like /v1/models never insert request records.
+				if st != nil && r.Method == http.MethodPost {
 					if project := ProjectFromContext(ctx); project != nil {
 						if err := st.EnsureTrace(project.ID, traceID, source); err != nil && logger != nil {
 							logger.Warn("failed to ensure trace", "error", err, "trace_id", traceID)
