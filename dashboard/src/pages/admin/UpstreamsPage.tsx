@@ -8,6 +8,7 @@ import {
   useUpstreamUsage,
   useClaudeCodeOAuthStart,
   useClaudeCodeOAuthExchange,
+  useUpstreamAccessToken,
   useUpstreamOAuthRefresh,
   useUpstreamOAuthStatus,
   useClaudeCodeUtilization,
@@ -44,7 +45,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { Upstream, UpstreamTestResult } from "@/api/types";
 import { ModelMultiSelect, ModelSingleSelect } from "@/components/shared/ModelCombobox";
-import { Plus, MoreHorizontal, Pencil, Trash2, Loader2, Zap, RefreshCw, ExternalLink, KeyRound, Clock, Check, X } from "lucide-react";
+import { Plus, MoreHorizontal, Pencil, Trash2, Loader2, Zap, RefreshCw, ExternalLink, KeyRound, Clock, Check, X, Copy } from "lucide-react";
 import { toast } from "sonner";
 
 function TokenStatusBadge({ upstreamId }: { upstreamId: string }) {
@@ -180,6 +181,7 @@ export function UpstreamsPage() {
   const oauthStart = useClaudeCodeOAuthStart();
   const oauthExchange = useClaudeCodeOAuthExchange();
   const oauthRefresh = useUpstreamOAuthRefresh();
+  const fetchAccessToken = useUpstreamAccessToken();
   const { data: usageData } = useUpstreamUsage();
 
   const usageMap = useMemo(() => {
@@ -382,6 +384,16 @@ export function UpstreamsPage() {
     }
   }
 
+  async function handleCopyAccessToken(upstreamId: string, upstreamName: string) {
+    try {
+      const res = await fetchAccessToken.mutateAsync(upstreamId);
+      await navigator.clipboard.writeText(res.data.access_token);
+      toast.success(`${upstreamName}: access token copied to clipboard`);
+    } catch {
+      toast.error(`${upstreamName}: failed to read access token`);
+    }
+  }
+
   const isSaving = createUpstream.isPending || updateUpstream.isPending;
 
   const columns: Column<Upstream>[] = [
@@ -520,6 +532,15 @@ export function UpstreamsPage() {
               >
                 <RefreshCw className="mr-2 h-4 w-4" />
                 Refresh Token
+              </DropdownMenuItem>
+            )}
+            {u.provider === "claudecode" && (
+              <DropdownMenuItem
+                onClick={() => handleCopyAccessToken(u.id, u.name)}
+                disabled={fetchAccessToken.isPending}
+              >
+                <Copy className="mr-2 h-4 w-4" />
+                Copy Access Token
               </DropdownMenuItem>
             )}
             {u.status === "active" ? (
