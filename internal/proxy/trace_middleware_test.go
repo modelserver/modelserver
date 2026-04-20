@@ -23,7 +23,7 @@ func TestTraceMiddleware_RequireSession_RejectsAnonymousPOST(t *testing.T) {
 		RequireSession: true,
 	}
 
-	handler := TraceMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := TraceMiddleware(cfg, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not be reached")
 	}))
 
@@ -43,7 +43,7 @@ func TestTraceMiddleware_RequireSession_AllowsWithTraceID(t *testing.T) {
 	}
 
 	called := false
-	handler := TraceMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := TraceMiddleware(cfg, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 	}))
 
@@ -67,7 +67,7 @@ func TestTraceMiddleware_RequireSession_AllowsGETWithoutSession(t *testing.T) {
 	}
 
 	called := false
-	handler := TraceMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := TraceMiddleware(cfg, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 	}))
 
@@ -87,7 +87,7 @@ func TestTraceMiddleware_RequireSessionDisabled_AllowsAnonymous(t *testing.T) {
 	}
 
 	called := false
-	handler := TraceMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := TraceMiddleware(cfg, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 	}))
 
@@ -171,7 +171,7 @@ func TestTraceMiddleware_OpenClaw_DetectsViaUserAgent(t *testing.T) {
 
 	var gotSource string
 	var gotTraceID string
-	handler := TraceMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := TraceMiddleware(cfg, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotSource = TraceSourceFromContext(r.Context())
 		gotTraceID = TraceIDFromContext(r.Context())
 	}))
@@ -200,7 +200,7 @@ func TestTraceMiddleware_OpenClaw_DetectsViaOriginator(t *testing.T) {
 
 	var gotSource string
 	var gotTraceID string
-	handler := TraceMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := TraceMiddleware(cfg, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotSource = TraceSourceFromContext(r.Context())
 		gotTraceID = TraceIDFromContext(r.Context())
 	}))
@@ -225,7 +225,7 @@ func TestTraceMiddleware_OpenClaw_DisabledDoesNotDetect(t *testing.T) {
 		OpenClawTraceEnabled: false,
 	}
 
-	handler := TraceMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := TraceMiddleware(cfg, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not be reached")
 	}))
 
@@ -247,7 +247,7 @@ func TestTraceMiddleware_OpenClaw_ExplicitHeaderTakesPrecedence(t *testing.T) {
 
 	var gotSource string
 	var gotTraceID string
-	handler := TraceMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := TraceMiddleware(cfg, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotSource = TraceSourceFromContext(r.Context())
 		gotTraceID = TraceIDFromContext(r.Context())
 	}))
@@ -273,7 +273,7 @@ func TestTraceMiddleware_OpenClaw_SameKeyGetsSameTraceID(t *testing.T) {
 	}
 
 	var ids []string
-	handler := TraceMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := TraceMiddleware(cfg, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ids = append(ids, TraceIDFromContext(r.Context()))
 	}))
 
@@ -296,7 +296,7 @@ func TestTraceMiddleware_RequireSession_RejectsOpenAIResponses(t *testing.T) {
 		RequireSession: true,
 	}
 
-	handler := TraceMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := TraceMiddleware(cfg, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not be reached for /v1/responses without session")
 	}))
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/modelserver/modelserver/internal/config"
+	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
 
@@ -58,10 +60,17 @@ func ClientKindFromContext(ctx context.Context) string {
 	return types.ClientKindUnknown
 }
 
-// TraceMiddleware extracts trace IDs from multiple sources.
+// TraceMiddleware extracts trace IDs from multiple sources and, when one is
+// found, ensures a corresponding row exists in the traces table before any
+// downstream middleware runs. That matters for the FK on requests.trace_id:
+// downstream middlewares (rate-limit rejection, extra-usage guard) may need
+// to write request rows that reference this trace_id, and those INSERTs would
+// fail silently if the trace row didn't exist yet.
+//
+// st and logger may be nil in tests that only exercise trace extraction.
 // If no trace ID is found from any source, no trace context is set — except for
 // OpenClaw, which does not send a session ID and uses the API key ID as trace ID.
-func TraceMiddleware(traceCfg config.TraceConfig) func(http.Handler) http.Handler {
+func TraceMiddleware(traceCfg config.TraceConfig, st *store.Store, logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			traceID, source := extractTraceID(r, traceCfg)
@@ -79,6 +88,16 @@ func TraceMiddleware(traceCfg config.TraceConfig) func(http.Handler) http.Handle
 			if traceID != "" {
 				ctx = context.WithValue(ctx, ctxTraceID, traceID)
 				ctx = context.WithValue(ctx, ctxTraceSource, source)
+
+				// Ensure the trace row exists so downstream writes to
+				// requests.trace_id don't violate the FK.
+				if st != nil {
+					if project := ProjectFromContext(ctx); project != nil {
+						if err := st.EnsureTrace(project.ID, traceID, source); err != nil && logger != nil {
+							logger.Warn("failed to ensure trace", "error", err, "trace_id", traceID)
+						}
+					}
+				}
 			}
 
 			// Independent client-kind detection (decoupled from TraceSource

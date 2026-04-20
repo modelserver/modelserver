@@ -34,7 +34,7 @@ func MountRoutes(
 ) {
 	wire := func(r chi.Router) {
 		r.Use(AuthMiddleware(st, encKey, introspector))
-		r.Use(TraceMiddleware(traceCfg))
+		r.Use(TraceMiddleware(traceCfg, st, logger))
 		r.Use(ResolveModelMiddleware(catalog, maxBodySize))
 		r.Use(SubscriptionEligibilityMiddleware())
 		if limiter != nil {

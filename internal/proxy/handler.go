@@ -170,13 +170,6 @@ func (h *Handler) HandleGemini(w http.ResponseWriter, r *http.Request) {
 	policy := PolicyFromContext(r.Context())
 	traceID := TraceIDFromContext(r.Context())
 
-	if traceID != "" {
-		source := TraceSourceFromContext(r.Context())
-		if err := h.store.EnsureTrace(project.ID, traceID, source); err != nil {
-			h.logger.Warn("failed to ensure trace", "error", err)
-		}
-	}
-
 	oauthGrantID := OAuthGrantIDFromContext(r.Context())
 
 	metadata := make(map[string]string)
@@ -273,14 +266,6 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, all
 
 	policy := PolicyFromContext(r.Context())
 	traceID := TraceIDFromContext(r.Context())
-
-	// Register the trace in the database.
-	if traceID != "" {
-		source := TraceSourceFromContext(r.Context())
-		if err := h.store.EnsureTrace(project.ID, traceID, source); err != nil {
-			h.logger.Warn("failed to ensure trace", "error", err)
-		}
-	}
 
 	oauthGrantID := OAuthGrantIDFromContext(r.Context())
 
