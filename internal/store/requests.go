@@ -324,6 +324,19 @@ func (s *Store) ListRequestsByTraceID(traceID string) ([]types.Request, error) {
 	return requests, rows.Err()
 }
 
+// UpdateRequestUpstream records the selected upstream on an in-flight request
+// so processing-state logs reveal which upstream is currently being attempted.
+// Guarded by status='processing' to avoid racing with CompleteRequest.
+func (s *Store) UpdateRequestUpstream(reqID, upstreamID, provider string, attempt int) error {
+	_, err := s.pool.Exec(context.Background(), `
+		UPDATE requests
+		SET upstream_id = $1, provider = $2, attempt = $3
+		WHERE id = $4 AND status = 'processing'`,
+		nullString(upstreamID), provider, attempt, reqID,
+	)
+	return err
+}
+
 // UpdateHttpLogPath sets the S3 key for the http log on a request row.
 func (s *Store) UpdateHttpLogPath(requestID, path string) error {
 	_, err := s.pool.Exec(context.Background(),

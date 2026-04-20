@@ -268,6 +268,13 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			"streaming", reqCtx.IsStream,
 		)
 
+		// Record the selected upstream on the processing-state request row so
+		// in-flight log viewers can see which upstream this request is hitting.
+		// Best-effort: a DB hiccup here must not block the upstream call.
+		if err := e.store.UpdateRequestUpstream(reqCtx.RequestID, upstream.ID, upstream.Provider, attempt+1); err != nil {
+			logger.Warn("failed to record upstream on processing request", "error", err)
+		}
+
 		// 6a. Resolve model name via upstream's ModelMap.
 		actualModel := upstream.ResolveModel(reqCtx.Model)
 		reqCtx.ActualModel = actualModel
