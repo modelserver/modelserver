@@ -149,3 +149,36 @@ func recomputeCCH(body []byte) []byte {
 	return bytes.Replace(withPlaceholder, []byte("cch=00000"), []byte("cch="+cchValue), 1)
 }
 
+// CCHStatus describes the result of validating a client's cch attestation
+// against a locally recomputed value. Used only for observability in request
+// metadata; never affects request forwarding.
+type CCHStatus string
+
+const (
+	CCHStatusMatch    CCHStatus = "match"
+	CCHStatusMismatch CCHStatus = "mismatch"
+	CCHStatusAbsent   CCHStatus = "absent"
+)
+
+// ValidateCCH computes the expected cch over the given request body and
+// compares it to the client-provided cch. Returns the status plus both
+// values (empty strings when absent). Does not mutate body.
+func ValidateCCH(body []byte) (status CCHStatus, client, expected string) {
+	loc := cchRe.FindIndex(body)
+	if loc == nil {
+		return CCHStatusAbsent, "", ""
+	}
+	match := body[loc[0]:loc[1]]
+	client = string(match[len("cch=") : len(match)-1])
+
+	withPlaceholder := cchRe.ReplaceAll(body, []byte("cch=00000;"))
+	h := xxhash.NewS64(cchSeed)
+	h.Write(withPlaceholder)
+	expected = fmt.Sprintf("%05x", h.Sum64()&0xFFFFF)
+
+	if strings.EqualFold(client, expected) {
+		return CCHStatusMatch, client, expected
+	}
+	return CCHStatusMismatch, client, expected
+}
+
