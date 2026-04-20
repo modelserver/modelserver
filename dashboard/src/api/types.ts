@@ -268,7 +268,7 @@ export interface Order {
 export interface UsageOverview {
   request_count: number;
   total_tokens: number;
-  total_credits: number;
+  total_credits_k: number;
   since: string;
   until: string;
 }
@@ -287,7 +287,7 @@ export interface DailyUsage {
   date: string;
   request_count: number;
   total_tokens: number;
-  total_credits: number;
+  total_credits_k: number;
 }
 
 export interface UsageByMember {

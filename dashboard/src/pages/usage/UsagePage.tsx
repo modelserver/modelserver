@@ -30,12 +30,6 @@ function formatNumber(n: number): string {
   return String(n);
 }
 
-function formatCredits(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(2)}K`;
-  return n.toFixed(2);
-}
-
 function defaultSince() {
   const d = new Date();
   d.setDate(d.getDate() - 30);
@@ -148,7 +142,7 @@ export function UsagePage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard title="Total Requests" value={formatNumber(stats?.request_count ?? 0)} />
         <StatCard title="Total Tokens" value={formatNumber(stats?.total_tokens ?? 0)} />
-        <StatCard title="Total Credits" value={formatCredits(stats?.total_credits ?? 0)} />
+        <StatCard title="Total Credits" value={`${(stats?.total_credits_k ?? 0).toLocaleString()}K`} />
         <ExtraUsageCard projectId={projectId} />
       </div>
 
@@ -195,11 +189,11 @@ export function UsagePage() {
                 <Line
                   yAxisId="right"
                   type="monotone"
-                  dataKey="total_credits"
+                  dataKey="total_credits_k"
                   stroke="oklch(0.696 0.17 162.48)"
                   strokeWidth={2}
                   dot={false}
-                  name="Credits"
+                  name="Credits (K)"
                 />
               </LineChart>
             </ResponsiveContainer>

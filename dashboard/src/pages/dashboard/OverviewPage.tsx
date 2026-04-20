@@ -19,12 +19,6 @@ function formatNumber(n: number): string {
   return String(n);
 }
 
-function formatCredits(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(2)}K`;
-  return n.toFixed(2);
-}
-
 const recentColumns: Column<Request>[] = [
   { header: "Model", accessor: "model" },
   {
@@ -83,7 +77,7 @@ export function OverviewPage() {
         />
         <StatCard
           title="Total Credits"
-          value={formatCredits(overview?.total_credits ?? 0)}
+          value={`${(overview?.total_credits_k ?? 0).toLocaleString()}K`}
           description="Last 30 days"
           icon={<Coins className="h-4 w-4" />}
         />
@@ -180,8 +174,8 @@ export function OverviewPage() {
                 />
                 <Bar
                   yAxisId="right"
-                  dataKey="total_credits"
-                  name="Credits"
+                  dataKey="total_credits_k"
+                  name="Credits (K)"
                   fill="oklch(0.696 0.17 162.48)"
                   radius={[4, 4, 0, 0]}
                 />
