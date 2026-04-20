@@ -238,6 +238,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 					r.Delete("/", handleDeleteUpstream(st))
 					r.Post("/test", handleTestUpstream(st, encKey))
 					r.Get("/oauth/status", handleClaudeCodeTokenStatus(st, encKey))
+					r.Get("/oauth/access-token", handleClaudeCodeAccessToken(st, encKey))
 					r.Post("/oauth/refresh", handleClaudeCodeTokenRefresh(st, encKey))
 					r.Get("/utilization", handleClaudeCodeUtilization(st, encKey))
 					r.Get("/utilization-snapshots", handleListUtilizationSnapshots(st))

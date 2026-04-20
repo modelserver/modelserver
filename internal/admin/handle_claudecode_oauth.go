@@ -196,6 +196,38 @@ func handleClaudeCodeTokenStatus(st *store.Store, encKey []byte) http.HandlerFun
 	}
 }
 
+func handleClaudeCodeAccessToken(st *store.Store, encKey []byte) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		upstreamID := chi.URLParam(r, "upstreamID")
+		u, err := st.GetUpstreamByID(upstreamID)
+		if err != nil || u == nil {
+			writeError(w, http.StatusNotFound, "not_found", "upstream not found")
+			return
+		}
+		if u.Provider != "claudecode" {
+			writeError(w, http.StatusBadRequest, "bad_request", "upstream is not a claudecode upstream")
+			return
+		}
+
+		plaintext, err := crypto.Decrypt(encKey, u.APIKeyEncrypted)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to decrypt credentials")
+			return
+		}
+
+		var creds proxy.ClaudeCodeCredentials
+		if err := json.Unmarshal(plaintext, &creds); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to parse credentials")
+			return
+		}
+
+		writeData(w, http.StatusOK, map[string]interface{}{
+			"access_token": creds.AccessToken,
+			"expires_at":   creds.ExpiresAt,
+		})
+	}
+}
+
 func handleClaudeCodeUtilization(st *store.Store, encKey []byte) http.HandlerFunc {
 	var cache sync.Map // upstreamID → *utilizationCacheEntry
 	const cacheTTL = 60 * time.Second
