@@ -1,40 +1,60 @@
 package proxy
 
 import (
-	"fmt"
 	"testing"
-
-	"github.com/OneOfOne/xxhash"
 )
 
-func TestRecomputeCCH_KnownVector(t *testing.T) {
-	// Known test vector: compact JSON body with cch=00000 placeholder.
-	// Expected cch computed independently via Go xxHash64 with seed 0x6E52736AC806831E.
-	body := []byte(`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.112.c30; cc_entrypoint=cli; cch=00000;"},{"type":"text","text":"You are Claude."}],"model":"claude-opus-4-7","messages":[{"role":"user","content":"hello"}]}`)
+func TestRecomputeCCH_CrossValidatedWithPythonPOC(t *testing.T) {
+	// These test vectors were independently computed using the Python POC from
+	// https://a10k.co/b/reverse-engineering-claude-code-cch.html:
+	//
+	//   import xxhash
+	//   CCH_SEED = 0x6E52736AC806831E
+	//   cch = format(xxhash.xxh64(body.encode(), seed=CCH_SEED).intdigest() & 0xFFFFF, "05x")
+	//
+	// Each body contains cch=00000 as the placeholder (hash is computed over
+	// the placeholder, then the result replaces "cch=00000" in the final output).
 
-	// Compute expected value directly.
-	h := xxhash.NewS64(cchSeed)
-	h.Write(body)
-	want := fmt.Sprintf("%05x", h.Sum64()&0xFFFFF)
-
-	// Now set a fake cch value to simulate an incoming body.
-	bodyWithFake := make([]byte, len(body))
-	copy(bodyWithFake, body)
-	bodyWithFake = cchRe.ReplaceAll(bodyWithFake, []byte("cch=aaaaa;"))
-
-	result := recomputeCCH(bodyWithFake)
-
-	loc := cchRe.FindIndex(result)
-	if loc == nil {
-		t.Fatal("result should contain a cch field")
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "full_attribution_header",
+			body: `{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.112.c30; cc_entrypoint=cli; cch=00000;"},{"type":"text","text":"You are Claude."}],"model":"claude-opus-4-7","messages":[{"role":"user","content":"hello"}]}`,
+			want: "55875",
+		},
+		{
+			name: "different_cc_version",
+			body: `{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.112.abc; cc_entrypoint=cli; cch=00000;"},{"type":"text","text":"You are Claude."}],"model":"claude-opus-4-7","messages":[{"role":"user","content":"hello"}]}`,
+			want: "df769",
+		},
+		{
+			name: "minimal_body",
+			body: `{"system":[{"type":"text","text":"x-anthropic-billing-header: cch=00000;"}],"messages":[]}`,
+			want: "96fa3",
+		},
 	}
-	got := string(result[loc[0]+4 : loc[1]-1])
 
-	if got != want {
-		t.Errorf("cch = %s, want %s", got, want)
-	}
-	if got != "55875" {
-		t.Errorf("cch = %s, want hard-coded reference 55875", got)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Start with a body that has a different cch value (simulating
+			// an incoming request whose cch is stale after body modification).
+			incoming := cchRe.ReplaceAll([]byte(tc.body), []byte("cch=fffff;"))
+
+			result := recomputeCCH(incoming)
+
+			loc := cchRe.FindIndex(result)
+			if loc == nil {
+				t.Fatal("result should contain a cch field")
+			}
+			got := string(result[loc[0]+4 : loc[1]-1])
+
+			if got != tc.want {
+				t.Errorf("cch = %s, want %s (cross-validated with Python POC)", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -63,37 +83,4 @@ func TestRecomputeCCH_Idempotent(t *testing.T) {
 	if cch1 == "00000" {
 		t.Error("cch should not remain 00000 after recomputation")
 	}
-}
-
-func TestRecomputeCCH_Format(t *testing.T) {
-	body := []byte(`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.112.abc; cc_entrypoint=cli; cch=12345;"}],"messages":[]}`)
-
-	result := recomputeCCH(body)
-	loc := cchRe.FindIndex(result)
-	if loc == nil {
-		t.Fatal("no cch in result")
-	}
-	cch := string(result[loc[0]+4 : loc[1]-1])
-
-	if len(cch) != 5 {
-		t.Errorf("cch length %d, want 5", len(cch))
-	}
-	for _, c := range cch {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
-			t.Errorf("cch contains non-hex char: %c", c)
-		}
-	}
-}
-
-func TestRecomputeCCH_MatchesOfficialBody(t *testing.T) {
-	// This test uses a real request body captured from Claude Code (CC 2.1.112).
-	// The official cch value computed by Bun's native attestation is 755f5.
-	// If testdata/cch_test_body.json exists with the full compact JSON body,
-	// we verify our algorithm matches.
-	//
-	// To run: place the compact JSON body (with cch=755f5;) in
-	// internal/proxy/testdata/cch_test_body.json
-
-	// For now, skip if fixture not available.
-	t.Skip("requires testdata/cch_test_body.json with full official request body")
 }
