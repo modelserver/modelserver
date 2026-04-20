@@ -146,6 +146,6 @@ func recomputeCCH(body []byte) []byte {
 	hash := h.Sum64() & 0xFFFFF
 	cchValue := fmt.Sprintf("%05x", hash)
 
-	return bytes.Replace(withPlaceholder, []byte("cch=00000;"), []byte("cch="+cchValue+";"), 1)
+	return bytes.Replace(withPlaceholder, []byte("cch=00000"), []byte("cch="+cchValue), 1)
 }
 
