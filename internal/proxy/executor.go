@@ -275,7 +275,13 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 		// 6b. Get or compute transformed body for this (provider, resolvedModel) pair.
 		//     Different upstreams of the same provider may resolve to different model
 		//     names via ModelMap, producing different request bodies.
+		//     ClaudeCode includes upstream.ID because normalizeRequestBody bakes in
+		//     a per-upstream device_id; sharing the cached body across upstreams
+		//     would send the wrong device_id on retry.
 		cacheKey := upstream.Provider + ":" + actualModel
+		if upstream.Provider == types.ProviderClaudeCode {
+			cacheKey += ":" + upstream.ID
+		}
 		transformedBody, ok := bodyCache[cacheKey]
 		if !ok {
 			// Start with original body. If the model was remapped and this is
