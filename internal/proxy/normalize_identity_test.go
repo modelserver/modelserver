@@ -44,15 +44,15 @@ func TestRecomputeCCH_CrossValidatedWithPythonPOC(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Start with a body that has a different cch value (simulating
 			// an incoming request whose cch is stale after body modification).
-			incoming := cchRe.ReplaceAll([]byte(tc.body), []byte("cch=fffff;"))
+			incoming := cchRe.ReplaceAll([]byte(tc.body), []byte("${1}00000${3}"))
 
 			result := recomputeCCH(incoming)
 
-			loc := cchRe.FindIndex(result)
-			if loc == nil {
+			m := cchRe.FindSubmatch(result)
+			if m == nil {
 				t.Fatal("result should contain a cch field")
 			}
-			got := string(result[loc[0]+4 : loc[1]-1])
+			got := string(m[2])
 
 			if got != tc.want {
 				t.Errorf("cch = %s, want %s (cross-validated with Python POC)", got, tc.want)
@@ -144,13 +144,14 @@ func TestValidateCCH_AbsentAttributionNoCCH(t *testing.T) {
 	}
 }
 
-func TestValidateCCH_CaseInsensitive(t *testing.T) {
-	// "different_cc_version" vector: expected cch is "bbc65". Verify
-	// ValidateCCH accepts client-supplied uppercase "BBC65" as a match.
+func TestValidateCCH_UppercaseIsMismatch(t *testing.T) {
+	// Real Claude Code CLI always emits lowercase hex. Uppercase cch is a
+	// signal of a non-authentic client — reported as mismatch under the
+	// byte-exact comparison policy.
 	body := []byte(`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.112.abc; cc_entrypoint=cli; cch=BBC65;"},{"type":"text","text":"You are Claude."}],"model":"claude-opus-4-7","messages":[{"role":"user","content":"hello"}]}`)
 	status, client, expected := ValidateCCH(body)
-	if status != CCHStatusMatch {
-		t.Errorf("status = %q, want %q (case-insensitive match)", status, CCHStatusMatch)
+	if status != CCHStatusMismatch {
+		t.Errorf("status = %q, want %q (uppercase should mismatch)", status, CCHStatusMismatch)
 	}
 	if client != "BBC65" {
 		t.Errorf("client = %q, want %q", client, "BBC65")
@@ -234,4 +235,33 @@ func TestNormalizeMetadataDeviceID_PanicsOnEmptyDeviceID(t *testing.T) {
 		}
 	}()
 	normalizeMetadataDeviceID([]byte(`{}`), "")
+}
+
+func TestCCH_UserMessageCchNotTouched(t *testing.T) {
+	// User message content containing a literal "cch=abcde;" must NOT be
+	// treated as the billing-header cch — the regex is scoped to the
+	// x-anthropic-billing-header context.
+	body := []byte(`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.114.abc; cc_entrypoint=cli; cch=00000;"}],"model":"claude-opus-4-7","messages":[{"role":"user","content":"example: cch=abcde; here"}]}`)
+
+	out := recomputeCCH(body)
+
+	// The user-message literal must be unchanged.
+	if !bytes.Contains(out, []byte("example: cch=abcde; here")) {
+		t.Error("recomputeCCH modified user-message content containing cch=abcde")
+	}
+
+	// The billing-header cch should now be a non-zero 5-hex value.
+	m := cchRe.FindSubmatch(out)
+	if m == nil {
+		t.Fatal("no cch in billing header after recompute")
+	}
+	if string(m[2]) == "00000" {
+		t.Errorf("billing-header cch was not recomputed (still 00000)")
+	}
+
+	// And ValidateCCH on the re-signed body should report match.
+	status, client, expected := ValidateCCH(out)
+	if status != CCHStatusMatch {
+		t.Errorf("ValidateCCH = %s, want match (client=%s expected=%s)", status, client, expected)
+	}
 }

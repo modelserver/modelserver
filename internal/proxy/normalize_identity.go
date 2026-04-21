@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -20,7 +19,11 @@ import (
 var (
 	ccVersionRe    = regexp.MustCompile(`cc_version=[^;]*;`)
 	ccEntrypointRe = regexp.MustCompile(`cc_entrypoint=[^;]*;`)
-	cchRe          = regexp.MustCompile(`cch=[0-9a-fA-F]{5};`)
+	// cchRe scopes the cch=<5-hex>; match to the x-anthropic-billing-header
+	// text block so user-message content containing a literal "cch=..." string
+	// is never touched. Capture groups: $1 = prefix up to and including "cch=",
+	// $2 = the 5 hex chars, $3 = the trailing ";".
+	cchRe = regexp.MustCompile(`(x-anthropic-billing-header:[^"]*?\bcch=)([0-9a-fA-F]{5})(;)`)
 )
 
 const cchSeed uint64 = 0x4d659218e32a3268
@@ -165,14 +168,13 @@ func recomputeCCH(body []byte) []byte {
 	if !cchRe.Match(body) {
 		return body
 	}
-	withPlaceholder := cchRe.ReplaceAll(body, []byte("cch=00000;"))
+	withPlaceholder := cchRe.ReplaceAll(body, []byte("${1}00000${3}"))
 
 	h := xxhash.NewS64(cchSeed)
 	h.Write(withPlaceholder)
-	hash := h.Sum64() & 0xFFFFF
-	cchValue := fmt.Sprintf("%05x", hash)
+	cchValue := fmt.Sprintf("%05x", h.Sum64()&0xFFFFF)
 
-	return bytes.Replace(withPlaceholder, []byte("cch=00000"), []byte("cch="+cchValue), 1)
+	return cchRe.ReplaceAll(withPlaceholder, []byte("${1}"+cchValue+"${3}"))
 }
 
 // CCHStatus describes the result of validating a client's cch attestation
@@ -189,20 +191,24 @@ const (
 // ValidateCCH computes the expected cch over the given request body and
 // compares it to the client-provided cch. Returns the status plus both
 // values (empty strings when absent). Does not mutate body.
+//
+// Comparison is byte-exact (case-sensitive): a real Claude Code CLI always
+// emits lowercase hex, so uppercase is reported as mismatch — it's a signal
+// the client is not the authentic CLI.
 func ValidateCCH(body []byte) (status CCHStatus, client, expected string) {
-	loc := cchRe.FindIndex(body)
-	if loc == nil {
+	m := cchRe.FindSubmatchIndex(body)
+	if m == nil {
 		return CCHStatusAbsent, "", ""
 	}
-	match := body[loc[0]:loc[1]]
-	client = string(match[len("cch=") : len(match)-1])
+	// Group 2 (indices m[4]:m[5]) holds the 5 hex chars.
+	client = string(body[m[4]:m[5]])
 
-	withPlaceholder := cchRe.ReplaceAll(body, []byte("cch=00000;"))
+	withPlaceholder := cchRe.ReplaceAll(body, []byte("${1}00000${3}"))
 	h := xxhash.NewS64(cchSeed)
 	h.Write(withPlaceholder)
 	expected = fmt.Sprintf("%05x", h.Sum64()&0xFFFFF)
 
-	if strings.EqualFold(client, expected) {
+	if client == expected {
 		return CCHStatusMatch, client, expected
 	}
 	return CCHStatusMismatch, client, expected
