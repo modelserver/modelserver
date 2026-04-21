@@ -10,6 +10,7 @@ const (
 	PlanMax40x  = "max_40x"
 	PlanMax80x  = "max_80x"
 	PlanMax120x = "max_120x"
+	PlanMax200x = "max_200x"
 )
 
 // Subscription status constants.
@@ -133,7 +134,7 @@ type Subscription struct {
 	ID        string    `json:"id"`
 	ProjectID string    `json:"project_id"`
 	PlanID    string    `json:"plan_id,omitempty"`
-	PlanName  string    `json:"plan_name"` // "pro", "max_5x", "max_20x", "max_40x", "max_80x", "max_120x", or custom
+	PlanName  string    `json:"plan_name"` // "pro", "max_5x", "max_20x", "max_40x", "max_80x", "max_120x", "max_200x", or custom
 	Status    string    `json:"status"`
 	StartsAt  time.Time `json:"starts_at"`
 	ExpiresAt time.Time `json:"expires_at"`
