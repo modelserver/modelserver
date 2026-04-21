@@ -9,11 +9,10 @@ import (
 )
 
 func TestRecomputeCCH_CrossValidatedWithPythonPOC(t *testing.T) {
-	// These test vectors were independently computed using the Python POC from
-	// https://a10k.co/b/reverse-engineering-claude-code-cch.html:
+	// Test vectors computed with the reverse-engineered seed (CLI 2.1.114):
 	//
 	//   import xxhash
-	//   CCH_SEED = 0x6E52736AC806831E
+	//   CCH_SEED = 0x4d659218e32a3268
 	//   cch = format(xxhash.xxh64(body.encode(), seed=CCH_SEED).intdigest() & 0xFFFFF, "05x")
 	//
 	// Each body contains cch=00000 as the placeholder (hash is computed over
@@ -27,17 +26,17 @@ func TestRecomputeCCH_CrossValidatedWithPythonPOC(t *testing.T) {
 		{
 			name: "full_attribution_header",
 			body: `{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.112.c30; cc_entrypoint=cli; cch=00000;"},{"type":"text","text":"You are Claude."}],"model":"claude-opus-4-7","messages":[{"role":"user","content":"hello"}]}`,
-			want: "55875",
+			want: "09880",
 		},
 		{
 			name: "different_cc_version",
 			body: `{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.112.abc; cc_entrypoint=cli; cch=00000;"},{"type":"text","text":"You are Claude."}],"model":"claude-opus-4-7","messages":[{"role":"user","content":"hello"}]}`,
-			want: "df769",
+			want: "bbc65",
 		},
 		{
 			name: "minimal_body",
 			body: `{"system":[{"type":"text","text":"x-anthropic-billing-header: cch=00000;"}],"messages":[]}`,
-			want: "96fa3",
+			want: "e15ba",
 		},
 	}
 
@@ -89,29 +88,29 @@ func TestRecomputeCCH_Idempotent(t *testing.T) {
 	}
 }
 
-// Bodies for ValidateCCH tests reuse POC-cross-validated vectors from
+// Bodies for ValidateCCH tests reuse vectors from
 // TestRecomputeCCH_CrossValidatedWithPythonPOC: a body whose placeholdered
 // form (cch=00000;) hashes to value X is a "correct" body when it carries
 // cch=X itself.
 //
-// Full attribution header vector → expected hash "55875".
-const cchMatchBody = `{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.112.c30; cc_entrypoint=cli; cch=55875;"},{"type":"text","text":"You are Claude."}],"model":"claude-opus-4-7","messages":[{"role":"user","content":"hello"}]}`
+// Full attribution header vector → expected hash "09880" (seed 0x4d659218e32a3268).
+const cchMatchBody = `{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.112.c30; cc_entrypoint=cli; cch=09880;"},{"type":"text","text":"You are Claude."}],"model":"claude-opus-4-7","messages":[{"role":"user","content":"hello"}]}`
 
 func TestValidateCCH_Match(t *testing.T) {
 	status, client, expected := ValidateCCH([]byte(cchMatchBody))
 	if status != CCHStatusMatch {
 		t.Errorf("status = %q, want %q", status, CCHStatusMatch)
 	}
-	if client != "55875" {
-		t.Errorf("client = %q, want %q", client, "55875")
+	if client != "09880" {
+		t.Errorf("client = %q, want %q", client, "09880")
 	}
-	if expected != "55875" {
-		t.Errorf("expected = %q, want %q", expected, "55875")
+	if expected != "09880" {
+		t.Errorf("expected = %q, want %q", expected, "09880")
 	}
 }
 
 func TestValidateCCH_Mismatch(t *testing.T) {
-	// Replace the correct cch "55875" with a wrong value.
+	// Same body shape as cchMatchBody but with a wrong cch value.
 	body := []byte(`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.112.c30; cc_entrypoint=cli; cch=deadb;"},{"type":"text","text":"You are Claude."}],"model":"claude-opus-4-7","messages":[{"role":"user","content":"hello"}]}`)
 	status, client, expected := ValidateCCH(body)
 	if status != CCHStatusMismatch {
@@ -120,8 +119,8 @@ func TestValidateCCH_Mismatch(t *testing.T) {
 	if client != "deadb" {
 		t.Errorf("client = %q, want %q", client, "deadb")
 	}
-	if expected != "55875" {
-		t.Errorf("expected = %q, want %q", expected, "55875")
+	if expected != "09880" {
+		t.Errorf("expected = %q, want %q", expected, "09880")
 	}
 }
 
@@ -146,18 +145,18 @@ func TestValidateCCH_AbsentAttributionNoCCH(t *testing.T) {
 }
 
 func TestValidateCCH_CaseInsensitive(t *testing.T) {
-	// "different_cc_version" POC vector: expected cch is "df769". Verify
-	// ValidateCCH accepts client-supplied uppercase "DF769" as a match.
-	body := []byte(`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.112.abc; cc_entrypoint=cli; cch=DF769;"},{"type":"text","text":"You are Claude."}],"model":"claude-opus-4-7","messages":[{"role":"user","content":"hello"}]}`)
+	// "different_cc_version" vector: expected cch is "bbc65". Verify
+	// ValidateCCH accepts client-supplied uppercase "BBC65" as a match.
+	body := []byte(`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.112.abc; cc_entrypoint=cli; cch=BBC65;"},{"type":"text","text":"You are Claude."}],"model":"claude-opus-4-7","messages":[{"role":"user","content":"hello"}]}`)
 	status, client, expected := ValidateCCH(body)
 	if status != CCHStatusMatch {
 		t.Errorf("status = %q, want %q (case-insensitive match)", status, CCHStatusMatch)
 	}
-	if client != "DF769" {
-		t.Errorf("client = %q, want %q", client, "DF769")
+	if client != "BBC65" {
+		t.Errorf("client = %q, want %q", client, "BBC65")
 	}
-	if expected != "df769" {
-		t.Errorf("expected = %q, want %q", expected, "df769")
+	if expected != "bbc65" {
+		t.Errorf("expected = %q, want %q", expected, "bbc65")
 	}
 }
 

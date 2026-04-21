@@ -23,7 +23,7 @@ var (
 	cchRe          = regexp.MustCompile(`cch=[0-9a-fA-F]{5};`)
 )
 
-const cchSeed uint64 = 0x6E52736AC806831E
+const cchSeed uint64 = 0x4d659218e32a3268
 
 const (
 	fixedUserAgent      = "claude-cli/2.1.114 (external, cli)"
