@@ -118,14 +118,6 @@ export function useUpstreamOAuthRefresh() {
   });
 }
 
-export function useUpstreamAccessToken() {
-  return useMutation({
-    mutationFn: (upstreamId: string) =>
-      api.get<DataResponse<{ access_token: string; expires_at: number }>>(
-        `/api/v1/upstreams/${upstreamId}/oauth/access-token`,
-      ),
-  });
-}
 
 // --- Upstream Groups ---
 export function useUpstreamGroups(page = 1, perPage = 20) {
