@@ -412,9 +412,9 @@ func TestValidateFingerprint_SkipsSystemReminderBlocks(t *testing.T) {
 
 func TestValidateFingerprint_SlashCommandUsesFirstBlock(t *testing.T) {
 	// When the user types a slash command, the only text block starts with
-	// <command-name>... — isCLIInjectedBlock flags every block as injected,
-	// so extractFirstUserMessageText must fall back to the first block
-	// (what the CLI actually uses to compute the fingerprint).
+	// <command-name>... — that block is the user's action, not a CLI-injected
+	// reminder, so isCLIInjectedBlock returns false and extractFirstUserMessageText
+	// returns it directly. This is what the CLI uses to compute the fingerprint.
 	msg := "<command-name>/foo</command-name>\n<command-message>foo</command-message>\n<command-args>bar</command-args>"
 	version := "2.1.114"
 	fp := computeFingerprint(msg, version)
@@ -447,10 +447,128 @@ func TestExtractFirstUserMessageText_EmptyFirstBlockIsKept(t *testing.T) {
 	}
 }
 
-func TestIsCLIInjectedBlock_LocalCommandStderr(t *testing.T) {
-	// Symmetric to <local-command-stdout>; both come from slash commands.
-	if !isCLIInjectedBlock("<local-command-stderr>oops</local-command-stderr>") {
-		t.Error("<local-command-stderr> should be classified as CLI-injected")
+func TestIsCLIInjectedBlock_LateInjectedReminders(t *testing.T) {
+	// Only blocks the CLI injects AFTER fingerprint computation count as
+	// "injected" for skip purposes: the system-reminder wrapper (used for
+	// SessionStart hook output, skill list, claudeMd context, attachment
+	// previews) and the local-command-caveat that prefaces slash-command
+	// output. Anything else — including the slash-command blocks themselves
+	// — is part of the user's action sequence and IS used by the CLI as
+	// the fingerprint source.
+	for _, s := range []string{
+		"<system-reminder>\nfoo\n</system-reminder>",
+		"<local-command-caveat>caveat text",
+	} {
+		if !isCLIInjectedBlock(s) {
+			t.Errorf("isCLIInjectedBlock(%q) = false, want true", s)
+		}
+	}
+}
+
+func TestIsCLIInjectedBlock_SlashCommandsNotInjected(t *testing.T) {
+	// Slash-command blocks (<command-name>, <command-message>, <command-args>,
+	// <local-command-stdout>, <local-command-stderr>) are user-triggered
+	// actions, not CLI-injected metadata. Real wire traffic shows the CLI
+	// computes the fingerprint over <command-name>/effort..., <command-name>/model...,
+	// etc. — so our extractor must NOT skip them.
+	for _, s := range []string{
+		"<command-name>/effort</command-name>",
+		"<command-message>effort</command-message>",
+		"<command-args>max</command-args>",
+		"<local-command-stdout>Set effort level to max</local-command-stdout>",
+		"<local-command-stderr>oops</local-command-stderr>",
+	} {
+		if isCLIInjectedBlock(s) {
+			t.Errorf("isCLIInjectedBlock(%q) = true, want false (slash-command block is user action, not CLI injection)", s)
+		}
+	}
+}
+
+func TestValidateFingerprint_SlashCommandIsFingerprintSourceAfterReminders(t *testing.T) {
+	// Real wire pattern (from sample 99d0ae18 / cc_version=2.1.112.c32):
+	// the CLI's first user message in messagesForAPI at fingerprint time
+	// contains only the slash-command block + its stdout + the user's actual
+	// query. AFTER fingerprint, the CLI prepends skill_listing,
+	// prependUserContext (claudeMd), and the local-command-caveat. Wire body
+	// shows them all merged: [SR_skills, SR_claudeMd, caveat, command-name,
+	// stdout, user_query]. The fingerprint matches the command-name block —
+	// which means our extractor must skip past system-reminder + caveat and
+	// stop on <command-name>, NOT skip past it to the actual user query.
+	msg := "<command-name>/effort</command-name>\n            <command-message>effort</command-message>\n            <command-args>max</command-args>"
+	version := "2.1.112"
+	fp := computeFingerprint(msg, version)
+	msgJSON, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	body := []byte(fmt.Sprintf(
+		`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=cli; cch=00000;"}],`+
+			`"model":"claude-opus-4-7","messages":[{"role":"user","content":[`+
+			`{"type":"text","text":"<system-reminder>\nThe following skills are available for use with the Skill tool\n</system-reminder>"},`+
+			`{"type":"text","text":"<system-reminder>\nAs you answer the user's questions, you can use the following context\n</system-reminder>"},`+
+			`{"type":"text","text":"<local-command-caveat>Caveat: messages below were generated locally</local-command-caveat>"},`+
+			`{"type":"text","text":%s},`+
+			`{"type":"text","text":"<local-command-stdout>Set effort level to max</local-command-stdout>"},`+
+			`{"type":"text","text":"the actual user query that should NOT be the fingerprint source"}]}]}`,
+		version, fp, string(msgJSON)))
+
+	status, client, expected := ValidateFingerprint(body)
+	if status != CCHStatusMatch {
+		t.Errorf("status = %q, want match (client=%s expected=%s)", status, client, expected)
+	}
+}
+
+func TestValidateFingerprint_CompactSummaryAcrossUserMessages(t *testing.T) {
+	// Real wire pattern (from sample b64f2527 / cc_version=2.1.114.e2a):
+	// after /compact, the wire body has TWO consecutive user messages —
+	// messages[0] is a STRING that's a bubbled-up attachment
+	// ("<system-reminder>Called the Read tool...</system-reminder>"), and
+	// messages[1] is an array starting with more attachment results and
+	// containing the /compact summary block deeper in. The CLI's fingerprint
+	// is computed on the compact summary, so our extractor must:
+	//   1) treat the string-content user message like a single text block
+	//      (skipping it because it starts with <system-reminder>), and
+	//   2) keep scanning into messages[1] until it hits the summary.
+	msg := "This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation."
+	version := "2.1.114"
+	fp := computeFingerprint(msg, version)
+	msgJSON, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	body := []byte(fmt.Sprintf(
+		`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=cli; cch=00000;"}],`+
+			`"model":"claude-opus-4-7","messages":[`+
+			`{"role":"user","content":"<system-reminder>\nCalled the Read tool with the following input: {\"file_path\":\"/x\"}\n</system-reminder>"},`+
+			`{"role":"user","content":[`+
+			`{"type":"text","text":"<system-reminder>\nResult of calling the Read tool:\n...truncated...\n</system-reminder>"},`+
+			`{"type":"text","text":"<system-reminder>\nAs you answer the user's questions...\n</system-reminder>"},`+
+			`{"type":"text","text":%s},`+
+			`{"type":"text","text":"<local-command-caveat>Caveat...</local-command-caveat>"},`+
+			`{"type":"text","text":"<command-name>/compact</command-name>"},`+
+			`{"type":"text","text":"trailing user query — not the fingerprint source"}]}]}`,
+		version, fp, string(msgJSON)))
+
+	status, client, expected := ValidateFingerprint(body)
+	if status != CCHStatusMatch {
+		t.Errorf("status = %q, want match (client=%s expected=%s)", status, client, expected)
+	}
+}
+
+func TestExtractFirstUserMessageText_StopsAtAssistantMessage(t *testing.T) {
+	// Cross-message scan must NOT cross an assistant boundary. If the first
+	// user message has only late-injected blocks and the next message is an
+	// assistant, fall back to the first user message's first block instead
+	// of scanning into a later user message.
+	body := []byte(`{"messages":[` +
+		`{"role":"user","content":[{"type":"text","text":"<system-reminder>\nfoo\n</system-reminder>"}]},` +
+		`{"role":"assistant","content":[{"type":"text","text":"reply"}]},` +
+		`{"role":"user","content":[{"type":"text","text":"second user message"}]}` +
+		`]}`)
+	got := extractFirstUserMessageText(body)
+	want := "<system-reminder>\nfoo\n</system-reminder>"
+	if got != want {
+		t.Errorf("extractFirstUserMessageText = %q, want %q (must not scan past assistant)", got, want)
 	}
 }
 

@@ -282,67 +282,88 @@ func ValidateFingerprint(body []byte) (status CCHStatus, client, expected string
 // extractFirstUserMessageText returns the text content that the CLI used for
 // fingerprint computation.
 //
-// In the CLI's internal message model the original user input is the first
-// content block, followed by attachment-injected <system-reminder> blocks.
-// After API serialization the order is reversed: <system-reminder> blocks
-// come first and the user's text last. The fingerprint is computed on the
-// internal (pre-serialization) order — i.e. the original user input, which
-// in the wire body is the first text block NOT wrapped in <system-reminder>.
-// Falls back to the first text block if every block is wrapped.
+// The CLI computes the fingerprint on messagesForAPI[0] — the first user
+// message in its internal model — at a point where the message contains only
+// the user's "primary action" content (the actual prompt, a slash-command
+// invocation block like <command-name>/effort..., or a /compact resume
+// summary). AFTER fingerprint, the CLI merges in late-injected reminder
+// blocks (skill listing, prependUserContext claudeMd, SessionStart hook
+// output, the local-command-caveat that prefaces slash-command output).
+// The wire body we receive shows the post-merge form, so we have to skip
+// those late-injected blocks to recover what the CLI saw at fingerprint time.
+//
+// The scan also crosses consecutive user messages: when /compact bubbles an
+// attachment user message ("<system-reminder>Called the Read tool...") to
+// messages[0] as a string, the actual /compact summary lives inside
+// messages[1]'s content array — both must be visible to the scan. The scan
+// stops at the first non-user message (i.e., assistant), since the first
+// user-turn group is the only thing that gets merged into messagesForAPI[0].
+//
+// Falls back to the first text block ever seen if every candidate is a
+// late-injected reminder.
 func extractFirstUserMessageText(body []byte) string {
 	messages := gjson.GetBytes(body, "messages")
 	if !messages.Exists() || !messages.IsArray() {
 		return ""
 	}
+	var fallback string
+	fallbackSet := false
 	for _, msg := range messages.Array() {
 		if msg.Get("role").Str != "user" {
+			break
+		}
+		for _, text := range userMessageTextBlocks(msg.Get("content")) {
+			if !fallbackSet {
+				fallback = text
+				fallbackSet = true
+			}
+			if !isCLIInjectedBlock(text) {
+				return text
+			}
+		}
+	}
+	return fallback
+}
+
+// userMessageTextBlocks yields the text-block strings of a single user
+// message's content. String content is treated as a single text block so the
+// caller can apply the same skip rules uniformly.
+func userMessageTextBlocks(content gjson.Result) []string {
+	if content.Type == gjson.String {
+		return []string{content.Str}
+	}
+	if !content.IsArray() {
+		return nil
+	}
+	blocks := content.Array()
+	out := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		if block.Get("type").Str != "text" {
 			continue
 		}
-		content := msg.Get("content")
-		if content.Type == gjson.String {
-			return content.Str
-		}
-		if content.IsArray() {
-			var fallback string
-			fallbackSet := false
-			for _, block := range content.Array() {
-				if block.Get("type").Str != "text" {
-					continue
-				}
-				text := block.Get("text").Str
-				if !fallbackSet {
-					fallback = text
-					fallbackSet = true
-				}
-				if !isCLIInjectedBlock(text) {
-					return text
-				}
-			}
-			return fallback
-		}
-		break
+		out = append(out, block.Get("text").Str)
 	}
-	return ""
+	return out
 }
 
 // isCLIInjectedBlock returns true if the text block was injected by the CLI
-// rather than typed by the user. These blocks are added during API request
-// construction and appear before the user's actual input in the wire format.
+// AFTER fingerprint computation. Only these "late-injected" wrappers are
+// skipped:
+//
+//   - <system-reminder>...: SessionStart hook output, skill listing,
+//     prependUserContext claudeMd, attachment previews — all wrapped in
+//     <system-reminder> by the CLI as late metadata.
+//   - <local-command-caveat>...: the caveat the CLI prepends to slash-command
+//     output blocks.
+//
+// Slash-command blocks themselves (<command-name>, <command-message>,
+// <command-args>, <local-command-stdout>, <local-command-stderr>) are NOT
+// treated as injected — they are part of the user's action sequence and the
+// CLI USES them as the fingerprint source (verified against real wire
+// traffic for /effort, /model, /compact, etc.).
 func isCLIInjectedBlock(text string) bool {
-	for _, prefix := range []string{
-		"<system-reminder>",
-		"<command-name>",
-		"<command-message>",
-		"<command-args>",
-		"<local-command-stdout>",
-		"<local-command-stderr>",
-		"<local-command-caveat>",
-	} {
-		if strings.HasPrefix(text, prefix) {
-			return true
-		}
-	}
-	return false
+	return strings.HasPrefix(text, "<system-reminder>") ||
+		strings.HasPrefix(text, "<local-command-caveat>")
 }
 
 // computeFingerprint computes the 3-char hex fingerprint exactly as the CLI
