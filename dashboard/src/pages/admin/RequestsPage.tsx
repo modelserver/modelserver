@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { Pagination } from "@/components/shared/Pagination";
 import { StatusBadge } from "@/components/shared/StatusBadge";
+import { ValidationBadge } from "@/components/shared/ValidationBadge";
 import { DateRangePicker } from "@/components/shared/DateRangePicker";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -94,6 +95,10 @@ export function AdminRequestsPage() {
     {
       header: "Status",
       accessor: (r) => <StatusBadge status={r.status} />,
+    },
+    {
+      header: "CCH / FP",
+      accessor: (r) => <ValidationBadge metadata={r.metadata} />,
     },
     {
       header: "Upstream",
