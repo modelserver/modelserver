@@ -5,11 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf16"
 
+	"github.com/OneOfOne/xxhash"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -17,17 +20,27 @@ import (
 var (
 	ccVersionRe    = regexp.MustCompile(`cc_version=[^;]*;`)
 	ccEntrypointRe = regexp.MustCompile(`cc_entrypoint=[^;]*;`)
+	// cchRe scopes the cch=<5-hex>; match to the x-anthropic-billing-header
+	// text block so user-message content containing a literal "cch=..." string
+	// is never touched. Capture groups: $1 = prefix up to and including "cch=",
+	// $2 = the 5 hex chars, $3 = the trailing ";".
+	cchRe = regexp.MustCompile(`(x-anthropic-billing-header:[^"]*?\bcch=)([0-9a-fA-F]{5})(;)`)
 )
 
 const (
-	fixedUserAgent      = "claude-cli/2.1.116 (external, cli)"
+	cchSeed         uint64 = 0x4d659218e32a3268
+	fingerprintSalt        = "59cf53e54c78"
+)
+
+const (
+	fixedUserAgent      = "claude-cli/2.1.114 (external, cli)"
 	fixedStainlessOS    = "Linux"
 	fixedStainlessRtVer = "v24.3.0"
 	fixedStainlessPkgV  = "0.81.0"
 	fixedStainlessArch  = "x64"
 	fixedStainlessLang  = "js"
 	fixedStainlessRt    = "node"
-	fixedCCVersion      = "2.1.116"
+	fixedCCVersion      = "2.1.114"
 )
 
 // deviceIDHMACKey is the fixed HMAC key used to derive a stable per-upstream
@@ -69,6 +82,7 @@ func normalizeClientIdentity(req *http.Request) {
 func normalizeRequestBody(body []byte, deviceID string) []byte {
 	body = normalizeMetadataDeviceID(body, deviceID)
 	body = normalizeAttributionHeader(body)
+	body = recomputeCCH(body)
 	return body
 }
 
@@ -153,3 +167,204 @@ func normalizeAttributionString(s string) string {
 	s = ccEntrypointRe.ReplaceAllString(s, "cc_entrypoint=cli;")
 	return s
 }
+
+func recomputeCCH(body []byte) []byte {
+	if !cchRe.Match(body) {
+		return body
+	}
+	withPlaceholder := cchRe.ReplaceAll(body, []byte("${1}00000${3}"))
+
+	h := xxhash.NewS64(cchSeed)
+	h.Write(withPlaceholder)
+	cchValue := fmt.Sprintf("%05x", h.Sum64()&0xFFFFF)
+
+	return cchRe.ReplaceAll(withPlaceholder, []byte("${1}"+cchValue+"${3}"))
+}
+
+// CCHStatus describes the result of validating a client's cch attestation
+// against a locally recomputed value. Used only for observability in request
+// metadata; never affects request forwarding.
+type CCHStatus string
+
+const (
+	CCHStatusMatch    CCHStatus = "match"
+	CCHStatusMismatch CCHStatus = "mismatch"
+	CCHStatusAbsent   CCHStatus = "absent"
+)
+
+// ValidateCCH computes the expected cch over the given request body and
+// compares it to the client-provided cch. Returns the status plus both
+// values (empty strings when absent). Does not mutate body.
+//
+// Comparison is byte-exact (case-sensitive): a real Claude Code CLI always
+// emits lowercase hex, so uppercase is reported as mismatch — it's a signal
+// the client is not the authentic CLI.
+func ValidateCCH(body []byte) (status CCHStatus, client, expected string) {
+	m := cchRe.FindSubmatchIndex(body)
+	if m == nil {
+		return CCHStatusAbsent, "", ""
+	}
+	// Group 2 (indices m[4]:m[5]) holds the 5 hex chars.
+	client = string(body[m[4]:m[5]])
+
+	withPlaceholder := cchRe.ReplaceAll(body, []byte("${1}00000${3}"))
+	h := xxhash.NewS64(cchSeed)
+	h.Write(withPlaceholder)
+	expected = fmt.Sprintf("%05x", h.Sum64()&0xFFFFF)
+
+	if client == expected {
+		return CCHStatusMatch, client, expected
+	}
+	return CCHStatusMismatch, client, expected
+}
+
+// ValidateFingerprint checks whether the version suffix (fingerprint) in the
+// x-anthropic-billing-header matches what a genuine Claude Code CLI would
+// compute from the first user message.
+//
+// The CLI algorithm (fingerprint.ts):
+//
+//	chars  = msg[4] + msg[7] + msg[20]   (pad with "0" if shorter)
+//	suffix = SHA256(SALT + chars + version)[:3]
+//
+// Returns (status, client_suffix, expected_suffix).
+func ValidateFingerprint(body []byte) (status CCHStatus, client, expected string) {
+	// 1. Extract cc_version value from billing header.
+	sys := gjson.GetBytes(body, "system")
+	if !sys.Exists() {
+		return CCHStatusAbsent, "", ""
+	}
+
+	var billingText string
+	if sys.IsArray() {
+		for _, item := range sys.Array() {
+			t := item.Get("text")
+			if t.Exists() && strings.HasPrefix(t.Str, "x-anthropic-billing-header") {
+				billingText = t.Str
+				break
+			}
+		}
+	} else if sys.Type == gjson.String && strings.HasPrefix(sys.Str, "x-anthropic-billing-header") {
+		billingText = sys.Str
+	}
+	if billingText == "" {
+		return CCHStatusAbsent, "", ""
+	}
+
+	// 2. Parse cc_version=X.Y.Z.suffix from the billing header.
+	m := ccVersionRe.FindString(billingText)
+	if m == "" {
+		return CCHStatusAbsent, "", ""
+	}
+	// m = "cc_version=2.1.114.d69;"  →  value = "2.1.114.d69"
+	value := m[len("cc_version=") : len(m)-1]
+
+	// Split into semver and suffix at the LAST dot.
+	lastDot := strings.LastIndex(value, ".")
+	if lastDot < 0 || lastDot == len(value)-1 {
+		return CCHStatusAbsent, "", ""
+	}
+	version := value[:lastDot]  // "2.1.114"
+	client = value[lastDot+1:]  // "d69"
+
+	// 3. Extract first user message text.
+	firstMsg := extractFirstUserMessageText(body)
+
+	// 4. Compute expected fingerprint.
+	expected = computeFingerprint(firstMsg, version)
+
+	if client == expected {
+		return CCHStatusMatch, client, expected
+	}
+	return CCHStatusMismatch, client, expected
+}
+
+// extractFirstUserMessageText returns the text content that the CLI used for
+// fingerprint computation.
+//
+// In the CLI's internal message model the original user input is the first
+// content block, followed by attachment-injected <system-reminder> blocks.
+// After API serialization the order is reversed: <system-reminder> blocks
+// come first and the user's text last. The fingerprint is computed on the
+// internal (pre-serialization) order — i.e. the original user input, which
+// in the wire body is the first text block NOT wrapped in <system-reminder>.
+// Falls back to the first text block if every block is wrapped.
+func extractFirstUserMessageText(body []byte) string {
+	messages := gjson.GetBytes(body, "messages")
+	if !messages.Exists() || !messages.IsArray() {
+		return ""
+	}
+	for _, msg := range messages.Array() {
+		if msg.Get("role").Str != "user" {
+			continue
+		}
+		content := msg.Get("content")
+		if content.Type == gjson.String {
+			return content.Str
+		}
+		if content.IsArray() {
+			var fallback string
+			fallbackSet := false
+			for _, block := range content.Array() {
+				if block.Get("type").Str != "text" {
+					continue
+				}
+				text := block.Get("text").Str
+				if !fallbackSet {
+					fallback = text
+					fallbackSet = true
+				}
+				if !isCLIInjectedBlock(text) {
+					return text
+				}
+			}
+			return fallback
+		}
+		break
+	}
+	return ""
+}
+
+// isCLIInjectedBlock returns true if the text block was injected by the CLI
+// rather than typed by the user. These blocks are added during API request
+// construction and appear before the user's actual input in the wire format.
+func isCLIInjectedBlock(text string) bool {
+	for _, prefix := range []string{
+		"<system-reminder>",
+		"<command-name>",
+		"<command-message>",
+		"<command-args>",
+		"<local-command-stdout>",
+		"<local-command-stderr>",
+		"<local-command-caveat>",
+	} {
+		if strings.HasPrefix(text, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// computeFingerprint computes the 3-char hex fingerprint exactly as the CLI
+// does: SHA256(SALT + msg[4] + msg[7] + msg[20] + version)[:3].
+//
+// Indexing must match JavaScript string indexing, which is by UTF-16 code
+// unit — NOT by byte. For BMP characters (incl. CJK) this is 1 code unit
+// per rune; non-BMP (emoji) is a surrogate pair. When a picked code unit is
+// a lone surrogate, Node's utf8 encoding substitutes U+FFFD, which is what
+// utf16.Decode produces here.
+func computeFingerprint(messageText, version string) string {
+	units := utf16.Encode([]rune(messageText))
+	var picked [3]uint16
+	for i, idx := range [3]int{4, 7, 20} {
+		if idx < len(units) {
+			picked[i] = units[idx]
+		} else {
+			picked[i] = '0'
+		}
+	}
+	input := fingerprintSalt + string(utf16.Decode(picked[:])) + version
+	hash := sha256.Sum256([]byte(input))
+	return fmt.Sprintf("%x", hash[:])[:3]
+}
+

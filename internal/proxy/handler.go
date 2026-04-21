@@ -245,6 +245,14 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, all
 		return
 	}
 
+	// CCH validation must happen against the client's original body, BEFORE
+	// any server-side rewrite below. Result is consumed in the metadata block.
+	// Publisher filter is applied at write-time; here we validate unconditionally
+	// so non-Anthropic paths (ValidateCCH returns Absent quickly) don't need
+	// special handling.
+	cchStatus, cchClient, cchExpected := ValidateCCH(bodyBytes)
+	fpStatus, fpClient, fpExpected := ValidateFingerprint(bodyBytes)
+
 	if canonical != reqShape.Model {
 		bodyBytes, _ = sjson.SetBytes(bodyBytes, "model", canonical)
 		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
@@ -272,6 +280,22 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, all
 	}
 	if v := r.Header.Get("User-Agent"); v != "" {
 		metadata["user_agent"] = v
+	}
+
+	// Record CCH validation result (computed earlier, against the original
+	// client body). Observability only — no behavior change. Gated on Anthropic
+	// publisher since other publishers don't use the Claude Code CCH protocol.
+	if m := ModelFromContext(r.Context()); m != nil && m.Publisher == types.PublisherAnthropic {
+		metadata["cch_status"] = string(cchStatus)
+		if cchStatus == CCHStatusMismatch {
+			metadata["cch_client"] = cchClient
+			metadata["cch_expected"] = cchExpected
+		}
+		metadata["fingerprint_status"] = string(fpStatus)
+		if fpStatus == CCHStatusMismatch {
+			metadata["fingerprint_client"] = fpClient
+			metadata["fingerprint_expected"] = fpExpected
+		}
 	}
 
 	// Insert a pending request record before proxying.
