@@ -26,7 +26,10 @@ var (
 	cchRe = regexp.MustCompile(`(x-anthropic-billing-header:[^"]*?\bcch=)([0-9a-fA-F]{5})(;)`)
 )
 
-const cchSeed uint64 = 0x4d659218e32a3268
+const (
+	cchSeed         uint64 = 0x4d659218e32a3268
+	fingerprintSalt        = "59cf53e54c78"
+)
 
 const (
 	fixedUserAgent      = "claude-cli/2.1.114 (external, cli)"
@@ -212,5 +215,127 @@ func ValidateCCH(body []byte) (status CCHStatus, client, expected string) {
 		return CCHStatusMatch, client, expected
 	}
 	return CCHStatusMismatch, client, expected
+}
+
+// ValidateFingerprint checks whether the version suffix (fingerprint) in the
+// x-anthropic-billing-header matches what a genuine Claude Code CLI would
+// compute from the first user message.
+//
+// The CLI algorithm (fingerprint.ts):
+//
+//	chars  = msg[4] + msg[7] + msg[20]   (pad with "0" if shorter)
+//	suffix = SHA256(SALT + chars + version)[:3]
+//
+// Returns (status, client_suffix, expected_suffix).
+func ValidateFingerprint(body []byte) (status CCHStatus, client, expected string) {
+	// 1. Extract cc_version value from billing header.
+	sys := gjson.GetBytes(body, "system")
+	if !sys.Exists() {
+		return CCHStatusAbsent, "", ""
+	}
+
+	var billingText string
+	if sys.IsArray() {
+		for _, item := range sys.Array() {
+			t := item.Get("text")
+			if t.Exists() && strings.HasPrefix(t.Str, "x-anthropic-billing-header") {
+				billingText = t.Str
+				break
+			}
+		}
+	} else if sys.Type == gjson.String && strings.HasPrefix(sys.Str, "x-anthropic-billing-header") {
+		billingText = sys.Str
+	}
+	if billingText == "" {
+		return CCHStatusAbsent, "", ""
+	}
+
+	// 2. Parse cc_version=X.Y.Z.suffix from the billing header.
+	m := ccVersionRe.FindString(billingText)
+	if m == "" {
+		return CCHStatusAbsent, "", ""
+	}
+	// m = "cc_version=2.1.114.d69;"  →  value = "2.1.114.d69"
+	value := m[len("cc_version=") : len(m)-1]
+
+	// Split into semver and suffix at the LAST dot.
+	lastDot := strings.LastIndex(value, ".")
+	if lastDot < 0 || lastDot == len(value)-1 {
+		return CCHStatusAbsent, "", ""
+	}
+	version := value[:lastDot]  // "2.1.114"
+	client = value[lastDot+1:]  // "d69"
+
+	// 3. Extract first user message text.
+	firstMsg := extractFirstUserMessageText(body)
+
+	// 4. Compute expected fingerprint.
+	expected = computeFingerprint(firstMsg, version)
+
+	if client == expected {
+		return CCHStatusMatch, client, expected
+	}
+	return CCHStatusMismatch, client, expected
+}
+
+// extractFirstUserMessageText returns the text content that the CLI used for
+// fingerprint computation.
+//
+// In the CLI's internal message model the original user input is the first
+// content block, followed by attachment-injected <system-reminder> blocks.
+// After API serialization the order is reversed: <system-reminder> blocks
+// come first and the user's text last. The fingerprint is computed on the
+// internal (pre-serialization) order — i.e. the original user input, which
+// in the wire body is the first text block NOT wrapped in <system-reminder>.
+// Falls back to the first text block if every block is wrapped.
+func extractFirstUserMessageText(body []byte) string {
+	messages := gjson.GetBytes(body, "messages")
+	if !messages.Exists() || !messages.IsArray() {
+		return ""
+	}
+	for _, msg := range messages.Array() {
+		if msg.Get("role").Str != "user" {
+			continue
+		}
+		content := msg.Get("content")
+		if content.Type == gjson.String {
+			return content.Str
+		}
+		if content.IsArray() {
+			var fallback string
+			for _, block := range content.Array() {
+				if block.Get("type").Str != "text" {
+					continue
+				}
+				text := block.Get("text").Str
+				if fallback == "" {
+					fallback = text
+				}
+				if !strings.HasPrefix(text, "<system-reminder>") {
+					return text
+				}
+			}
+			return fallback
+		}
+		break
+	}
+	return ""
+}
+
+// computeFingerprint computes the 3-char hex fingerprint exactly as the CLI
+// does: SHA256(SALT + msg[4] + msg[7] + msg[20] + version)[:3].
+func computeFingerprint(messageText, version string) string {
+	indices := [3]int{4, 7, 20}
+	var chars [3]byte
+	for i, idx := range indices {
+		if idx < len(messageText) {
+			chars[i] = messageText[idx]
+		} else {
+			chars[i] = '0'
+		}
+	}
+	input := fingerprintSalt + string(chars[:]) + version
+	hash := sha256.Sum256([]byte(input))
+	return fmt.Sprintf("%x", hash[:])[:3]
 }
 

@@ -42,6 +42,14 @@ func TestCCH_RoundTrip_WithRealWireBody(t *testing.T) {
 			status, client, expected)
 	}
 
+	// Path 1b: ValidateFingerprint must return match for real CLI body.
+	fpStatus, fpClient, fpExpected := ValidateFingerprint(body)
+	t.Logf("ValidateFingerprint: status=%s client=%s expected=%s", fpStatus, fpClient, fpExpected)
+	if fpStatus != CCHStatusMatch {
+		t.Errorf("real CLI fingerprint should validate, got status=%s (client=%s expected=%s)",
+			fpStatus, fpClient, fpExpected)
+	}
+
 	// Path 2: recomputeCCH on unmodified body must reproduce the original cch.
 	reSigned := recomputeCCH(body)
 	m2 := cchRe.FindSubmatch(reSigned)

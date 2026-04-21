@@ -2,6 +2,8 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"fmt"
 	"regexp"
 	"testing"
 
@@ -263,5 +265,103 @@ func TestCCH_UserMessageCchNotTouched(t *testing.T) {
 	status, client, expected := ValidateCCH(out)
 	if status != CCHStatusMatch {
 		t.Errorf("ValidateCCH = %s, want match (client=%s expected=%s)", status, client, expected)
+	}
+}
+
+func TestComputeFingerprint_MatchesCLIAlgorithm(t *testing.T) {
+	// Cross-validated against the CLI source (fingerprint.ts):
+	//   SHA256("59cf53e54c78" + msg[4] + msg[7] + msg[20] + version)[:3]
+	tests := []struct {
+		name    string
+		msg     string
+		version string
+		want    string
+	}{
+		{
+			name:    "short_message",
+			msg:     "hello world here we go",
+			version: "2.1.114",
+		},
+		{
+			name:    "message_shorter_than_21",
+			msg:     "hi",
+			version: "2.1.114",
+		},
+		{
+			name:    "empty_message",
+			msg:     "",
+			version: "2.1.114",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Compute expected with Python-equivalent logic
+			indices := [3]int{4, 7, 20}
+			var chars [3]byte
+			for i, idx := range indices {
+				if idx < len(tc.msg) {
+					chars[i] = tc.msg[idx]
+				} else {
+					chars[i] = '0'
+				}
+			}
+			input := fingerprintSalt + string(chars[:]) + tc.version
+			hash := sha256.Sum256([]byte(input))
+			want := fmt.Sprintf("%x", hash[:])[:3]
+
+			got := computeFingerprint(tc.msg, tc.version)
+			if got != want {
+				t.Errorf("computeFingerprint(%q, %q) = %q, want %q", tc.msg[:min(20, len(tc.msg))], tc.version, got, want)
+			}
+		})
+	}
+}
+
+func TestValidateFingerprint_Match(t *testing.T) {
+	// Build a body where we know the fingerprint is correct.
+	msg := "hello world test message here"
+	version := "2.1.114"
+	fp := computeFingerprint(msg, version)
+
+	body := []byte(fmt.Sprintf(
+		`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=cli; cch=00000;"}],"model":"claude-opus-4-7","messages":[{"role":"user","content":"%s"}]}`,
+		version, fp, msg))
+
+	status, client, expected := ValidateFingerprint(body)
+	if status != CCHStatusMatch {
+		t.Errorf("status = %q, want match (client=%s expected=%s)", status, client, expected)
+	}
+}
+
+func TestValidateFingerprint_Mismatch(t *testing.T) {
+	body := []byte(`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.114.zzz; cc_entrypoint=cli; cch=00000;"}],"model":"claude-opus-4-7","messages":[{"role":"user","content":"hello world test message here"}]}`)
+
+	status, _, _ := ValidateFingerprint(body)
+	if status != CCHStatusMismatch {
+		t.Errorf("status = %q, want mismatch (fake suffix .zzz)", status)
+	}
+}
+
+func TestValidateFingerprint_Absent(t *testing.T) {
+	body := []byte(`{"model":"claude-3","messages":[{"role":"user","content":"hi"}]}`)
+	status, _, _ := ValidateFingerprint(body)
+	if status != CCHStatusAbsent {
+		t.Errorf("status = %q, want absent", status)
+	}
+}
+
+func TestValidateFingerprint_ContentArray(t *testing.T) {
+	// First user message has content as array of blocks.
+	msg := "hello world test message here"
+	version := "2.1.114"
+	fp := computeFingerprint(msg, version)
+
+	body := []byte(fmt.Sprintf(
+		`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=cli; cch=00000;"}],"model":"claude-opus-4-7","messages":[{"role":"user","content":[{"type":"text","text":"%s"}]}]}`,
+		version, fp, msg))
+
+	status, _, _ := ValidateFingerprint(body)
+	if status != CCHStatusMatch {
+		t.Errorf("status = %q, want match (content array)", status)
 	}
 }

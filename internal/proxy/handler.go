@@ -251,6 +251,7 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, all
 	// so non-Anthropic paths (ValidateCCH returns Absent quickly) don't need
 	// special handling.
 	cchStatus, cchClient, cchExpected := ValidateCCH(bodyBytes)
+	fpStatus, fpClient, fpExpected := ValidateFingerprint(bodyBytes)
 
 	if canonical != reqShape.Model {
 		bodyBytes, _ = sjson.SetBytes(bodyBytes, "model", canonical)
@@ -289,6 +290,11 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, all
 		if cchStatus == CCHStatusMismatch {
 			metadata["cch_client"] = cchClient
 			metadata["cch_expected"] = cchExpected
+		}
+		metadata["fingerprint_status"] = string(fpStatus)
+		if fpStatus == CCHStatusMismatch {
+			metadata["fingerprint_client"] = fpClient
+			metadata["fingerprint_expected"] = fpExpected
 		}
 	}
 
