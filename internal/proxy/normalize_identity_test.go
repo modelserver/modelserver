@@ -3,9 +3,11 @@ package proxy
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/tidwall/gjson"
 )
@@ -268,9 +270,63 @@ func TestCCH_UserMessageCchNotTouched(t *testing.T) {
 	}
 }
 
+// fingerprintJSReference mirrors the CLI's JavaScript algorithm:
+//
+//	chars = [4,7,20].map(i => msg[i] || '0').join('')
+//	return sha256(SALT + chars + version).hex().slice(0, 3)
+//
+// JS strings index by UTF-16 code unit, and Node encodes strings to UTF-8 for
+// the hash (substituting U+FFFD for lone surrogates). utf16.Encode +
+// utf16.Decode reproduces those semantics exactly.
+func fingerprintJSReference(msg, version string) string {
+	units := utf16.Encode([]rune(msg))
+	var picked [3]uint16
+	for i, idx := range [3]int{4, 7, 20} {
+		if idx < len(units) {
+			picked[i] = units[idx]
+		} else {
+			picked[i] = '0'
+		}
+	}
+	input := fingerprintSalt + string(utf16.Decode(picked[:])) + version
+	hash := sha256.Sum256([]byte(input))
+	return fmt.Sprintf("%x", hash[:])[:3]
+}
+
 func TestComputeFingerprint_MatchesCLIAlgorithm(t *testing.T) {
 	// Cross-validated against the CLI source (fingerprint.ts):
-	//   SHA256("59cf53e54c78" + msg[4] + msg[7] + msg[20] + version)[:3]
+	//   chars = [4,7,20].map(i => msg[i] || '0').join('')
+	//   SHA256(SALT + chars + version).hex().slice(0, 3)
+	tests := []struct {
+		name    string
+		msg     string
+		version string
+	}{
+		{name: "short_message", msg: "hello world here we go", version: "2.1.114"},
+		{name: "message_shorter_than_21", msg: "hi", version: "2.1.114"},
+		{name: "empty_message", msg: "", version: "2.1.114"},
+		// Non-ASCII first user message. Pre-fix Go byte-indexed this and
+		// produced the wrong fingerprint for the entire CJK user base.
+		{name: "cjk_message", msg: "在 project overview 现在只有 req 统计", version: "2.1.114"},
+		{name: "emoji_before_indices", msg: "😀😀😀hello world pad pad pad", version: "2.1.114"},
+		{name: "accented_latin", msg: "café résumé naïve façade sample text", version: "2.1.114"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			want := fingerprintJSReference(tc.msg, tc.version)
+			got := computeFingerprint(tc.msg, tc.version)
+			if got != want {
+				t.Errorf("computeFingerprint(%q, %q) = %q, want %q", tc.msg, tc.version, got, want)
+			}
+		})
+	}
+}
+
+// TestComputeFingerprint_KnownVectors pins computeFingerprint to byte-exact
+// output from known-good CLI requests. These vectors were captured from real
+// billing headers (cc_version=X.Y.Z.<suffix>) — if these break, something
+// upstream is diverging from the real CLI algorithm.
+func TestComputeFingerprint_KnownVectors(t *testing.T) {
 	tests := []struct {
 		name    string
 		msg     string
@@ -278,40 +334,19 @@ func TestComputeFingerprint_MatchesCLIAlgorithm(t *testing.T) {
 		want    string
 	}{
 		{
-			name:    "short_message",
-			msg:     "hello world here we go",
+			// Captured from sample.json: first non-injected user text block
+			// on a real CLI 2.1.114 request.
+			name:    "sample_json_cjk",
+			msg:     "在 project overview 现在只有 req 统计，请你也加上 credits 统计。给出详细的实现计划",
 			version: "2.1.114",
-		},
-		{
-			name:    "message_shorter_than_21",
-			msg:     "hi",
-			version: "2.1.114",
-		},
-		{
-			name:    "empty_message",
-			msg:     "",
-			version: "2.1.114",
+			want:    "d69",
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// Compute expected with Python-equivalent logic
-			indices := [3]int{4, 7, 20}
-			var chars [3]byte
-			for i, idx := range indices {
-				if idx < len(tc.msg) {
-					chars[i] = tc.msg[idx]
-				} else {
-					chars[i] = '0'
-				}
-			}
-			input := fingerprintSalt + string(chars[:]) + tc.version
-			hash := sha256.Sum256([]byte(input))
-			want := fmt.Sprintf("%x", hash[:])[:3]
-
 			got := computeFingerprint(tc.msg, tc.version)
-			if got != want {
-				t.Errorf("computeFingerprint(%q, %q) = %q, want %q", tc.msg[:min(20, len(tc.msg))], tc.version, got, want)
+			if got != tc.want {
+				t.Errorf("computeFingerprint(...) = %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -347,6 +382,75 @@ func TestValidateFingerprint_Absent(t *testing.T) {
 	status, _, _ := ValidateFingerprint(body)
 	if status != CCHStatusAbsent {
 		t.Errorf("status = %q, want absent", status)
+	}
+}
+
+func TestValidateFingerprint_SkipsSystemReminderBlocks(t *testing.T) {
+	// Mirrors sample.json: first user message has <system-reminder> context
+	// blocks (from SessionStart hook / skills list / currentDate) followed by
+	// the real user text. The CLI computes the fingerprint over the real user
+	// text, so modelserver must too.
+	msgJSON, err := json.Marshal("在 project overview 现在只有 req 统计，请你也加上 credits 统计。给出详细的实现计划")
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	body := []byte(fmt.Sprintf(
+		`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.114.d69; cc_entrypoint=cli; cch=dd416;"}],`+
+			`"model":"claude-opus-4-7","messages":[{"role":"user","content":[`+
+			`{"type":"text","text":"<system-reminder>\nSessionStart hook additional context\n</system-reminder>"},`+
+			`{"type":"text","text":"<system-reminder>\nskills list\n</system-reminder>"},`+
+			`{"type":"text","text":%s}]}]}`, string(msgJSON)))
+
+	status, client, expected := ValidateFingerprint(body)
+	if status != CCHStatusMatch {
+		t.Errorf("status = %q, want match (client=%s expected=%s)", status, client, expected)
+	}
+	if expected != "d69" {
+		t.Errorf("expected fingerprint = %q, want %q", expected, "d69")
+	}
+}
+
+func TestValidateFingerprint_SlashCommandUsesFirstBlock(t *testing.T) {
+	// When the user types a slash command, the only text block starts with
+	// <command-name>... — isCLIInjectedBlock flags every block as injected,
+	// so extractFirstUserMessageText must fall back to the first block
+	// (what the CLI actually uses to compute the fingerprint).
+	msg := "<command-name>/foo</command-name>\n<command-message>foo</command-message>\n<command-args>bar</command-args>"
+	version := "2.1.114"
+	fp := computeFingerprint(msg, version)
+	msgJSON, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	body := []byte(fmt.Sprintf(
+		`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=cli; cch=dd416;"}],`+
+			`"model":"claude-opus-4-7","messages":[{"role":"user","content":[{"type":"text","text":%s}]}]}`,
+		version, fp, string(msgJSON)))
+
+	status, client, expected := ValidateFingerprint(body)
+	if status != CCHStatusMatch {
+		t.Errorf("status = %q, want match (client=%s expected=%s)", status, client, expected)
+	}
+}
+
+func TestExtractFirstUserMessageText_EmptyFirstBlockIsKept(t *testing.T) {
+	// Regression for the fallback-sentinel edge case. If the first text block
+	// is empty, the CLI returns "" (it's still the first text block). A naive
+	// `if fallback == ""` sentinel would keep looking and promote a later
+	// <system-reminder> block as the fallback, diverging from CLI behavior.
+	body := []byte(`{"messages":[{"role":"user","content":[` +
+		`{"type":"text","text":""},` +
+		`{"type":"text","text":"<system-reminder>\ncontext\n</system-reminder>"}]}]}`)
+	got := extractFirstUserMessageText(body)
+	if got != "" {
+		t.Errorf("extractFirstUserMessageText = %q, want %q", got, "")
+	}
+}
+
+func TestIsCLIInjectedBlock_LocalCommandStderr(t *testing.T) {
+	// Symmetric to <local-command-stdout>; both come from slash commands.
+	if !isCLIInjectedBlock("<local-command-stderr>oops</local-command-stderr>") {
+		t.Error("<local-command-stderr> should be classified as CLI-injected")
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/OneOfOne/xxhash"
 	"github.com/tidwall/gjson"
@@ -303,15 +304,17 @@ func extractFirstUserMessageText(body []byte) string {
 		}
 		if content.IsArray() {
 			var fallback string
+			fallbackSet := false
 			for _, block := range content.Array() {
 				if block.Get("type").Str != "text" {
 					continue
 				}
 				text := block.Get("text").Str
-				if fallback == "" {
+				if !fallbackSet {
 					fallback = text
+					fallbackSet = true
 				}
-				if !strings.HasPrefix(text, "<system-reminder>") {
+				if !isCLIInjectedBlock(text) {
 					return text
 				}
 			}
@@ -322,19 +325,45 @@ func extractFirstUserMessageText(body []byte) string {
 	return ""
 }
 
-// computeFingerprint computes the 3-char hex fingerprint exactly as the CLI
-// does: SHA256(SALT + msg[4] + msg[7] + msg[20] + version)[:3].
-func computeFingerprint(messageText, version string) string {
-	indices := [3]int{4, 7, 20}
-	var chars [3]byte
-	for i, idx := range indices {
-		if idx < len(messageText) {
-			chars[i] = messageText[idx]
-		} else {
-			chars[i] = '0'
+// isCLIInjectedBlock returns true if the text block was injected by the CLI
+// rather than typed by the user. These blocks are added during API request
+// construction and appear before the user's actual input in the wire format.
+func isCLIInjectedBlock(text string) bool {
+	for _, prefix := range []string{
+		"<system-reminder>",
+		"<command-name>",
+		"<command-message>",
+		"<command-args>",
+		"<local-command-stdout>",
+		"<local-command-stderr>",
+		"<local-command-caveat>",
+	} {
+		if strings.HasPrefix(text, prefix) {
+			return true
 		}
 	}
-	input := fingerprintSalt + string(chars[:]) + version
+	return false
+}
+
+// computeFingerprint computes the 3-char hex fingerprint exactly as the CLI
+// does: SHA256(SALT + msg[4] + msg[7] + msg[20] + version)[:3].
+//
+// Indexing must match JavaScript string indexing, which is by UTF-16 code
+// unit — NOT by byte. For BMP characters (incl. CJK) this is 1 code unit
+// per rune; non-BMP (emoji) is a surrogate pair. When a picked code unit is
+// a lone surrogate, Node's utf8 encoding substitutes U+FFFD, which is what
+// utf16.Decode produces here.
+func computeFingerprint(messageText, version string) string {
+	units := utf16.Encode([]rune(messageText))
+	var picked [3]uint16
+	for i, idx := range [3]int{4, 7, 20} {
+		if idx < len(units) {
+			picked[i] = units[idx]
+		} else {
+			picked[i] = '0'
+		}
+	}
+	input := fingerprintSalt + string(utf16.Decode(picked[:])) + version
 	hash := sha256.Sum256([]byte(input))
 	return fmt.Sprintf("%x", hash[:])[:3]
 }
