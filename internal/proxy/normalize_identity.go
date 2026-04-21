@@ -33,14 +33,14 @@ const (
 )
 
 const (
-	fixedUserAgent      = "claude-cli/2.1.114 (external, cli)"
+	fixedUserAgent      = "claude-cli/2.1.116 (external, cli)"
 	fixedStainlessOS    = "Linux"
 	fixedStainlessRtVer = "v24.3.0"
 	fixedStainlessPkgV  = "0.81.0"
 	fixedStainlessArch  = "x64"
 	fixedStainlessLang  = "js"
 	fixedStainlessRt    = "node"
-	fixedCCVersion      = "2.1.114"
+	fixedCCVersion      = "2.1.116"
 )
 
 // deviceIDHMACKey is the fixed HMAC key used to derive a stable per-upstream
