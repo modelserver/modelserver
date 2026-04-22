@@ -42,7 +42,7 @@ type RequestContext struct {
 	ModelRef         *types.Model // Resolved catalog entry (needed for extra-usage billing)
 	ActualModel      string   // After ModelMap resolution (set per-attempt by Executor)
 	IsStream         bool
-	AllowedProviders []string // If non-empty, only route to upstreams with these providers
+	RequestKind      string   // Wire-level endpoint kind; set by each handler
 	TraceID          string
 	TraceSource      string
 	SessionID        string
@@ -162,9 +162,9 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 	}
 
 	// 1. Match the request to an upstream group.
-	group, err := e.router.Match(reqCtx.ProjectID, reqCtx.Model)
+	group, err := e.router.Match(reqCtx.ProjectID, reqCtx.Model, reqCtx.RequestKind)
 	if err != nil {
-		writeProxyError(w, http.StatusNotFound, "no route configured for model "+reqCtx.Model)
+		writeProxyError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
@@ -187,23 +187,6 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 				"concurrent", e.router.connTracker.Count(uid),
 				"max_concurrent", m.upstream.MaxConcurrent)
 		}
-	}
-
-	// 2b. Filter by allowed providers if the handler specified a constraint.
-	// This ensures /v1/messages only goes to Anthropic/Bedrock/ClaudeCode and
-	// /v1/responses only goes to OpenAI upstreams.
-	if len(reqCtx.AllowedProviders) > 0 {
-		allowed := make(map[string]bool, len(reqCtx.AllowedProviders))
-		for _, p := range reqCtx.AllowedProviders {
-			allowed[p] = true
-		}
-		filtered := candidates[:0]
-		for _, c := range candidates {
-			if allowed[c.Upstream.Provider] {
-				filtered = append(filtered, c)
-			}
-		}
-		candidates = filtered
 	}
 
 	if len(candidates) == 0 {

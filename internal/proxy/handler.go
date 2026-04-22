@@ -202,7 +202,7 @@ func (h *Handler) HandleGemini(w http.ResponseWriter, r *http.Request) {
 		Model:            model,
 		ModelRef:         ModelFromContext(r.Context()),
 		IsStream:         isStream,
-		AllowedProviders: []string{types.ProviderGemini, types.ProviderVertexGoogle},
+		RequestKind:      types.KindGoogleGenerateContent,
 		TraceID:          traceID,
 		TraceSource:      TraceSourceFromContext(r.Context()),
 		SessionID:        traceID,
@@ -324,7 +324,7 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, all
 		Model:            reqShape.Model,
 		ModelRef:         ModelFromContext(r.Context()),
 		IsStream:         reqShape.Stream,
-		AllowedProviders: allowedProviders,
+		RequestKind:      kindFromAllowedProviders(allowedProviders),
 		TraceID:          traceID,
 		TraceSource:      TraceSourceFromContext(r.Context()),
 		SessionID:        traceID, // Use trace ID for session stickiness
@@ -382,7 +382,7 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Use router to find an upstream for count_tokens (Anthropic/ClaudeCode only).
-	group, err := h.router.Match(project.ID, reqShape.Model)
+	group, err := h.router.Match(project.ID, reqShape.Model, types.KindAnthropicCountTokens)
 	if err != nil {
 		writeProxyError(w, http.StatusNotFound, "no route configured for model "+reqShape.Model)
 		return
@@ -473,4 +473,21 @@ func ingressForProviders(allowed []string) string {
 		}
 	}
 	return IngressAnthropic
+}
+
+// kindFromAllowedProviders is a temporary bridge: each handler still passes
+// allowedProviders today; Task 8 will replace this with handlers passing the
+// kind directly and delete this helper alongside ingressForProviders.
+func kindFromAllowedProviders(allowed []string) string {
+	for _, p := range allowed {
+		switch p {
+		case types.ProviderOpenAI:
+			return types.KindOpenAIResponses
+		case types.ProviderVertexOpenAI:
+			return types.KindOpenAIChatCompletions
+		case types.ProviderGemini, types.ProviderVertexGoogle:
+			return types.KindGoogleGenerateContent
+		}
+	}
+	return types.KindAnthropicMessages
 }

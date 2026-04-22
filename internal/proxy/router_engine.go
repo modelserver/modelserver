@@ -226,10 +226,10 @@ func (r *Router) buildMaps(
 	}
 }
 
-// Match finds the upstream group for a request (project + model).
+// Match finds the upstream group for a request (project + model + kind).
 // It checks project-specific routes first, then global routes.
 // No auto-discovery fallback — all routing must go through explicit routes.
-func (r *Router) Match(projectID, model string) (*resolvedGroup, error) {
+func (r *Router) Match(projectID, model, kind string) (*resolvedGroup, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -238,7 +238,9 @@ func (r *Router) Match(projectID, model string) (*resolvedGroup, error) {
 		if route.Status != "active" {
 			continue
 		}
-		if route.ProjectID == projectID && slices.Contains(route.ModelNames, model) {
+		if route.ProjectID == projectID &&
+			slices.Contains(route.ModelNames, model) &&
+			slices.Contains(route.RequestKinds, kind) {
 			if g, ok := r.groups[route.UpstreamGroupID]; ok {
 				return g, nil
 			}
@@ -250,14 +252,16 @@ func (r *Router) Match(projectID, model string) (*resolvedGroup, error) {
 		if route.Status != "active" {
 			continue
 		}
-		if route.ProjectID == "" && slices.Contains(route.ModelNames, model) {
+		if route.ProjectID == "" &&
+			slices.Contains(route.ModelNames, model) &&
+			slices.Contains(route.RequestKinds, kind) {
 			if g, ok := r.groups[route.UpstreamGroupID]; ok {
 				return g, nil
 			}
 		}
 	}
 
-	return nil, fmt.Errorf("no route configured for model %s", model)
+	return nil, fmt.Errorf("no route configured for model %s on endpoint %s", model, kind)
 }
 
 // SelectWithRetry returns an ordered list of upstreams to try for the given group.
