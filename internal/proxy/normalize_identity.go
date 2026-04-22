@@ -20,10 +20,16 @@ import (
 var (
 	ccVersionRe    = regexp.MustCompile(`cc_version=[^;]*;`)
 	ccEntrypointRe = regexp.MustCompile(`cc_entrypoint=[^;]*;`)
-	// cchRe scopes the cch=<5-hex>; match to the x-anthropic-billing-header
-	// text block so user-message content containing a literal "cch=..." string
-	// is never touched. Capture groups: $1 = prefix up to and including "cch=",
-	// $2 = the 5 hex chars, $3 = the trailing ";".
+	// billingCCHRe matches `cch=<5-hex>;` within the (already isolated) text
+	// of the system[*] billing-header entry. Locating the entry itself is done
+	// JSON-aware via gjson so embedded copies of the header text inside other
+	// JSON strings (e.g. tool results quoting prior wire bodies) are ignored.
+	billingCCHRe = regexp.MustCompile(`\bcch=([0-9a-fA-F]{5});`)
+	// cchRe is kept for tests only — it scans for the FIRST cch= in the body
+	// scoped by the billing-header prefix. Production code must not use this:
+	// when a JSON-string-encoded copy of the header appears in a user-message
+	// text block, the [^"] filter does not actually prevent matching inside
+	// that string. Use findBillingHeaderCCHRange instead.
 	cchRe = regexp.MustCompile(`(x-anthropic-billing-header:[^"]*?\bcch=)([0-9a-fA-F]{5})(;)`)
 )
 
@@ -168,17 +174,63 @@ func normalizeAttributionString(s string) string {
 	return s
 }
 
+// findBillingHeaderCCHRange returns [start, end) byte offsets of the 5-hex-char
+// cch value inside the system[*].text entry that begins with
+// "x-anthropic-billing-header:". Returns (-1, -1) if no such header exists or
+// it lacks a cch=<5hex>; segment.
+//
+// Locating the entry through gjson — instead of a body-wide regex — is what
+// keeps embedded copies of the header text (e.g. inside a tool result that
+// quotes a prior wire body) from hijacking the match.
+func findBillingHeaderCCHRange(body []byte) (start, end int) {
+	sys := gjson.GetBytes(body, "system")
+	if !sys.Exists() {
+		return -1, -1
+	}
+	var (
+		text     string
+		bodyBase int
+	)
+	switch {
+	case sys.IsArray():
+		for _, item := range sys.Array() {
+			t := item.Get("text")
+			if t.Exists() && t.Type == gjson.String && strings.HasPrefix(t.Str, "x-anthropic-billing-header:") {
+				text = t.Str
+				bodyBase = t.Index + 1 // skip the opening quote
+				goto found
+			}
+		}
+		return -1, -1
+	case sys.Type == gjson.String && strings.HasPrefix(sys.Str, "x-anthropic-billing-header:"):
+		text = sys.Str
+		bodyBase = sys.Index + 1
+	default:
+		return -1, -1
+	}
+found:
+	// The billing-header text is plain ASCII (no JSON escapes), so byte
+	// offsets within `text` map 1:1 onto the raw body buffer.
+	m := billingCCHRe.FindStringSubmatchIndex(text)
+	if m == nil {
+		return -1, -1
+	}
+	return bodyBase + m[2], bodyBase + m[3]
+}
+
 func recomputeCCH(body []byte) []byte {
-	if !cchRe.Match(body) {
+	s, e := findBillingHeaderCCHRange(body)
+	if s < 0 {
 		return body
 	}
-	withPlaceholder := cchRe.ReplaceAll(body, []byte("${1}00000${3}"))
+	out := make([]byte, len(body))
+	copy(out, body)
+	copy(out[s:e], []byte("00000"))
 
 	h := xxhash.NewS64(cchSeed)
-	h.Write(withPlaceholder)
-	cchValue := fmt.Sprintf("%05x", h.Sum64()&0xFFFFF)
-
-	return cchRe.ReplaceAll(withPlaceholder, []byte("${1}"+cchValue+"${3}"))
+	h.Write(out)
+	copy(out[s:e], []byte(fmt.Sprintf("%05x", h.Sum64()&0xFFFFF)))
+	return out
 }
 
 // CCHStatus describes the result of validating a client's cch attestation
@@ -200,16 +252,17 @@ const (
 // emits lowercase hex, so uppercase is reported as mismatch — it's a signal
 // the client is not the authentic CLI.
 func ValidateCCH(body []byte) (status CCHStatus, client, expected string) {
-	m := cchRe.FindSubmatchIndex(body)
-	if m == nil {
+	s, e := findBillingHeaderCCHRange(body)
+	if s < 0 {
 		return CCHStatusAbsent, "", ""
 	}
-	// Group 2 (indices m[4]:m[5]) holds the 5 hex chars.
-	client = string(body[m[4]:m[5]])
+	client = string(body[s:e])
 
-	withPlaceholder := cchRe.ReplaceAll(body, []byte("${1}00000${3}"))
+	scratch := make([]byte, len(body))
+	copy(scratch, body)
+	copy(scratch[s:e], []byte("00000"))
 	h := xxhash.NewS64(cchSeed)
-	h.Write(withPlaceholder)
+	h.Write(scratch)
 	expected = fmt.Sprintf("%05x", h.Sum64()&0xFFFFF)
 
 	if client == expected {

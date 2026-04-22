@@ -270,6 +270,48 @@ func TestCCH_UserMessageCchNotTouched(t *testing.T) {
 	}
 }
 
+func TestCCH_EmbeddedBillingHeaderInUserMessageNotMatched(t *testing.T) {
+	// A user-message text block can contain the literal string
+	// "x-anthropic-billing-header: ... cch=AAAAA;" — for example, a tool
+	// result quoting an earlier session's wire body, or a Read of a captured
+	// JSON file. Since JSON encodes inner double-quotes as \" (a backslash
+	// followed by a quote), a byte-level regex with [^"] will still cross
+	// from the user-message string into nowhere — but it CAN match entirely
+	// inside that user-message string when no quote sits between the
+	// embedded "x-anthropic-billing-header:" and its "cch=XXXXX;".
+	//
+	// Only system[*].text starting with the billing-header prefix is
+	// authoritative. Both ValidateCCH and recomputeCCH must operate on that
+	// header and leave the user-message text untouched.
+	const embedded = "<system-reminder>quoted prior wire body: x-anthropic-billing-header: cc_version=2.1.114.d69; cc_entrypoint=cli; cch=097ba;</system-reminder>"
+	embeddedJSON, err := json.Marshal(embedded)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	body := []byte(fmt.Sprintf(
+		`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.116.0cb; cc_entrypoint=cli; cch=00000;"}],`+
+			`"model":"claude-opus-4-7",`+
+			`"messages":[{"role":"user","content":[{"type":"text","text":%s}]}]}`,
+		string(embeddedJSON)))
+
+	// recomputeCCH must NOT mutate the embedded user-message header.
+	out := recomputeCCH(body)
+	if !bytes.Contains(out, []byte("cch=097ba;")) {
+		t.Error("recomputeCCH overwrote the embedded user-message cch=097ba")
+	}
+
+	// ValidateCCH on the re-signed body must report match — and the client
+	// cch reported must be the value computed for the real system header,
+	// NOT the embedded "097ba".
+	status, client, expected := ValidateCCH(out)
+	if status != CCHStatusMatch {
+		t.Errorf("ValidateCCH = %s, want match (client=%s expected=%s)", status, client, expected)
+	}
+	if client == "097ba" {
+		t.Errorf("ValidateCCH client = %q (taken from embedded user-message text); must come from system[0] header", client)
+	}
+}
+
 // fingerprintJSReference mirrors the CLI's JavaScript algorithm:
 //
 //	chars = [4,7,20].map(i => msg[i] || '0').join('')
