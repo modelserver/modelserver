@@ -5,6 +5,7 @@ import {
   useUpdateRoutingRoute,
   useDeleteRoutingRoute,
   useUpstreamGroups,
+  useRequestKinds,
 } from "@/api/upstreams";
 import { useAllProjects } from "@/api/projects";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -60,11 +61,15 @@ export function RoutesPage() {
   // stored here.
   const [form, setForm] = useState({
     model_names: [] as string[],
+    request_kinds: ["anthropic_messages"] as string[],
     upstream_group_id: "",
     match_priority: 0,
     status: "active",
     project_id: "",
   });
+
+  const { data: requestKindsData } = useRequestKinds();
+  const requestKinds = requestKindsData?.data ?? [];
 
   const routes = routesData?.data ?? [];
   const meta = routesData?.meta;
@@ -85,7 +90,14 @@ export function RoutesPage() {
 
   function openCreate() {
     setEditingId(null);
-    setForm({ model_names: [], upstream_group_id: "", match_priority: 0, status: "active", project_id: "" });
+    setForm({
+      model_names: [],
+      request_kinds: ["anthropic_messages"],
+      upstream_group_id: "",
+      match_priority: 0,
+      status: "active",
+      project_id: "",
+    });
     setDialogOpen(true);
   }
 
@@ -93,6 +105,7 @@ export function RoutesPage() {
     setEditingId(route.id);
     setForm({
       model_names: [...(route.model_names ?? [])],
+      request_kinds: [...(route.request_kinds ?? [])],
       upstream_group_id: route.upstream_group_id,
       match_priority: route.match_priority,
       status: route.status,
@@ -106,8 +119,13 @@ export function RoutesPage() {
       toast.error("At least one model name is required");
       return;
     }
+    if (form.request_kinds.length === 0) {
+      toast.error("At least one request kind is required");
+      return;
+    }
     const payload = {
       model_names: form.model_names,
+      request_kinds: form.request_kinds,
       upstream_group_id: form.upstream_group_id,
       match_priority: form.match_priority,
       status: form.status,
@@ -316,6 +334,37 @@ export function RoutesPage() {
               </p>
             </div>
             <div className="space-y-2">
+              <Label>Request Kinds</Label>
+              <div className="flex flex-wrap gap-2">
+                {requestKinds.map((kind) => {
+                  const selected = form.request_kinds.includes(kind);
+                  return (
+                    <Button
+                      key={kind}
+                      type="button"
+                      size="sm"
+                      variant={selected ? "default" : "outline"}
+                      onClick={() =>
+                        setForm((p) => ({
+                          ...p,
+                          request_kinds: selected
+                            ? p.request_kinds.filter((k) => k !== kind)
+                            : [...p.request_kinds, kind],
+                        }))
+                      }
+                    >
+                      {kind}
+                    </Button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Wire-level endpoints this route serves (e.g. anthropic_messages =
+                /v1/messages, anthropic_count_tokens = /v1/messages/count_tokens).
+                Pick at least one.
+              </p>
+            </div>
+            <div className="space-y-2">
               <Label>Match Priority</Label>
               <Input
                 type="number"
@@ -372,7 +421,7 @@ export function RoutesPage() {
             </Button>
             <Button
               onClick={handleSave}
-              disabled={form.model_names.length === 0 || !form.upstream_group_id || isSaving}
+              disabled={form.model_names.length === 0 || form.request_kinds.length === 0 || !form.upstream_group_id || isSaving}
             >
               {isSaving ? "Saving..." : editingId ? "Save" : "Create"}
             </Button>

@@ -196,6 +196,16 @@ export function useDeleteRoutingRoute() {
   });
 }
 
+// useRequestKinds returns the catalog of valid route request_kinds, fetched
+// from the server so the enum stays out of the frontend bundle.
+export function useRequestKinds() {
+  return useQuery({
+    queryKey: ["admin", "routing-request-kinds"],
+    queryFn: () => api.get<DataResponse<string[]>>("/api/v1/routing/request-kinds"),
+    staleTime: 60 * 60 * 1000,
+  });
+}
+
 // --- Routing Health ---
 export function useRoutingHealth() {
   return useQuery({
