@@ -65,6 +65,18 @@ ALTER TABLE extra_usage_transactions
 The ledger's `balance_after_fen` check also has to be relaxed because a
 deduction under bypass produces a negative snapshot row.
 
+**Constraint-name risk.** The inline CHECK on `balance_fen >= 0` was
+auto-named by Postgres during `CREATE TABLE` in migration 017. Default
+naming produces `extra_usage_settings_balance_fen_check`, but if an
+environment manually renamed the constraint the `DROP ... IF EXISTS`
+above would silently no-op and the migration would appear to succeed
+while negative inserts continue to fail. To catch this, the migration
+MUST include a post-migration assertion — a `DO $$ ... $$` block that
+attempts `UPDATE extra_usage_settings SET balance_fen = -1 WHERE FALSE`
+inside a planner-only path, or more pragmatically an integration test
+(see Testing §3) that inserts a negative balance on a test DB after
+applying the migration.
+
 Rollback: re-adding the CHECK constraints would fail if bypass was exercised,
 so rollback requires either zero'ing out negative balances via admin adjust
 or keeping the migration forward-only. We accept that; bypass is an opt-in
@@ -83,21 +95,28 @@ BypassBalanceCheck bool `json:"bypass_balance_check"`
 In `internal/store/extra_usage.go`:
 
 1. `GetExtraUsageSettings` — extend `SELECT` + `Scan` to include the new column.
-2. `UpsertExtraUsageSettings` — unchanged. Project owners cannot set bypass
-   themselves; the column is preserved across upserts by NOT including it in
-   the INSERT/ON CONFLICT list (equivalent to today's handling of
-   `balance_fen`).
-3. New method:
+2. `UpsertExtraUsageSettings` — project-owner-facing upsert. Bypass is NOT
+   writable here; the column is preserved across upserts by NOT including
+   it in the `INSERT` list or the `ON CONFLICT DO UPDATE SET` list
+   (equivalent to today's handling of `balance_fen`). **However**, its
+   `RETURNING` clause MUST be extended to include `bypass_balance_check` so
+   the new struct field is populated.
+3. `TopUpExtraUsage` — same treatment: don't write bypass, but extend the
+   `RETURNING` clause (currently `RETURNING balance_fen` — leave unchanged
+   since only the balance is read back). Verified: no Scan of bypass needed
+   in this method.
+4. `ListExtraUsageSettings` — extend `SELECT` and `Scan`.
+5. New method:
 
    ```go
    func (s *Store) SetExtraUsageBypass(projectID string, bypass bool) (*types.ExtraUsageSettings, error)
    ```
 
-   - `INSERT ... ON CONFLICT (project_id) DO UPDATE SET bypass_balance_check = EXCLUDED.bypass_balance_check, updated_at = NOW() RETURNING ...`
-   - INSERT default fields `(project_id, bypass_balance_check)` with zeros for
-     everything else — creates the row if it doesn't exist yet, so bypass can
-     be flipped even on a project that never topped up.
-4. `DeductExtraUsage` — amend the conditional UPDATE:
+   - `INSERT INTO extra_usage_settings (project_id, bypass_balance_check) VALUES ($1, $2) ON CONFLICT (project_id) DO UPDATE SET bypass_balance_check = EXCLUDED.bypass_balance_check, updated_at = NOW() RETURNING <all columns incl. bypass>`
+   - Creates the row if it doesn't exist yet, so bypass can be flipped even
+     on a project that never topped up.
+   - Returns the full struct so callers can echo the new state.
+6. `DeductExtraUsage` — amend the conditional UPDATE:
 
    ```sql
    WHERE s.project_id = $1
@@ -107,9 +126,12 @@ In `internal/store/extra_usage.go`:
    ```
 
    Monthly limit remains unconditional (per design decision above).
-5. `classifyDeductFailure` — read `bypass_balance_check` alongside `enabled`;
+7. `classifyDeductFailure` — read `bypass_balance_check` alongside `enabled`;
    when bypass is on, the only reason the UPDATE fails is the monthly limit,
-   so return `ErrMonthlyLimitReached`.
+   so return `ErrMonthlyLimitReached`. If neither the enabled/balance nor
+   the monthly check explains it (shouldn't happen under bypass), fall back
+   to `ErrInsufficientBalance` as before to avoid leaking a confusing
+   low-level error.
 
 ## Proxy / guard
 
@@ -174,14 +196,27 @@ In `internal/admin/handle_extra_usage.go`:
 2. New handler:
 
    ```go
-   func handleAdminExtraUsageSetBypass(st *store.Store, logger *slog.Logger) http.HandlerFunc
+   func handleAdminExtraUsageSetBypass(st *store.Store) http.HandlerFunc
    ```
 
-   - Body: `{"bypass": true|false}` (pointer to distinguish omission).
-   - Validate `projectID` exists (reuse existing pattern).
-   - Call `st.SetExtraUsageBypass(projectID, body.Bypass)`.
-   - `logger.Info("extra_usage_bypass_toggled", "project_id", projectID, "bypass", body.Bypass, "actor_user_id", actor)` for audit.
-   - Return updated settings.
+   - Body: `{"bypass": *bool}` (pointer to distinguish omission). Reject
+     with 400 if nil.
+   - Extract actor via `admin.UserFromContext(r.Context())` (the request is
+     already past `RequireSuperadmin`, so this is non-nil).
+   - Call `st.SetExtraUsageBypass(projectID, *body.Bypass)`.
+   - Emit audit log:
+
+     ```go
+     slog.Default().Info("extra_usage_bypass_toggled",
+         "project_id", projectID,
+         "bypass", *body.Bypass,
+         "actor_user_id", actor.ID)
+     ```
+
+     This matches the logging pattern already in `handle_claudecode_oauth.go`
+     and `handle_models.go` — we intentionally do NOT add a `*slog.Logger`
+     parameter to `MountRoutes`.
+   - Return updated settings on 200.
 
 3. Route in `internal/admin/routes.go`:
 
@@ -190,12 +225,21 @@ In `internal/admin/handle_extra_usage.go`:
        r.Use(RequireSuperadmin)
        r.Get("/overview", handleAdminExtraUsageOverview(st))
        r.Post("/projects/{projectID}/topup", handleAdminExtraUsageDirectTopup(st))
-       r.Put("/projects/{projectID}/bypass", handleAdminExtraUsageSetBypass(st, logger))
+       r.Put("/projects/{projectID}/bypass", handleAdminExtraUsageSetBypass(st))
    })
    ```
 
-   `logger` needs to be passed through `MountRoutes` if not already; verify
-   during implementation.
+4. Visibility to project owners. `extraUsageGetResponse` (the project-scoped
+   `GET /projects/{id}/extra-usage` DTO) explicitly whitelists fields, so
+   without further action bypass would appear via `handleUpdateExtraUsage`
+   (which returns `types.ExtraUsageSettings` directly) but NOT via
+   `handleGetExtraUsage`. To keep the two consistent, add
+   `BypassBalanceCheck bool json:"bypass_balance_check"` to
+   `extraUsageGetResponse` and copy it from `settings` when present.
+   Decision rationale: project owners can already observe that their
+   requests are being served under bypass (cost shows up in the ledger even
+   after `enabled=false`), so exposing the flag avoids confusion without
+   granting new capability.
 
 ## Metrics
 
@@ -211,6 +255,12 @@ New file: `dashboard/src/pages/admin/ExtraUsagePage.tsx`.
 - Query: `GET /api/v1/admin/extra-usage/overview` via a new `useAdminExtraUsageOverview` hook (add to `dashboard/src/api/extra-usage.ts`).
 - Columns: project ID, balance_fen, monthly_limit_fen, monthly spent, 7d spent, enabled, bypass toggle, updated_at.
 - Toggle handler calls `PUT /api/v1/admin/extra-usage/projects/{projectID}/bypass` (new mutation `useSetExtraUsageBypass`).
+- **Project-ID lookup.** `ListExtraUsageSettings` only returns rows that
+  already exist in `extra_usage_settings`. To flip bypass on a project that
+  has never topped up (no row), the page MUST include a "Set bypass by
+  project ID" form: input for UUID + Enable/Disable buttons that call the
+  same PUT endpoint. After the call, the project appears in the table
+  because `SetExtraUsageBypass` upserts a row.
 - `App.tsx` — add route `/admin/extra-usage` guarded on `user.is_superadmin`.
 - `Sidebar.tsx` — add link under the superadmin section.
 
@@ -224,20 +274,51 @@ matching `AdminProjectsPage`/`AdminUsersPage` style.
    - bypass + monthly_limit reached → rejected (monthly limit still wins)
    - bypass=false + enabled=true + balance=0 → rejected (regression baseline)
 
-2. `internal/store` extra-usage tests (if present — will add one file
-   `extra_usage_test.go` if not):
+2. `internal/store` extra-usage tests (extend existing `extra_usage_test.go`
+   if present, or add one):
    - `DeductExtraUsage` with bypass=true and balance=0 → newBalance becomes
      negative, ledger row inserted, `balance_after_fen` negative.
    - `DeductExtraUsage` with bypass=true but monthly limit hit → returns
      `ErrMonthlyLimitReached`.
+   - `SetExtraUsageBypass` on a project with no existing row → row created
+     with bypass=true, enabled=false, balance_fen=0.
+   - `SetExtraUsageBypass(..., false)` after a prior true → row preserved,
+     only bypass flips.
+   - **Constraint-drop smoke test**: directly execute
+     `INSERT INTO extra_usage_settings (project_id, balance_fen) VALUES (gen_random_uuid(), -1)`
+     and
+     `INSERT INTO extra_usage_transactions (project_id, type, amount_fen, balance_after_fen) VALUES (..., 'deduction', -100, -50)`
+     — both must succeed after migration 018. This is the only way to
+     guarantee the `DROP CONSTRAINT IF EXISTS` actually dropped the right
+     constraint.
 
 3. `internal/admin` handler tests (new file or extension of existing):
    - Non-superadmin → 403 on PUT bypass.
+   - Body missing `bypass` field → 400.
    - PUT bypass=true then GET overview shows bypass=true.
    - PUT bypass on a project without a settings row creates the row.
 
 4. Dashboard: no automated tests in this repo for new pages; manual smoke test
    is acceptable given existing conventions.
+
+## Semantics worked examples
+
+Bypass projects accrue a negative `balance_fen` that persists across months
+— the monthly limit caps spend-per-month but does not clear the debt.
+
+- Project A: bypass=true, balance_fen=-5000 (¥-50, from last month),
+  monthly_limit_fen=30000 (¥300), month_spend=0.
+  First request this month for ¥10 → allowed; new balance_fen=-6000,
+  month_spend=1000. `monthly_limit` still has ¥290 headroom.
+
+- Project B: bypass=true, balance_fen=50 (¥0.50),
+  monthly_limit_fen=30000, month_spend=30000.
+  Request for ¥0.10 → rejected (`monthly_limit`), even though balance is
+  positive.
+
+- Project C: bypass=true, monthly_limit_fen=0 (no cap).
+  Any request → allowed; balance drifts negative unbounded. Operators
+  intending bypass-as-freebie MUST set a monthly_limit or accept this.
 
 ## Non-goals
 
