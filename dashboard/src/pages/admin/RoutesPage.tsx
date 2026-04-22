@@ -88,6 +88,37 @@ export function RoutesPage() {
     return m;
   }, [projects]);
 
+  // Mirror of the SQL inference table in migration 021. Returns the kinds
+  // the chosen upstream group's members typically serve; an empty array
+  // means "cross-family / unrecognised — no inference possible".
+  const kindMismatch = useMemo(() => {
+    if (!form.upstream_group_id || form.request_kinds.length === 0) return null;
+    const group = groupMap.get(form.upstream_group_id);
+    if (!group) return null;
+    const providers = new Set<string>();
+    for (const m of group.members ?? []) {
+      if (m.upstream?.provider) providers.add(m.upstream.provider);
+    }
+    if (providers.size === 0) return null;
+    const subsetOf = (allowed: string[]) =>
+      [...providers].every((p) => allowed.includes(p));
+    let inferred: string[] = [];
+    if (subsetOf(["anthropic", "claudecode"])) {
+      inferred = ["anthropic_messages", "anthropic_count_tokens"];
+    } else if (subsetOf(["anthropic", "claudecode", "bedrock", "vertex-anthropic"])) {
+      inferred = ["anthropic_messages"];
+    } else if (providers.size === 1 && providers.has("openai")) {
+      inferred = ["openai_responses"];
+    } else if (providers.size === 1 && providers.has("vertex-openai")) {
+      inferred = ["openai_chat_completions"];
+    } else if (subsetOf(["gemini", "vertex-google"])) {
+      inferred = ["google_generate_content"];
+    }
+    if (inferred.length === 0) return null;
+    if (form.request_kinds.some((k) => inferred.includes(k))) return null;
+    return inferred;
+  }, [form.upstream_group_id, form.request_kinds, groupMap]);
+
   function openCreate() {
     setEditingId(null);
     setForm({
@@ -412,6 +443,14 @@ export function RoutesPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              )}
+              {kindMismatch && (
+                <p className="text-xs text-yellow-600 dark:text-yellow-400">
+                  Heads up: the selected group's providers typically serve
+                  {" "}<code>{kindMismatch.join(", ")}</code>, not the kinds
+                  you've picked. The route will still save — verify this is
+                  what you want.
+                </p>
               )}
             </div>
           </div>
