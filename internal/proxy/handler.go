@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"path"
 	"strings"
@@ -372,54 +371,66 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use router to find an upstream for count_tokens (Anthropic/ClaudeCode only).
-	group, err := h.router.Match(project.ID, reqShape.Model, types.KindAnthropicCountTokens)
-	if err != nil {
-		writeProxyError(w, http.StatusNotFound, "no route configured for model "+reqShape.Model)
-		return
-	}
-	candidates := h.router.SelectWithRetry(r.Context(), group, "", reqShape.Model)
+	policy := PolicyFromContext(r.Context())
+	traceID := TraceIDFromContext(r.Context())
+	oauthGrantID := OAuthGrantIDFromContext(r.Context())
 
-	// Filter to Anthropic/ClaudeCode only (count_tokens isn't supported by other providers).
-	var selected *SelectedUpstream
-	for _, c := range candidates {
-		if c.Upstream.Provider == types.ProviderAnthropic || c.Upstream.Provider == types.ProviderClaudeCode {
-			selected = c
-			break
-		}
+	// Capture notable client headers as metadata. The CCH/fingerprint block
+	// from handleProxyRequest is intentionally omitted — count_tokens bodies
+	// don't carry the billing header.
+	metadata := make(map[string]string)
+	if v := r.Header.Get("Anthropic-Beta"); v != "" {
+		metadata["anthropic_beta"] = v
 	}
-	if selected == nil {
-		writeProxyError(w, http.StatusServiceUnavailable, "no Anthropic upstreams available for model "+reqShape.Model)
-		return
+	if v := r.Header.Get("Anthropic-Version"); v != "" {
+		metadata["anthropic_version"] = v
+	}
+	if v := r.Header.Get("User-Agent"); v != "" {
+		metadata["user_agent"] = v
 	}
 
-	// Resolve model name.
-	actualModel := selected.Upstream.ResolveModel(reqShape.Model)
-	if actualModel != reqShape.Model {
-		bodyBytes, _ = sjson.SetBytes(bodyBytes, "model", actualModel)
-		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		r.ContentLength = int64(len(bodyBytes))
+	pendingReq := &types.Request{
+		ProjectID:    project.ID,
+		APIKeyID:     apiKey.ID,
+		OAuthGrantID: oauthGrantID,
+		CreatedBy:    apiKey.CreatedBy,
+		TraceID:      traceID,
+		Model:        reqShape.Model,
+		Streaming:    false,
+		Status:       types.RequestStatusProcessing,
+		ClientIP:     r.RemoteAddr,
+		Metadata:     metadata,
+	}
+	if err := h.store.CreateRequest(pendingReq); err != nil {
+		h.logger.Warn("failed to insert pending request", "error", err)
+		pendingReq.ID = ""
 	}
 
-	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			if selected.Upstream.Provider == types.ProviderClaudeCode {
-				// Resolve fresh OAuth token via the manager.
-				accessToken := ParseClaudeCodeAccessToken(selected.APIKey)
-				if token, err := h.router.GetClaudeCodeAccessToken(selected.Upstream.ID); err == nil {
-					accessToken = token
-				}
-				directorSetClaudeCodeUpstream(req, selected.Upstream.BaseURL, accessToken)
-			} else {
-				directorSetUpstream(req, selected.Upstream.BaseURL, selected.APIKey)
-			}
-		},
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			h.logger.Error("count_tokens proxy error", "error", err)
-			writeProxyError(w, http.StatusBadGateway, "upstream error")
-		},
+	reqCtx := &RequestContext{
+		ProjectID:    project.ID,
+		APIKeyID:     apiKey.ID,
+		OAuthGrantID: oauthGrantID,
+		UserID:       apiKey.CreatedBy,
+		Model:        reqShape.Model,
+		ModelRef:     ModelFromContext(r.Context()),
+		IsStream:     false,
+		RequestKind:  types.KindAnthropicCountTokens,
+		TraceID:      traceID,
+		TraceSource:  TraceSourceFromContext(r.Context()),
+		SessionID:    traceID,
+		ClientIP:     r.RemoteAddr,
+		Policy:       policy,
+		APIKey:       apiKey,
+		Project:      project,
+		RequestID:    pendingReq.ID,
+		// Explicit override: count_tokens is a high-frequency editor probe;
+		// never log full request/response bodies even if the model publisher
+		// would otherwise opt in. The publisher-based gate in handleProxyRequest
+		// is bypassed here precisely because we want this off unconditionally.
+		HttpLogEnabled: false,
 	}
-	proxy.ServeHTTP(w, r)
+
+	h.executor.Execute(w, r, reqCtx)
 }
 
 func directorSetUpstream(req *http.Request, baseURL, apiKey string) {
