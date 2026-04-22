@@ -30,6 +30,7 @@ func handleCreateRoutingRoute(st *store.Store, catalog modelcatalog.Catalog) htt
 		var body struct {
 			ProjectID       string            `json:"project_id"`
 			ModelNames      []string          `json:"model_names"`
+			RequestKinds    []string          `json:"request_kinds"`
 			UpstreamGroupID string            `json:"upstream_group_id"`
 			MatchPriority   int               `json:"match_priority"`
 			Conditions      map[string]string `json:"conditions"`
@@ -42,6 +43,16 @@ func handleCreateRoutingRoute(st *store.Store, catalog modelcatalog.Catalog) htt
 		if len(body.ModelNames) == 0 || body.UpstreamGroupID == "" {
 			writeError(w, http.StatusBadRequest, "bad_request", "model_names and upstream_group_id are required")
 			return
+		}
+		if len(body.RequestKinds) == 0 {
+			writeError(w, http.StatusBadRequest, "bad_request", "request_kinds is required and must be non-empty")
+			return
+		}
+		for _, k := range body.RequestKinds {
+			if !types.IsValidRequestKind(k) {
+				writeError(w, http.StatusBadRequest, "bad_request", "invalid request_kind: "+k)
+				return
+			}
 		}
 
 		canonical, err := catalog.NormalizeNames(body.ModelNames)
@@ -58,6 +69,7 @@ func handleCreateRoutingRoute(st *store.Store, catalog modelcatalog.Catalog) htt
 		route := &types.Route{
 			ProjectID:       body.ProjectID,
 			ModelNames:      canonical,
+			RequestKinds:    body.RequestKinds,
 			UpstreamGroupID: body.UpstreamGroupID,
 			MatchPriority:   body.MatchPriority,
 			Conditions:      body.Conditions,
@@ -82,7 +94,7 @@ func handleUpdateRoutingRoute(st *store.Store, catalog modelcatalog.Catalog) htt
 		}
 
 		updates := make(map[string]interface{})
-		for _, field := range []string{"project_id", "model_names", "upstream_group_id", "match_priority", "conditions", "status"} {
+		for _, field := range []string{"project_id", "model_names", "request_kinds", "upstream_group_id", "match_priority", "conditions", "status"} {
 			if v, ok := body[field]; ok {
 				switch field {
 				case "project_id":
@@ -101,6 +113,23 @@ func handleUpdateRoutingRoute(st *store.Store, catalog modelcatalog.Catalog) htt
 						return
 					}
 					v = canonical
+				case "request_kinds":
+					kinds, ok := toStringSlice(v)
+					if !ok {
+						writeError(w, http.StatusBadRequest, "bad_request", "request_kinds must be an array of strings")
+						return
+					}
+					if len(kinds) == 0 {
+						writeError(w, http.StatusBadRequest, "bad_request", "request_kinds is required and must be non-empty")
+						return
+					}
+					for _, k := range kinds {
+						if !types.IsValidRequestKind(k) {
+							writeError(w, http.StatusBadRequest, "bad_request", "invalid request_kind: "+k)
+							return
+						}
+					}
+					v = kinds
 				}
 				updates[field] = v
 			}
