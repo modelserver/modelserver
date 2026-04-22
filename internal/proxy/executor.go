@@ -931,12 +931,19 @@ func (e *Executor) commitNonStreamingResponse(
 	// included. Otherwise keep the original order (write headers+body first,
 	// parse metrics afterwards) so non-extra-usage traffic's TTFB is not
 	// affected.
+	//
+	// count_tokens responses are {"input_tokens":N} — they don't have the
+	// Anthropic Message shape that ParseResponse expects, so skip the parse
+	// (and the resulting "failed to parse" log noise) for that kind. The
+	// request row finalizes with zero token counts, which is correct.
 	var respMetrics *ResponseMetrics
 	var parseErr error
 	if reqCtx.HasExtraUsageCtx {
-		respMetrics, parseErr = transformer.ParseResponse(body)
-		if parseErr != nil {
-			logger.Warn("failed to parse response", "error", parseErr)
+		if reqCtx.RequestKind != types.KindAnthropicCountTokens {
+			respMetrics, parseErr = transformer.ParseResponse(body)
+			if parseErr != nil {
+				logger.Warn("failed to parse response", "error", parseErr)
+			}
 		}
 		if respMetrics != nil {
 			e.settleExtraUsage(context.Background(), reqCtx, types.TokenUsage{
@@ -955,9 +962,11 @@ func (e *Executor) commitNonStreamingResponse(
 	w.Write(body)
 
 	if !reqCtx.HasExtraUsageCtx {
-		respMetrics, parseErr = transformer.ParseResponse(body)
-		if parseErr != nil {
-			logger.Warn("failed to parse response", "error", parseErr)
+		if reqCtx.RequestKind != types.KindAnthropicCountTokens {
+			respMetrics, parseErr = transformer.ParseResponse(body)
+			if parseErr != nil {
+				logger.Warn("failed to parse response", "error", parseErr)
+			}
 		}
 	}
 	if respMetrics == nil {
