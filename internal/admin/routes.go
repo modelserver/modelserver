@@ -279,6 +279,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 				r.Post("/routes", handleCreateRoutingRoute(st, catalog))
 				r.Put("/routes/{routeID}", handleUpdateRoutingRoute(st, catalog))
 				r.Delete("/routes/{routeID}", handleDeleteRoutingRoute(st))
+				r.Get("/request-kinds", handleListRequestKinds())
 				// TODO: Wire HealthProvider once the Router is integrated.
 				// r.Get("/health", handleRoutingHealth(hp))
 			})

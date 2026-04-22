@@ -159,6 +159,15 @@ func handleDeleteRoutingRoute(st *store.Store) http.HandlerFunc {
 	}
 }
 
+// handleListRequestKinds returns the catalog of valid route request_kinds so
+// the dashboard can render a dropdown without compiling the enum into the
+// frontend bundle.
+func handleListRequestKinds() http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		writeData(w, http.StatusOK, types.AllRequestKinds)
+	}
+}
+
 // toStringSlice turns an interface{} decoded from JSON into []string.
 // Accepts []string or []interface{}-of-string; returns (nil, false) otherwise.
 func toStringSlice(v interface{}) ([]string, bool) {
