@@ -455,6 +455,7 @@ export interface RoutingRoute {
   id: string;
   project_id?: string;
   model_names: string[];
+  request_kinds: string[];
   upstream_group_id: string;
   match_priority: number;
   conditions?: Record<string, string>;

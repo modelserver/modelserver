@@ -155,6 +155,18 @@ export function RoutesPage() {
       ),
     },
     {
+      header: "Endpoints",
+      accessor: (r) => (
+        <div className="flex flex-wrap gap-1">
+          {(r.request_kinds ?? []).map((k) => (
+            <Badge key={k} variant="outline" className="text-xs font-mono">
+              {k}
+            </Badge>
+          ))}
+        </div>
+      ),
+    },
+    {
       header: "Upstream Group",
       accessor: (r) => {
         const group = groupMap.get(r.upstream_group_id);
