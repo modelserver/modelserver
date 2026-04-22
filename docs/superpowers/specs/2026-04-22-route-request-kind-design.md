@@ -62,6 +62,29 @@ New column on `routes`: `request_kinds TEXT[] NOT NULL`. Multi-valued, mirroring
 `['anthropic_messages', 'anthropic_count_tokens']` to one group when no
 differentiation is wanted).
 
+### Backfill: provider-inferred, not naive default
+
+Today's `AllowedProviders` already encodes a provider→endpoint mapping
+(`HandleResponses` → only `openai`; `HandleChatCompletions` → only
+`vertex_openai`; `HandleCountTokens` → only `anthropic`/`claudecode`; etc.).
+The migration lifts that same mapping into `request_kinds` based on the
+upstream group's member providers. Result: code-and-DB go live atomically and
+existing traffic continues to land on the same upstreams it landed on
+yesterday — no operator intervention required for the common case, no rollout
+window where production endpoints 404.
+
+Inference table (applied per upstream group; assigned to every route pointing
+at that group):
+
+| Upstream-group member providers                    | Inferred `request_kinds`                                |
+| -------------------------------------------------- | ------------------------------------------------------- |
+| All ∈ `{anthropic, claudecode}`                    | `['anthropic_messages', 'anthropic_count_tokens']`      |
+| Includes `bedrock` or `vertex_anthropic` (no OpenAI/Gemini members) | `['anthropic_messages']` (count_tokens not supported on those upstreams today) |
+| All = `openai`                                     | `['openai_responses']` (today `HandleResponses` only allows OpenAI) |
+| All = `vertex_openai`                              | `['openai_chat_completions']` (today `HandleChatCompletions` only allows VertexOpenAI) |
+| All ∈ `{gemini, vertex_google}`                    | `['google_generate_content']`                           |
+| Mixed across families (Anthropic-side ∪ OpenAI-side ∪ Google-side) | `['anthropic_messages']` placeholder + RAISE NOTICE — operator must split the group |
+
 ```sql
 -- migrations/019_route_request_kinds.sql
 BEGIN;
@@ -69,9 +92,58 @@ BEGIN;
 ALTER TABLE routes
   ADD COLUMN request_kinds TEXT[] NOT NULL DEFAULT '{}';
 
-UPDATE routes
-SET request_kinds = ARRAY['anthropic_messages']
-WHERE request_kinds = '{}';
+-- Per-group provider inference. Done in a single UPDATE keyed off
+-- aggregated provider sets; each route inherits the kinds of the group it
+-- points to.
+WITH group_providers AS (
+    SELECT
+        m.upstream_group_id AS gid,
+        array_agg(DISTINCT u.provider) AS providers
+    FROM upstream_group_members m
+    JOIN upstreams u ON u.id = m.upstream_id
+    GROUP BY m.upstream_group_id
+),
+group_kinds AS (
+    SELECT
+        gid,
+        providers,
+        CASE
+            -- Anthropic-only family
+            WHEN providers <@ ARRAY['anthropic','claudecode']::TEXT[]
+                THEN ARRAY['anthropic_messages','anthropic_count_tokens']
+            -- Anthropic-side, includes Bedrock or Vertex-Anthropic (no count_tokens)
+            WHEN providers <@ ARRAY['anthropic','claudecode','bedrock','vertex_anthropic']::TEXT[]
+                THEN ARRAY['anthropic_messages']
+            -- Pure OpenAI native
+            WHEN providers = ARRAY['openai']::TEXT[]
+                THEN ARRAY['openai_responses']
+            -- Pure Vertex OpenAI-compat
+            WHEN providers = ARRAY['vertex_openai']::TEXT[]
+                THEN ARRAY['openai_chat_completions']
+            -- Google family
+            WHEN providers <@ ARRAY['gemini','vertex_google']::TEXT[]
+                THEN ARRAY['google_generate_content']
+            -- Mixed / unrecognised
+            ELSE ARRAY['anthropic_messages']
+        END AS inferred_kinds,
+        CASE
+            WHEN providers <@ ARRAY['anthropic','claudecode']::TEXT[] THEN FALSE
+            WHEN providers <@ ARRAY['anthropic','claudecode','bedrock','vertex_anthropic']::TEXT[] THEN FALSE
+            WHEN providers = ARRAY['openai']::TEXT[] THEN FALSE
+            WHEN providers = ARRAY['vertex_openai']::TEXT[] THEN FALSE
+            WHEN providers <@ ARRAY['gemini','vertex_google']::TEXT[] THEN FALSE
+            ELSE TRUE
+        END AS is_mixed
+    FROM group_providers
+)
+UPDATE routes r
+SET request_kinds = gk.inferred_kinds
+FROM group_kinds gk
+WHERE r.upstream_group_id = gk.gid;
+
+-- Routes whose upstream_group has no members (or null group) fall back to
+-- the safe Anthropic default; they wouldn't route anywhere usable today.
+UPDATE routes SET request_kinds = ARRAY['anthropic_messages'] WHERE request_kinds = '{}';
 
 ALTER TABLE routes ADD CONSTRAINT routes_request_kinds_valid CHECK (
   request_kinds <@ ARRAY[
@@ -86,39 +158,56 @@ ALTER TABLE routes ADD CONSTRAINT routes_request_kinds_valid CHECK (
 
 CREATE INDEX idx_routes_request_kinds ON routes USING GIN (request_kinds);
 
--- Audit notice: surface routes whose upstream group contains non-Anthropic
--- providers — these will need their request_kinds corrected by hand
--- post-migration. Output is informational; the migration does not modify them.
+-- Audit: routes pointing at upstream groups whose members span more than
+-- one provider family. Today these "shared groups" worked because
+-- AllowedProviders filtered per-ingress; after this change, the route's
+-- request_kinds is a placeholder and the group should be split. Output is
+-- informational only.
 DO $$
 DECLARE
     r RECORD;
 BEGIN
     FOR r IN
-        SELECT r.id, r.model_names, array_agg(DISTINCT u.provider) AS providers
-        FROM routes r
-        JOIN upstream_group_members m ON m.upstream_group_id = r.upstream_group_id
+        SELECT
+            rt.id AS route_id,
+            rt.model_names,
+            rt.upstream_group_id,
+            array_agg(DISTINCT u.provider) AS providers
+        FROM routes rt
+        JOIN upstream_group_members m ON m.upstream_group_id = rt.upstream_group_id
         JOIN upstreams u ON u.id = m.upstream_id
-        WHERE r.request_kinds = ARRAY['anthropic_messages']
-        GROUP BY r.id, r.model_names
-        HAVING bool_or(u.provider NOT IN ('anthropic', 'bedrock', 'claudecode', 'vertex_anthropic'))
+        GROUP BY rt.id, rt.model_names, rt.upstream_group_id
+        HAVING
+            -- Mixed across the three families
+            bool_or(u.provider IN ('anthropic','claudecode','bedrock','vertex_anthropic'))
+              AND bool_or(u.provider IN ('openai','vertex_openai'))
+            OR
+            bool_or(u.provider IN ('anthropic','claudecode','bedrock','vertex_anthropic'))
+              AND bool_or(u.provider IN ('gemini','vertex_google'))
+            OR
+            bool_or(u.provider IN ('openai','vertex_openai'))
+              AND bool_or(u.provider IN ('gemini','vertex_google'))
     LOOP
-        RAISE NOTICE 'Route % (models=%) has non-Anthropic providers % — verify request_kinds',
-            r.id, r.model_names, r.providers;
+        RAISE NOTICE 'Route % (models=%, group=%) has cross-family providers % — split the upstream group and assign request_kinds explicitly',
+            r.route_id, r.model_names, r.upstream_group_id, r.providers;
     END LOOP;
 END $$;
 
 COMMIT;
 ```
 
-### Backfill rationale
+### Why provider inference is safe here
 
-All existing rows are defaulted to `['anthropic_messages']`. This is correct for
-the dominant case (the bulk of production routes serve `/v1/messages`) but will
-mis-tag any existing OpenAI/Gemini routes. The migration emits NOTICE lines for
-each suspect route so operators can run targeted UPDATEs after deploy. The
-migration intentionally does not auto-detect kind from upstream provider — that
-heuristic is wrong often enough (e.g. an OpenAI provider can serve either
-`openai_chat_completions` or `openai_responses`) that operators should confirm.
+Concern raised during review: "an OpenAI upstream might serve either
+`openai_chat_completions` or `openai_responses` — heuristic is wrong." That
+concern is valid in general but doesn't apply *to the migration*: today
+`HandleResponses` is hard-wired to `openai` and `HandleChatCompletions` to
+`vertex_openai`. So an OpenAI upstream group has only ever served
+`/v1/responses` in production; tagging it `['openai_responses']` exactly
+preserves observed behavior. After the new model is in place, operators are
+free to add an additional `request_kinds=['openai_chat_completions']` to
+that route (or split into two routes) if they want OpenAI to serve both
+endpoints — that's a forward-going decision, not a migration concern.
 
 ## Code changes
 
@@ -211,13 +300,21 @@ Error string changes to: `no route configured for model <m> on endpoint <kind>`.
   - Reads body, resolves model, enforces `AllowedModels` (unchanged).
   - Inserts a pending request row with `Streaming: false`.
   - Builds `RequestContext` with `RequestKind: KindAnthropicCountTokens`,
-    `IsStream: false`, and the same auth/policy/trace plumbing as
-    `handleProxyRequest`.
+    `IsStream: false`, **`HttpLogEnabled: false`** (see below), and the same
+    auth/policy/trace plumbing as `handleProxyRequest`.
   - Calls `h.executor.Execute(w, r, reqCtx)`.
 
 This means count_tokens automatically gains: retry, circuit breaker,
-session-affinity (irrelevant in practice but harmless), HTTP logging,
-request-table observability — at the cost of one extra DB insert per request.
+session-affinity (irrelevant in practice but harmless), and request-table
+observability — at the cost of one extra DB insert per request.
+
+**HTTP body logging is explicitly disabled for count_tokens.** In
+`handleProxyRequest`, `HttpLogEnabled` is gated only on
+`Publisher == Anthropic`, which count_tokens models satisfy. Since
+count_tokens is invoked at high frequency by IDE clients (live token-count
+estimation in the editor), inheriting full-body logging would balloon the
+httplog store with low-value records. `HandleCountTokens` therefore sets the
+flag to false unconditionally, regardless of publisher.
 
 ### Response parsing
 
@@ -281,6 +378,18 @@ frontend bundle.
    upstream error returned 502. Now, if the matched group has
    `RetryPolicy.MaxRetries > 0`, count_tokens benefits from the same retry
    behavior as `/v1/messages`. This is intended.
+4. **Rate limit and extra-usage quotas remain model-keyed (not kind-keyed).**
+   count_tokens consumes the same `(project, api_key, user, model)` quota
+   bucket as `/v1/messages`. Splitting per-kind would require schema work in
+   the rate limiter and extra-usage tables and is out of scope. Operators
+   wanting count_tokens to be free-of-quota should route it to a free-tier
+   upstream group via the new routing — quota itself stays unified.
+5. **`/v1/models` (`HandleListModels`) is unchanged.** It returns the union
+   of models with at least one active route, regardless of which kinds those
+   routes serve. A model that is only configured for `openai_chat_completions`
+   still appears in the list when the client calls `/v1/models` from any
+   ingress; this is consistent with `/v1/models` being a coarse discovery
+   endpoint, not a per-endpoint capability probe.
 
 ## Out of scope
 
@@ -332,10 +441,18 @@ frontend bundle.
 - `PUT` updating only `request_kinds` works.
 - `GET /admin/routing/request-kinds` returns all five constants.
 
-Migration test (run 003 → 019 against a fixture DB):
+Migration test (run 003 → 019 against a fixture DB seeded with one route per
+provider family):
 
-- All preexisting rows end up with `request_kinds = ['anthropic_messages']`.
-- CHECK constraint rejects an attempted update setting an unknown kind.
+- Anthropic-only group → `['anthropic_messages','anthropic_count_tokens']`.
+- Group containing a Bedrock or VertexAnthropic upstream → `['anthropic_messages']` only.
+- Pure-OpenAI group → `['openai_responses']`.
+- Pure-VertexOpenAI group → `['openai_chat_completions']`.
+- Gemini/VertexGoogle group → `['google_generate_content']`.
+- Cross-family group (e.g. Anthropic + OpenAI in same group) → falls back to
+  `['anthropic_messages']` placeholder AND emits a NOTICE line.
+- CHECK constraint rejects an attempted update setting an unknown kind or
+  an empty array.
 
 ### Manual smoke
 
@@ -352,32 +469,67 @@ After deploy:
 
 ## Rollout
 
-1. Merge migration 019. The `DEFAULT '{}'` plus immediate `UPDATE` means
-   the column is populated synchronously in the same transaction; old code
-   reading the table without the column is unaffected.
-2. Deploy new server code (Match signature change, AllowedProviders removal,
-   HandleCountTokens delegation).
-3. Operators review NOTICE output from migration 019 and run targeted
-   `UPDATE routes SET request_kinds = ARRAY[<correct-kind>] WHERE id = ...`
-   for OpenAI/Gemini-served routes that were defaulted to
-   `anthropic_messages`.
-4. Operators add new differentiated routes where desired (e.g. count_tokens
-   to a free console key; OpenAI-compat to a dedicated proxy).
+This change ships as a **single atomic deploy**: migration + server + dashboard
+together. Splitting them is unsafe — see "Why one PR" below.
+
+1. Merge a single PR containing: migration 019, server changes (Match
+   signature, AllowedProviders removal, HandleCountTokens delegation,
+   HttpLogEnabled=false for count_tokens), admin API additions, and
+   dashboard updates. CI runs the migration test from §Testing to verify
+   provider inference matches the table above.
+2. Deploy. The migration runs in-transaction with the schema change so
+   existing routes immediately have correctly-inferred `request_kinds`
+   when the new code starts serving traffic — no window where production
+   endpoints 404 due to default-tagged rows.
+3. Post-deploy, operators review the NOTICE output for cross-family
+   shared groups (if any) and split them — those rows have placeholder
+   `['anthropic_messages']` and need correction. Most deployments will
+   have zero such groups.
+4. Going forward, operators add new differentiated routes where desired
+   (e.g. count_tokens to a free console key; OpenAI-compat to a dedicated
+   proxy upstream).
+
+### Why one PR
+
+- Backend-only deploy without dashboard: `POST /admin/routing/routes` now
+  requires `request_kinds`; the old dashboard would 400 on every route
+  create.
+- Dashboard-only deploy without backend: dashboard would send
+  `request_kinds` to a backend that doesn't know the field, silently
+  dropping it on persistence.
+- Migration-only without backend: harmless; old code ignores the column.
+- Backend-only without migration: `Router.Reload` would scan a missing
+  column → DB error → server crash on startup.
+
+The only safe order is migration → backend → dashboard within one
+deployment unit. We bundle them.
 
 ## Risks
 
-- **Mis-tagged routes during step 1 → 3 window.** If the deploy happens
-  before operators correct OpenAI/Gemini routes' `request_kinds`, traffic to
-  those endpoints will 404 (no `openai_chat_completions` route matches).
-  Mitigation: stage migration + correction UPDATEs together; for sites
-  with only Anthropic upstreams, no correction needed.
-- **Removing `AllowedProviders` removes a defense-in-depth.** A route
-  pointing at a mismatched-provider upstream group will now send the
-  request and the upstream will reject it. This is intentional (visibility
-  > silent masking) but operators should be told.
+- **Cross-family shared upstream groups break.** If any deployment runs an
+  upstream group whose members span Anthropic + OpenAI (or any cross-family
+  combination), today `AllowedProviders` per-ingress filtered the candidate
+  list correctly; after this change the route is migrated with a placeholder
+  `['anthropic_messages']` and the original cross-wire routing stops working.
+  Migration emits a NOTICE for each such route. Mitigation: operators split
+  the shared group into per-family groups and assign explicit `request_kinds`.
+  Pre-deploy, audit production with the migration's NOTICE query (can be
+  run read-only in advance).
+- **Removing `AllowedProviders` removes a defense-in-depth.** Once routes
+  are kind-correct, a misconfigured route (kind says `anthropic_messages`
+  but the upstream group's members are OpenAI) will send Anthropic-format
+  bodies to an OpenAI upstream, which 4xx's. Previously this would have
+  been silently filtered to "no upstreams available" (503). Visibility >
+  silent masking, but operators should expect louder failure on
+  misconfiguration.
 - **count_tokens request-log volume.** count_tokens is typically invoked
   more frequently than `/v1/messages` (clients use it for live token-count
   estimation in the editor). Inserting a request row per call may double
-  request-table write volume in some deployments. If this becomes a
-  problem, add a `log_requests=false` toggle on the route; out of scope for
-  this iteration.
+  request-table write volume in some deployments. HTTP-body logging is
+  already disabled for count_tokens (see §Code changes); the request row
+  itself is small. If write volume still concerns operators, add a
+  `log_requests=false` toggle on the route; out of scope for this iteration.
+- **No external admin-API consumers assumed.** The admin API contract change
+  (required `request_kinds` on POST/PUT) breaks any external automation
+  that creates routes. We assume the dashboard is the only consumer; if
+  any internal scripts exist they need updating in the same window.
