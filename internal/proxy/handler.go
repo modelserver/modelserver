@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"path"
 	"strings"
@@ -67,31 +66,22 @@ func (h *Handler) resolveModel(w http.ResponseWriter, rawModel, ingress string) 
 	return m.Name, true
 }
 
-// HandleMessages proxies Anthropic /v1/messages requests.
-// Only routes to Anthropic, Bedrock, and ClaudeCode providers.
+// HandleMessages proxies Anthropic /v1/messages (stream + non-stream).
+// Routes are matched against KindAnthropicMessages.
 func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
-	h.handleProxyRequest(w, r, []string{
-		types.ProviderAnthropic,
-		types.ProviderBedrock,
-		types.ProviderClaudeCode,
-		types.ProviderVertexAnthropic,
-	})
+	h.handleProxyRequest(w, r, IngressAnthropic, types.KindAnthropicMessages)
 }
 
-// HandleResponses proxies OpenAI /v1/responses requests.
-// Only routes to OpenAI providers.
+// HandleResponses proxies OpenAI /v1/responses (stream + non-stream).
+// Routes are matched against KindOpenAIResponses.
 func (h *Handler) HandleResponses(w http.ResponseWriter, r *http.Request) {
-	h.handleProxyRequest(w, r, []string{
-		types.ProviderOpenAI,
-	})
+	h.handleProxyRequest(w, r, IngressOpenAI, types.KindOpenAIResponses)
 }
 
 // HandleChatCompletions proxies OpenAI Chat Completions format requests.
-// Routes to providers that support the Chat Completions wire format.
+// Routes are matched against KindOpenAIChatCompletions.
 func (h *Handler) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
-	h.handleProxyRequest(w, r, []string{
-		types.ProviderVertexOpenAI,
-	})
+	h.handleProxyRequest(w, r, IngressOpenAI, types.KindOpenAIChatCompletions)
 }
 
 // HandleGemini proxies Gemini API requests (generateContent / streamGenerateContent).
@@ -202,7 +192,7 @@ func (h *Handler) HandleGemini(w http.ResponseWriter, r *http.Request) {
 		Model:            model,
 		ModelRef:         ModelFromContext(r.Context()),
 		IsStream:         isStream,
-		AllowedProviders: []string{types.ProviderGemini, types.ProviderVertexGoogle},
+		RequestKind:      types.KindGoogleGenerateContent,
 		TraceID:          traceID,
 		TraceSource:      TraceSourceFromContext(r.Context()),
 		SessionID:        traceID,
@@ -216,9 +206,10 @@ func (h *Handler) HandleGemini(w http.ResponseWriter, r *http.Request) {
 	h.executor.Execute(w, r, reqCtx)
 }
 
-// handleProxyRequest is the shared implementation for HandleMessages and HandleResponses.
-// allowedProviders constrains which provider types can serve this request.
-func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, allowedProviders []string) {
+// handleProxyRequest is the shared implementation for HandleMessages, HandleResponses,
+// and HandleChatCompletions. ingress is used for model-resolution error formatting;
+// kind is set on RequestContext so the router can match the right route.
+func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, ingress, kind string) {
 	apiKey := APIKeyFromContext(r.Context())
 	project := ProjectFromContext(r.Context())
 	if apiKey == nil || project == nil {
@@ -239,7 +230,6 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, all
 	}
 	json.Unmarshal(bodyBytes, &reqShape)
 
-	ingress := ingressForProviders(allowedProviders)
 	canonical, ok := h.resolveModel(w, reqShape.Model, ingress)
 	if !ok {
 		return
@@ -324,7 +314,7 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, all
 		Model:            reqShape.Model,
 		ModelRef:         ModelFromContext(r.Context()),
 		IsStream:         reqShape.Stream,
-		AllowedProviders: allowedProviders,
+		RequestKind:      kind,
 		TraceID:          traceID,
 		TraceSource:      TraceSourceFromContext(r.Context()),
 		SessionID:        traceID, // Use trace ID for session stickiness
@@ -381,54 +371,66 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use router to find an upstream for count_tokens (Anthropic/ClaudeCode only).
-	group, err := h.router.Match(project.ID, reqShape.Model)
-	if err != nil {
-		writeProxyError(w, http.StatusNotFound, "no route configured for model "+reqShape.Model)
-		return
-	}
-	candidates := h.router.SelectWithRetry(r.Context(), group, "", reqShape.Model)
+	policy := PolicyFromContext(r.Context())
+	traceID := TraceIDFromContext(r.Context())
+	oauthGrantID := OAuthGrantIDFromContext(r.Context())
 
-	// Filter to Anthropic/ClaudeCode only (count_tokens isn't supported by other providers).
-	var selected *SelectedUpstream
-	for _, c := range candidates {
-		if c.Upstream.Provider == types.ProviderAnthropic || c.Upstream.Provider == types.ProviderClaudeCode {
-			selected = c
-			break
-		}
+	// Capture notable client headers as metadata. The CCH/fingerprint block
+	// from handleProxyRequest is intentionally omitted — count_tokens bodies
+	// don't carry the billing header.
+	metadata := make(map[string]string)
+	if v := r.Header.Get("Anthropic-Beta"); v != "" {
+		metadata["anthropic_beta"] = v
 	}
-	if selected == nil {
-		writeProxyError(w, http.StatusServiceUnavailable, "no Anthropic upstreams available for model "+reqShape.Model)
-		return
+	if v := r.Header.Get("Anthropic-Version"); v != "" {
+		metadata["anthropic_version"] = v
+	}
+	if v := r.Header.Get("User-Agent"); v != "" {
+		metadata["user_agent"] = v
 	}
 
-	// Resolve model name.
-	actualModel := selected.Upstream.ResolveModel(reqShape.Model)
-	if actualModel != reqShape.Model {
-		bodyBytes, _ = sjson.SetBytes(bodyBytes, "model", actualModel)
-		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		r.ContentLength = int64(len(bodyBytes))
+	pendingReq := &types.Request{
+		ProjectID:    project.ID,
+		APIKeyID:     apiKey.ID,
+		OAuthGrantID: oauthGrantID,
+		CreatedBy:    apiKey.CreatedBy,
+		TraceID:      traceID,
+		Model:        reqShape.Model,
+		Streaming:    false,
+		Status:       types.RequestStatusProcessing,
+		ClientIP:     r.RemoteAddr,
+		Metadata:     metadata,
+	}
+	if err := h.store.CreateRequest(pendingReq); err != nil {
+		h.logger.Warn("failed to insert pending request", "error", err)
+		pendingReq.ID = ""
 	}
 
-	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			if selected.Upstream.Provider == types.ProviderClaudeCode {
-				// Resolve fresh OAuth token via the manager.
-				accessToken := ParseClaudeCodeAccessToken(selected.APIKey)
-				if token, err := h.router.GetClaudeCodeAccessToken(selected.Upstream.ID); err == nil {
-					accessToken = token
-				}
-				directorSetClaudeCodeUpstream(req, selected.Upstream.BaseURL, accessToken)
-			} else {
-				directorSetUpstream(req, selected.Upstream.BaseURL, selected.APIKey)
-			}
-		},
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			h.logger.Error("count_tokens proxy error", "error", err)
-			writeProxyError(w, http.StatusBadGateway, "upstream error")
-		},
+	reqCtx := &RequestContext{
+		ProjectID:    project.ID,
+		APIKeyID:     apiKey.ID,
+		OAuthGrantID: oauthGrantID,
+		UserID:       apiKey.CreatedBy,
+		Model:        reqShape.Model,
+		ModelRef:     ModelFromContext(r.Context()),
+		IsStream:     false,
+		RequestKind:  types.KindAnthropicCountTokens,
+		TraceID:      traceID,
+		TraceSource:  TraceSourceFromContext(r.Context()),
+		SessionID:    traceID,
+		ClientIP:     r.RemoteAddr,
+		Policy:       policy,
+		APIKey:       apiKey,
+		Project:      project,
+		RequestID:    pendingReq.ID,
+		// Explicit override: count_tokens is a high-frequency editor probe;
+		// never log full request/response bodies even if the model publisher
+		// would otherwise opt in. The publisher-based gate in handleProxyRequest
+		// is bypassed here precisely because we want this off unconditionally.
+		HttpLogEnabled: false,
 	}
-	proxy.ServeHTTP(w, r)
+
+	h.executor.Execute(w, r, reqCtx)
 }
 
 func directorSetUpstream(req *http.Request, baseURL, apiKey string) {
@@ -458,19 +460,3 @@ func modelInList(list []string, model string) bool {
 	return false
 }
 
-// ingressForProviders maps the allowlist of upstream provider types (set per
-// endpoint in HandleMessages / HandleResponses / HandleChatCompletions) back
-// to the ingress family whose error envelope clients expect. Body-based
-// endpoints that accept Anthropic-compatible bodies return IngressAnthropic;
-// OpenAI-flavoured endpoints return IngressOpenAI.
-func ingressForProviders(allowed []string) string {
-	for _, p := range allowed {
-		switch p {
-		case types.ProviderOpenAI, types.ProviderVertexOpenAI:
-			return IngressOpenAI
-		case types.ProviderGemini, types.ProviderVertexGoogle:
-			return IngressGemini
-		}
-	}
-	return IngressAnthropic
-}

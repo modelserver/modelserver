@@ -40,13 +40,14 @@ func newTestRouterForSession(t *testing.T) (*Router, *resolvedGroup) {
 	routes := []types.Route{{
 		ID:              "r1",
 		ModelNames:      []string{"claude-sonnet"},
+		RequestKinds:    []string{types.KindAnthropicMessages},
 		UpstreamGroupID: "grp",
 		MatchPriority:   1,
 		Status:          "active",
 	}}
 
 	r := NewRouter(upstreams, groups, routes, nil, logger, time.Hour, nil, nil)
-	g, err := r.Match("", "claude-sonnet")
+	g, err := r.Match("", "claude-sonnet", types.KindAnthropicMessages)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -204,9 +205,9 @@ func TestSelectWithRetry_BoundUpstreamUnavailableFallsThrough(t *testing.T) {
 			{UpstreamGroupMember: types.UpstreamGroupMember{UpstreamGroupID: "grp", UpstreamID: "up-c"}},
 		},
 	}}
-	routes := []types.Route{{ID: "r1", ModelNames: []string{"claude-sonnet"}, UpstreamGroupID: "grp", MatchPriority: 1, Status: "active"}}
+	routes := []types.Route{{ID: "r1", ModelNames: []string{"claude-sonnet"}, RequestKinds: []string{types.KindAnthropicMessages}, UpstreamGroupID: "grp", MatchPriority: 1, Status: "active"}}
 	r := NewRouter(upstreams, groups, routes, nil, logger, time.Hour, nil, nil)
-	g, err := r.Match("", "claude-sonnet")
+	g, err := r.Match("", "claude-sonnet", types.KindAnthropicMessages)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
 	}
@@ -293,5 +294,114 @@ func TestSelectWithRetry_DifferentModelsSameSessionDoNotShareBinding(t *testing.
 	if differCount == 0 {
 		t.Fatalf("expected model-A and model-B to differ in some trials; "+
 			"got 0/%d (suggests shared-binding regression)", trials)
+	}
+}
+
+// newRouterWithRoutes builds a minimal Router for testing Match's filtering
+// logic. All routes share a single placeholder upstream group so the test
+// only exercises route-selection, not upstream-load-balancing.
+func newRouterWithRoutes(t *testing.T, routes ...*types.Route) *Router {
+	t.Helper()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	// Build a placeholder group for every distinct UpstreamGroupID referenced.
+	seen := map[string]bool{}
+	var groups []store.UpstreamGroupWithMembers
+	var upstreams []types.Upstream
+	for _, r := range routes {
+		if seen[r.UpstreamGroupID] {
+			continue
+		}
+		seen[r.UpstreamGroupID] = true
+		uid := "u-" + r.UpstreamGroupID
+		upstreams = append(upstreams, types.Upstream{
+			ID: uid, Provider: types.ProviderAnthropic,
+			Status: types.UpstreamStatusActive, Weight: 1,
+			SupportedModels: []string{"any"},
+		})
+		groups = append(groups, store.UpstreamGroupWithMembers{
+			UpstreamGroup: types.UpstreamGroup{
+				ID: r.UpstreamGroupID, Name: r.UpstreamGroupID,
+				LBPolicy: types.LBPolicyWeightedRandom, Status: "active",
+			},
+			Members: []store.UpstreamGroupMemberDetail{
+				{UpstreamGroupMember: types.UpstreamGroupMember{UpstreamGroupID: r.UpstreamGroupID, UpstreamID: uid}},
+			},
+		})
+	}
+	asValues := make([]types.Route, len(routes))
+	for i, r := range routes {
+		asValues[i] = *r
+	}
+	return NewRouter(upstreams, groups, asValues, nil, logger, time.Hour, nil, nil)
+}
+
+func TestMatch_KindIsRequired_NoMatchingKindReturnsError(t *testing.T) {
+	r := newRouterWithRoutes(t, &types.Route{
+		ID: "r1", ProjectID: "p", ModelNames: []string{"m"},
+		UpstreamGroupID: "g", RequestKinds: []string{types.KindAnthropicMessages},
+		Status: "active",
+	})
+	if _, err := r.Match("p", "m", types.KindOpenAIResponses); err == nil {
+		t.Error("expected error when kind doesn't match any route")
+	}
+}
+
+func TestMatch_MultiKindRouteServesBothEndpoints(t *testing.T) {
+	r := newRouterWithRoutes(t, &types.Route{
+		ID: "r1", ProjectID: "p", ModelNames: []string{"m"},
+		UpstreamGroupID: "g", RequestKinds: []string{
+			types.KindAnthropicMessages, types.KindAnthropicCountTokens,
+		},
+		Status: "active",
+	})
+	for _, k := range []string{types.KindAnthropicMessages, types.KindAnthropicCountTokens} {
+		if _, err := r.Match("p", "m", k); err != nil {
+			t.Errorf("kind %s: unexpected error %v", k, err)
+		}
+	}
+}
+
+func TestMatch_KindMismatchSkipsRoute_FallsThroughToGlobal(t *testing.T) {
+	r := newRouterWithRoutes(t,
+		&types.Route{
+			ID: "r_proj", ProjectID: "p", ModelNames: []string{"m"},
+			UpstreamGroupID: "g_proj", RequestKinds: []string{types.KindAnthropicMessages},
+			MatchPriority: 100, Status: "active",
+		},
+		&types.Route{
+			ID: "r_global", ProjectID: "", ModelNames: []string{"m"},
+			UpstreamGroupID: "g_global", RequestKinds: []string{types.KindAnthropicCountTokens},
+			MatchPriority: 0, Status: "active",
+		},
+	)
+	g, err := r.Match("p", "m", types.KindAnthropicCountTokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.group.ID != "g_global" {
+		t.Errorf("expected fallthrough to g_global, got %s", g.group.ID)
+	}
+}
+
+func TestMatch_ProjectKindBeatsGlobalKind(t *testing.T) {
+	r := newRouterWithRoutes(t,
+		&types.Route{
+			ID: "r_proj", ProjectID: "p", ModelNames: []string{"m"},
+			UpstreamGroupID: "g_proj", RequestKinds: []string{types.KindAnthropicMessages},
+			MatchPriority: 0, Status: "active",
+		},
+		&types.Route{
+			ID: "r_global", ProjectID: "", ModelNames: []string{"m"},
+			UpstreamGroupID: "g_global", RequestKinds: []string{types.KindAnthropicMessages},
+			MatchPriority: 100, Status: "active",
+		},
+	)
+	g, err := r.Match("p", "m", types.KindAnthropicMessages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.group.ID != "g_proj" {
+		t.Errorf("project route should beat global, got %s", g.group.ID)
 	}
 }

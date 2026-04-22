@@ -5,6 +5,7 @@ import {
   useUpdateRoutingRoute,
   useDeleteRoutingRoute,
   useUpstreamGroups,
+  useRequestKinds,
 } from "@/api/upstreams";
 import { useAllProjects } from "@/api/projects";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -60,11 +61,15 @@ export function RoutesPage() {
   // stored here.
   const [form, setForm] = useState({
     model_names: [] as string[],
+    request_kinds: ["anthropic_messages"] as string[],
     upstream_group_id: "",
     match_priority: 0,
     status: "active",
     project_id: "",
   });
+
+  const { data: requestKindsData } = useRequestKinds();
+  const requestKinds = requestKindsData?.data ?? [];
 
   const routes = routesData?.data ?? [];
   const meta = routesData?.meta;
@@ -83,9 +88,47 @@ export function RoutesPage() {
     return m;
   }, [projects]);
 
+  // Mirror of the SQL inference table in migration 021. Returns the kinds
+  // the chosen upstream group's members typically serve; an empty array
+  // means "cross-family / unrecognised — no inference possible".
+  const kindMismatch = useMemo(() => {
+    if (!form.upstream_group_id || form.request_kinds.length === 0) return null;
+    const group = groupMap.get(form.upstream_group_id);
+    if (!group) return null;
+    const providers = new Set<string>();
+    for (const m of group.members ?? []) {
+      if (m.upstream?.provider) providers.add(m.upstream.provider);
+    }
+    if (providers.size === 0) return null;
+    const subsetOf = (allowed: string[]) =>
+      [...providers].every((p) => allowed.includes(p));
+    let inferred: string[] = [];
+    if (subsetOf(["anthropic", "claudecode"])) {
+      inferred = ["anthropic_messages", "anthropic_count_tokens"];
+    } else if (subsetOf(["anthropic", "claudecode", "bedrock", "vertex-anthropic"])) {
+      inferred = ["anthropic_messages"];
+    } else if (providers.size === 1 && providers.has("openai")) {
+      inferred = ["openai_responses"];
+    } else if (providers.size === 1 && providers.has("vertex-openai")) {
+      inferred = ["openai_chat_completions"];
+    } else if (subsetOf(["gemini", "vertex-google"])) {
+      inferred = ["google_generate_content"];
+    }
+    if (inferred.length === 0) return null;
+    if (form.request_kinds.some((k) => inferred.includes(k))) return null;
+    return inferred;
+  }, [form.upstream_group_id, form.request_kinds, groupMap]);
+
   function openCreate() {
     setEditingId(null);
-    setForm({ model_names: [], upstream_group_id: "", match_priority: 0, status: "active", project_id: "" });
+    setForm({
+      model_names: [],
+      request_kinds: ["anthropic_messages"],
+      upstream_group_id: "",
+      match_priority: 0,
+      status: "active",
+      project_id: "",
+    });
     setDialogOpen(true);
   }
 
@@ -93,6 +136,7 @@ export function RoutesPage() {
     setEditingId(route.id);
     setForm({
       model_names: [...(route.model_names ?? [])],
+      request_kinds: [...(route.request_kinds ?? [])],
       upstream_group_id: route.upstream_group_id,
       match_priority: route.match_priority,
       status: route.status,
@@ -106,8 +150,13 @@ export function RoutesPage() {
       toast.error("At least one model name is required");
       return;
     }
+    if (form.request_kinds.length === 0) {
+      toast.error("At least one request kind is required");
+      return;
+    }
     const payload = {
       model_names: form.model_names,
+      request_kinds: form.request_kinds,
       upstream_group_id: form.upstream_group_id,
       match_priority: form.match_priority,
       status: form.status,
@@ -152,6 +201,18 @@ export function RoutesPage() {
       header: "Model Names",
       accessor: (r) => (
         <code className="text-sm">{(r.model_names ?? []).join(", ")}</code>
+      ),
+    },
+    {
+      header: "Endpoints",
+      accessor: (r) => (
+        <div className="flex flex-wrap gap-1">
+          {(r.request_kinds ?? []).map((k) => (
+            <Badge key={k} variant="outline" className="text-xs font-mono">
+              {k}
+            </Badge>
+          ))}
+        </div>
       ),
     },
     {
@@ -304,6 +365,37 @@ export function RoutesPage() {
               </p>
             </div>
             <div className="space-y-2">
+              <Label>Request Kinds</Label>
+              <div className="flex flex-wrap gap-2">
+                {requestKinds.map((kind) => {
+                  const selected = form.request_kinds.includes(kind);
+                  return (
+                    <Button
+                      key={kind}
+                      type="button"
+                      size="sm"
+                      variant={selected ? "default" : "outline"}
+                      onClick={() =>
+                        setForm((p) => ({
+                          ...p,
+                          request_kinds: selected
+                            ? p.request_kinds.filter((k) => k !== kind)
+                            : [...p.request_kinds, kind],
+                        }))
+                      }
+                    >
+                      {kind}
+                    </Button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Wire-level endpoints this route serves (e.g. anthropic_messages =
+                /v1/messages, anthropic_count_tokens = /v1/messages/count_tokens).
+                Pick at least one.
+              </p>
+            </div>
+            <div className="space-y-2">
               <Label>Match Priority</Label>
               <Input
                 type="number"
@@ -352,6 +444,14 @@ export function RoutesPage() {
                   </SelectContent>
                 </Select>
               )}
+              {kindMismatch && (
+                <p className="text-xs text-yellow-600 dark:text-yellow-400">
+                  Heads up: the selected group's providers typically serve
+                  {" "}<code>{kindMismatch.join(", ")}</code>, not the kinds
+                  you've picked. The route will still save — verify this is
+                  what you want.
+                </p>
+              )}
             </div>
           </div>
           <DialogFooter>
@@ -360,7 +460,7 @@ export function RoutesPage() {
             </Button>
             <Button
               onClick={handleSave}
-              disabled={form.model_names.length === 0 || !form.upstream_group_id || isSaving}
+              disabled={form.model_names.length === 0 || form.request_kinds.length === 0 || !form.upstream_group_id || isSaving}
             >
               {isSaving ? "Saving..." : editingId ? "Save" : "Create"}
             </Button>
