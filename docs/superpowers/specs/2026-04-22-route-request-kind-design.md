@@ -66,7 +66,7 @@ differentiation is wanted).
 
 Today's `AllowedProviders` already encodes a provider→endpoint mapping
 (`HandleResponses` → only `openai`; `HandleChatCompletions` → only
-`vertex_openai`; `HandleCountTokens` → only `anthropic`/`claudecode`; etc.).
+`vertex-openai`; `HandleCountTokens` → only `anthropic`/`claudecode`; etc.).
 The migration lifts that same mapping into `request_kinds` based on the
 upstream group's member providers. Result: code-and-DB go live atomically and
 existing traffic continues to land on the same upstreams it landed on
@@ -79,10 +79,10 @@ at that group):
 | Upstream-group member providers                    | Inferred `request_kinds`                                |
 | -------------------------------------------------- | ------------------------------------------------------- |
 | All ∈ `{anthropic, claudecode}`                    | `['anthropic_messages', 'anthropic_count_tokens']`      |
-| Includes `bedrock` or `vertex_anthropic` (no OpenAI/Gemini members) | `['anthropic_messages']` (count_tokens not supported on those upstreams today) |
+| Includes `bedrock` or `vertex-anthropic` (no OpenAI/Gemini members) | `['anthropic_messages']` (count_tokens not supported on those upstreams today) |
 | All = `openai`                                     | `['openai_responses']` (today `HandleResponses` only allows OpenAI) |
-| All = `vertex_openai`                              | `['openai_chat_completions']` (today `HandleChatCompletions` only allows VertexOpenAI) |
-| All ∈ `{gemini, vertex_google}`                    | `['google_generate_content']`                           |
+| All = `vertex-openai`                              | `['openai_chat_completions']` (today `HandleChatCompletions` only allows VertexOpenAI) |
+| All ∈ `{gemini, vertex-google}`                    | `['google_generate_content']`                           |
 | Mixed across families (Anthropic-side ∪ OpenAI-side ∪ Google-side) | `['anthropic_messages']` placeholder + RAISE NOTICE — operator must split the group |
 
 ```sql
@@ -112,26 +112,26 @@ group_kinds AS (
             WHEN providers <@ ARRAY['anthropic','claudecode']::TEXT[]
                 THEN ARRAY['anthropic_messages','anthropic_count_tokens']
             -- Anthropic-side, includes Bedrock or Vertex-Anthropic (no count_tokens)
-            WHEN providers <@ ARRAY['anthropic','claudecode','bedrock','vertex_anthropic']::TEXT[]
+            WHEN providers <@ ARRAY['anthropic','claudecode','bedrock','vertex-anthropic']::TEXT[]
                 THEN ARRAY['anthropic_messages']
             -- Pure OpenAI native
             WHEN providers = ARRAY['openai']::TEXT[]
                 THEN ARRAY['openai_responses']
             -- Pure Vertex OpenAI-compat
-            WHEN providers = ARRAY['vertex_openai']::TEXT[]
+            WHEN providers = ARRAY['vertex-openai']::TEXT[]
                 THEN ARRAY['openai_chat_completions']
             -- Google family
-            WHEN providers <@ ARRAY['gemini','vertex_google']::TEXT[]
+            WHEN providers <@ ARRAY['gemini','vertex-google']::TEXT[]
                 THEN ARRAY['google_generate_content']
             -- Mixed / unrecognised
             ELSE ARRAY['anthropic_messages']
         END AS inferred_kinds,
         CASE
             WHEN providers <@ ARRAY['anthropic','claudecode']::TEXT[] THEN FALSE
-            WHEN providers <@ ARRAY['anthropic','claudecode','bedrock','vertex_anthropic']::TEXT[] THEN FALSE
+            WHEN providers <@ ARRAY['anthropic','claudecode','bedrock','vertex-anthropic']::TEXT[] THEN FALSE
             WHEN providers = ARRAY['openai']::TEXT[] THEN FALSE
-            WHEN providers = ARRAY['vertex_openai']::TEXT[] THEN FALSE
-            WHEN providers <@ ARRAY['gemini','vertex_google']::TEXT[] THEN FALSE
+            WHEN providers = ARRAY['vertex-openai']::TEXT[] THEN FALSE
+            WHEN providers <@ ARRAY['gemini','vertex-google']::TEXT[] THEN FALSE
             ELSE TRUE
         END AS is_mixed
     FROM group_providers
@@ -179,14 +179,14 @@ BEGIN
         GROUP BY rt.id, rt.model_names, rt.upstream_group_id
         HAVING
             -- Mixed across the three families
-            bool_or(u.provider IN ('anthropic','claudecode','bedrock','vertex_anthropic'))
-              AND bool_or(u.provider IN ('openai','vertex_openai'))
+            bool_or(u.provider IN ('anthropic','claudecode','bedrock','vertex-anthropic'))
+              AND bool_or(u.provider IN ('openai','vertex-openai'))
             OR
-            bool_or(u.provider IN ('anthropic','claudecode','bedrock','vertex_anthropic'))
-              AND bool_or(u.provider IN ('gemini','vertex_google'))
+            bool_or(u.provider IN ('anthropic','claudecode','bedrock','vertex-anthropic'))
+              AND bool_or(u.provider IN ('gemini','vertex-google'))
             OR
-            bool_or(u.provider IN ('openai','vertex_openai'))
-              AND bool_or(u.provider IN ('gemini','vertex_google'))
+            bool_or(u.provider IN ('openai','vertex-openai'))
+              AND bool_or(u.provider IN ('gemini','vertex-google'))
     LOOP
         RAISE NOTICE 'Route % (models=%, group=%) has cross-family providers % — split the upstream group and assign request_kinds explicitly',
             r.route_id, r.model_names, r.upstream_group_id, r.providers;
@@ -202,7 +202,7 @@ Concern raised during review: "an OpenAI upstream might serve either
 `openai_chat_completions` or `openai_responses` — heuristic is wrong." That
 concern is valid in general but doesn't apply *to the migration*: today
 `HandleResponses` is hard-wired to `openai` and `HandleChatCompletions` to
-`vertex_openai`. So an OpenAI upstream group has only ever served
+`vertex-openai`. So an OpenAI upstream group has only ever served
 `/v1/responses` in production; tagging it `['openai_responses']` exactly
 preserves observed behavior. After the new model is in place, operators are
 free to add an additional `request_kinds=['openai_chat_completions']` to
