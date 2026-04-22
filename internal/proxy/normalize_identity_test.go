@@ -214,10 +214,12 @@ func TestNormalizeMetadataDeviceID_RewritesDeviceID(t *testing.T) {
 	if deviceID != "derived-device-id-value" {
 		t.Errorf("device_id = %q, want %q", deviceID, "derived-device-id-value")
 	}
-	// Other fields must be preserved.
-	if got := gjson.Get(raw, "account_uuid").String(); got != "acct-1" {
-		t.Errorf("account_uuid = %q, want acct-1", got)
+	// account_uuid is forced to empty so the upstream account identity is
+	// not leaked through the rewritten user_id.
+	if got := gjson.Get(raw, "account_uuid").String(); got != "" {
+		t.Errorf("account_uuid = %q, want empty", got)
 	}
+	// session_id is preserved.
 	if got := gjson.Get(raw, "session_id").String(); got != "sess-1" {
 		t.Errorf("session_id = %q, want sess-1", got)
 	}

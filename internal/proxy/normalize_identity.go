@@ -110,6 +110,7 @@ func normalizeMetadataDeviceID(body []byte, deviceID string) []byte {
 	}
 
 	uid["device_id"] = deviceID
+	uid["account_uuid"] = ""
 	encoded, err := json.Marshal(uid)
 	if err != nil {
 		return body
