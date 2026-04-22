@@ -460,20 +460,3 @@ func modelInList(list []string, model string) bool {
 	return false
 }
 
-// ingressForProviders maps the allowlist of upstream provider types (set per
-// endpoint in HandleMessages / HandleResponses / HandleChatCompletions) back
-// to the ingress family whose error envelope clients expect. Body-based
-// endpoints that accept Anthropic-compatible bodies return IngressAnthropic;
-// OpenAI-flavoured endpoints return IngressOpenAI.
-func ingressForProviders(allowed []string) string {
-	for _, p := range allowed {
-		switch p {
-		case types.ProviderOpenAI, types.ProviderVertexOpenAI:
-			return IngressOpenAI
-		case types.ProviderGemini, types.ProviderVertexGoogle:
-			return IngressGemini
-		}
-	}
-	return IngressAnthropic
-}
-
