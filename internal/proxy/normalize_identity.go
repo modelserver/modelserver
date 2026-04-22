@@ -129,6 +129,13 @@ func normalizeAttributionHeader(body []byte) []byte {
 		return body
 	}
 
+	// Recompute the fingerprint suffix for fixedCCVersion using the current
+	// body's first user message. Keeping the client's original suffix (which
+	// was computed against its own cc_version) would leave cc_version
+	// internally inconsistent after the version rewrite below — a genuine CLI
+	// of fixedCCVersion always has a suffix derived from its own version.
+	newSuffix := computeFingerprint(extractFirstUserMessageText(body), fixedCCVersion)
+
 	if sys.IsArray() {
 		for i, item := range sys.Array() {
 			text := item.Get("text")
@@ -136,7 +143,7 @@ func normalizeAttributionHeader(body []byte) []byte {
 				continue
 			}
 			if strings.HasPrefix(text.Str, "x-anthropic-billing-header") {
-				normalized := normalizeAttributionString(text.Str)
+				normalized := normalizeAttributionString(text.Str, newSuffix)
 				path := "system." + strconv.Itoa(i) + ".text"
 				if result, err := sjson.SetBytes(body, path, normalized); err == nil {
 					body = result
@@ -146,7 +153,7 @@ func normalizeAttributionHeader(body []byte) []byte {
 		}
 	} else if sys.Type == gjson.String {
 		if strings.HasPrefix(sys.Str, "x-anthropic-billing-header") {
-			normalized := normalizeAttributionString(sys.Str)
+			normalized := normalizeAttributionString(sys.Str, newSuffix)
 			if result, err := sjson.SetBytes(body, "system", normalized); err == nil {
 				body = result
 			}
@@ -156,21 +163,8 @@ func normalizeAttributionHeader(body []byte) []byte {
 	return body
 }
 
-func normalizeAttributionString(s string) string {
-	s = ccVersionRe.ReplaceAllStringFunc(s, func(match string) string {
-		parts := match[len("cc_version=") : len(match)-1]
-		dotIdx := -1
-		for i := len(parts) - 1; i >= 0; i-- {
-			if parts[i] == '.' {
-				dotIdx = i
-				break
-			}
-		}
-		if dotIdx >= 0 {
-			return "cc_version=" + fixedCCVersion + parts[dotIdx:] + ";"
-		}
-		return "cc_version=" + fixedCCVersion + ";"
-	})
+func normalizeAttributionString(s, newSuffix string) string {
+	s = ccVersionRe.ReplaceAllString(s, "cc_version="+fixedCCVersion+"."+newSuffix+";")
 	s = ccEntrypointRe.ReplaceAllString(s, "cc_entrypoint=cli;")
 	return s
 }

@@ -243,6 +243,71 @@ func TestNormalizeMetadataDeviceID_PanicsOnEmptyDeviceID(t *testing.T) {
 	normalizeMetadataDeviceID([]byte(`{}`), "")
 }
 
+func TestNormalizeAttributionHeader_RecomputesFingerprintSuffix(t *testing.T) {
+	// Client sends a well-formed 2.1.117.<suffix> billing header. After normalize,
+	// the version must be fixedCCVersion and the suffix must match what a genuine
+	// CLI of fixedCCVersion would compute for the same first user message — the
+	// client's original suffix (computed against its own version) is stale.
+	firstMsg := "hello world fingerprint check message here"
+	clientSuffix := computeFingerprint(firstMsg, "2.1.117")
+	msgJSON, err := json.Marshal(firstMsg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	body := []byte(fmt.Sprintf(
+		`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.117.%s; cc_entrypoint=claude-vscode; cch=00000;"}],`+
+			`"model":"claude-opus-4-7","messages":[{"role":"user","content":[{"type":"text","text":%s}]}]}`,
+		clientSuffix, string(msgJSON)))
+
+	out := normalizeAttributionHeader(body)
+
+	want := "cc_version=" + fixedCCVersion + "." + computeFingerprint(firstMsg, fixedCCVersion) + ";"
+	if !bytes.Contains(out, []byte(want)) {
+		t.Errorf("normalized body missing %q; got system[0]=%q",
+			want, gjson.GetBytes(out, "system.0.text").Str)
+	}
+	if !bytes.Contains(out, []byte("cc_entrypoint=cli;")) {
+		t.Errorf("cc_entrypoint should be rewritten to cli")
+	}
+
+	// And ValidateFingerprint on the normalized body must report match — proves
+	// the suffix is internally consistent with cc_version after rewrite.
+	fpStatus, fpClient, fpExpected := ValidateFingerprint(out)
+	if fpStatus != CCHStatusMatch {
+		t.Errorf("ValidateFingerprint after normalize = %s, want match (client=%s expected=%s)",
+			fpStatus, fpClient, fpExpected)
+	}
+}
+
+func TestNormalizeRequestBody_FingerprintAndCCHBothValid(t *testing.T) {
+	// End-to-end: client sends a body with a stale-for-fixedCCVersion suffix.
+	// After normalizeRequestBody the wire body must validate on BOTH attestations
+	// for fixedCCVersion — this is what the ClaudeCode upstream receives.
+	firstMsg := "e2e normalize check: both attestations must be valid"
+	clientSuffix := computeFingerprint(firstMsg, "2.1.117") // intentionally wrong version
+	msgJSON, err := json.Marshal(firstMsg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	body := []byte(fmt.Sprintf(
+		`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.117.%s; cc_entrypoint=claude-vscode; cch=ffffa;"},`+
+			`{"type":"text","text":"You are Claude."}],`+
+			`"model":"claude-opus-4-7",`+
+			`"metadata":{"user_id":"{\"device_id\":\"aaaabbbbccccddddeeee00000000\",\"account_uuid\":\"x\",\"session_id\":\"s\"}"},`+
+			`"messages":[{"role":"user","content":[{"type":"text","text":%s}]}]}`,
+		clientSuffix, string(msgJSON)))
+
+	out := normalizeRequestBody(append([]byte{}, body...), DeriveClaudeCodeDeviceID("upstream-id-42"))
+
+	if st, c, e := ValidateCCH(out); st != CCHStatusMatch {
+		t.Errorf("ValidateCCH = %s (client=%s expected=%s); body cch must be consistent", st, c, e)
+	}
+	if st, c, e := ValidateFingerprint(out); st != CCHStatusMatch {
+		t.Errorf("ValidateFingerprint = %s (client=%s expected=%s); suffix must match fixedCCVersion", st, c, e)
+	}
+}
+
 func TestCCH_UserMessageCchNotTouched(t *testing.T) {
 	// User message content containing a literal "cch=abcde;" must NOT be
 	// treated as the billing-header cch — the regex is scoped to the
