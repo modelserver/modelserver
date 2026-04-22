@@ -65,6 +65,28 @@ func TestExtraUsageGuard_GlobalDisabled_Rejects(t *testing.T) {
 	}
 }
 
+func TestExtraUsageGuard_CountTokens_BypassesGuard(t *testing.T) {
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true })
+	// cfg disabled would normally reject any request carrying intent — but
+	// count_tokens must bypass the guard before that check runs.
+	mw := ExtraUsageGuardMiddleware(dummyCfg(false), nil, nil)
+	h := mw(inner)
+
+	r := httptest.NewRequest("POST", "/v1/messages/count_tokens", nil)
+	ctx := context.WithValue(r.Context(), ctxExtraUsageIntent, ExtraUsageIntent{Reason: "client_restriction"})
+	r = r.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, r)
+	if !called {
+		t.Fatalf("count_tokens must bypass guard even with intent set")
+	}
+	if rr.Header().Get("X-Extra-Usage-Required") != "" {
+		t.Errorf("count_tokens must not receive extra-usage headers, got %q", rr.Header().Get("X-Extra-Usage-Required"))
+	}
+}
+
 func TestRejectedMessage_Mapping(t *testing.T) {
 	cases := []struct {
 		reason, sub, want string

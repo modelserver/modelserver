@@ -73,6 +73,16 @@ func ExtraUsageContextFromContext(ctx context.Context) (ExtraUsageContext, bool)
 func ExtraUsageGuardMiddleware(cfg config.ExtraUsageConfig, st *store.Store, logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// count_tokens is a zero-cost probe that the executor never
+			// settles against extra_usage; gating it here would block
+			// editor-side token counting for any anthropic request from a
+			// non-claude-code client, which is hostile and serves no billing
+			// purpose.
+			if r.URL.Path == "/v1/messages/count_tokens" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			intent, has := extraUsageIntentFromContext(r.Context())
 			if !has {
 				next.ServeHTTP(w, r)
