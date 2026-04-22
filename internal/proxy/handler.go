@@ -67,31 +67,22 @@ func (h *Handler) resolveModel(w http.ResponseWriter, rawModel, ingress string) 
 	return m.Name, true
 }
 
-// HandleMessages proxies Anthropic /v1/messages requests.
-// Only routes to Anthropic, Bedrock, and ClaudeCode providers.
+// HandleMessages proxies Anthropic /v1/messages (stream + non-stream).
+// Routes are matched against KindAnthropicMessages.
 func (h *Handler) HandleMessages(w http.ResponseWriter, r *http.Request) {
-	h.handleProxyRequest(w, r, []string{
-		types.ProviderAnthropic,
-		types.ProviderBedrock,
-		types.ProviderClaudeCode,
-		types.ProviderVertexAnthropic,
-	})
+	h.handleProxyRequest(w, r, IngressAnthropic, types.KindAnthropicMessages)
 }
 
-// HandleResponses proxies OpenAI /v1/responses requests.
-// Only routes to OpenAI providers.
+// HandleResponses proxies OpenAI /v1/responses (stream + non-stream).
+// Routes are matched against KindOpenAIResponses.
 func (h *Handler) HandleResponses(w http.ResponseWriter, r *http.Request) {
-	h.handleProxyRequest(w, r, []string{
-		types.ProviderOpenAI,
-	})
+	h.handleProxyRequest(w, r, IngressOpenAI, types.KindOpenAIResponses)
 }
 
 // HandleChatCompletions proxies OpenAI Chat Completions format requests.
-// Routes to providers that support the Chat Completions wire format.
+// Routes are matched against KindOpenAIChatCompletions.
 func (h *Handler) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
-	h.handleProxyRequest(w, r, []string{
-		types.ProviderVertexOpenAI,
-	})
+	h.handleProxyRequest(w, r, IngressOpenAI, types.KindOpenAIChatCompletions)
 }
 
 // HandleGemini proxies Gemini API requests (generateContent / streamGenerateContent).
@@ -216,9 +207,10 @@ func (h *Handler) HandleGemini(w http.ResponseWriter, r *http.Request) {
 	h.executor.Execute(w, r, reqCtx)
 }
 
-// handleProxyRequest is the shared implementation for HandleMessages and HandleResponses.
-// allowedProviders constrains which provider types can serve this request.
-func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, allowedProviders []string) {
+// handleProxyRequest is the shared implementation for HandleMessages, HandleResponses,
+// and HandleChatCompletions. ingress is used for model-resolution error formatting;
+// kind is set on RequestContext so the router can match the right route.
+func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, ingress, kind string) {
 	apiKey := APIKeyFromContext(r.Context())
 	project := ProjectFromContext(r.Context())
 	if apiKey == nil || project == nil {
@@ -239,7 +231,6 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, all
 	}
 	json.Unmarshal(bodyBytes, &reqShape)
 
-	ingress := ingressForProviders(allowedProviders)
 	canonical, ok := h.resolveModel(w, reqShape.Model, ingress)
 	if !ok {
 		return
@@ -324,7 +315,7 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, all
 		Model:            reqShape.Model,
 		ModelRef:         ModelFromContext(r.Context()),
 		IsStream:         reqShape.Stream,
-		RequestKind:      kindFromAllowedProviders(allowedProviders),
+		RequestKind:      kind,
 		TraceID:          traceID,
 		TraceSource:      TraceSourceFromContext(r.Context()),
 		SessionID:        traceID, // Use trace ID for session stickiness
@@ -475,19 +466,3 @@ func ingressForProviders(allowed []string) string {
 	return IngressAnthropic
 }
 
-// kindFromAllowedProviders is a temporary bridge: each handler still passes
-// allowedProviders today; Task 8 will replace this with handlers passing the
-// kind directly and delete this helper alongside ingressForProviders.
-func kindFromAllowedProviders(allowed []string) string {
-	for _, p := range allowed {
-		switch p {
-		case types.ProviderOpenAI:
-			return types.KindOpenAIResponses
-		case types.ProviderVertexOpenAI:
-			return types.KindOpenAIChatCompletions
-		case types.ProviderGemini, types.ProviderVertexGoogle:
-			return types.KindGoogleGenerateContent
-		}
-	}
-	return types.KindAnthropicMessages
-}
