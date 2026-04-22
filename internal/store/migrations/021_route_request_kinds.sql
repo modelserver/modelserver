@@ -29,17 +29,17 @@ group_kinds AS (
             -- Pure Anthropic-family (anthropic + claudecode)
             WHEN providers <@ ARRAY['anthropic','claudecode']::TEXT[]
                 THEN ARRAY['anthropic_messages','anthropic_count_tokens']
-            -- Anthropic-side, includes bedrock or vertex_anthropic (no count_tokens)
-            WHEN providers <@ ARRAY['anthropic','claudecode','bedrock','vertex_anthropic']::TEXT[]
+            -- Anthropic-side, includes bedrock or vertex-anthropic (no count_tokens)
+            WHEN providers <@ ARRAY['anthropic','claudecode','bedrock','vertex-anthropic']::TEXT[]
                 THEN ARRAY['anthropic_messages']
             -- Pure OpenAI native
             WHEN providers = ARRAY['openai']::TEXT[]
                 THEN ARRAY['openai_responses']
             -- Pure Vertex OpenAI-compat
-            WHEN providers = ARRAY['vertex_openai']::TEXT[]
+            WHEN providers = ARRAY['vertex-openai']::TEXT[]
                 THEN ARRAY['openai_chat_completions']
             -- Google family
-            WHEN providers <@ ARRAY['gemini','vertex_google']::TEXT[]
+            WHEN providers <@ ARRAY['gemini','vertex-google']::TEXT[]
                 THEN ARRAY['google_generate_content']
             -- Mixed / unrecognised — placeholder, audited below.
             ELSE ARRAY['anthropic_messages']
@@ -93,16 +93,16 @@ BEGIN
         GROUP BY rt.id, rt.model_names, rt.upstream_group_id
         HAVING
             (
-                bool_or(u.provider IN ('anthropic','claudecode','bedrock','vertex_anthropic'))
-                AND bool_or(u.provider IN ('openai','vertex_openai'))
+                bool_or(u.provider IN ('anthropic','claudecode','bedrock','vertex-anthropic'))
+                AND bool_or(u.provider IN ('openai','vertex-openai'))
             )
             OR (
-                bool_or(u.provider IN ('anthropic','claudecode','bedrock','vertex_anthropic'))
-                AND bool_or(u.provider IN ('gemini','vertex_google'))
+                bool_or(u.provider IN ('anthropic','claudecode','bedrock','vertex-anthropic'))
+                AND bool_or(u.provider IN ('gemini','vertex-google'))
             )
             OR (
-                bool_or(u.provider IN ('openai','vertex_openai'))
-                AND bool_or(u.provider IN ('gemini','vertex_google'))
+                bool_or(u.provider IN ('openai','vertex-openai'))
+                AND bool_or(u.provider IN ('gemini','vertex-google'))
             )
     LOOP
         RAISE NOTICE 'Route % (models=%, group=%) has cross-family providers % — split the upstream group and assign request_kinds explicitly',
