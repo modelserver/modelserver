@@ -38,6 +38,10 @@ group_kinds AS (
             -- Pure Vertex OpenAI-compat
             WHEN providers = ARRAY['vertex-openai']::TEXT[]
                 THEN ARRAY['openai_chat_completions']
+            -- OpenAI-side mixed: same family but covers both wire variants;
+            -- assign both kinds so neither endpoint silently 404s.
+            WHEN providers <@ ARRAY['openai','vertex-openai']::TEXT[]
+                THEN ARRAY['openai_responses','openai_chat_completions']
             -- Google family
             WHEN providers <@ ARRAY['gemini','vertex-google']::TEXT[]
                 THEN ARRAY['google_generate_content']
@@ -106,6 +110,36 @@ BEGIN
             )
     LOOP
         RAISE NOTICE 'Route % (models=%, group=%) has cross-family providers % — split the upstream group and assign request_kinds explicitly',
+            r.route_id, r.model_names, r.upstream_group_id, r.providers;
+    END LOOP;
+END $$;
+
+-- Audit: Anthropic-side groups that include bedrock or vertex-anthropic
+-- alongside anthropic/claudecode. These were silently downgraded to
+-- ['anthropic_messages'] because bedrock/vertex-anthropic don't natively
+-- support /v1/messages/count_tokens — sending count_tokens there would
+-- 4xx. Operators with IDE-driven count_tokens traffic should add a
+-- separate route on a claudecode-only (or anthropic-only) group with
+-- request_kinds=['anthropic_count_tokens'] before clients hit 404s.
+DO $$
+DECLARE
+    r RECORD;
+BEGIN
+    FOR r IN
+        SELECT
+            rt.id AS route_id,
+            rt.model_names,
+            rt.upstream_group_id,
+            array_agg(DISTINCT u.provider) AS providers
+        FROM routes rt
+        JOIN upstream_group_members m ON m.upstream_group_id = rt.upstream_group_id
+        JOIN upstreams u ON u.id = m.upstream_id
+        GROUP BY rt.id, rt.model_names, rt.upstream_group_id
+        HAVING
+            bool_or(u.provider IN ('anthropic','claudecode'))
+            AND bool_or(u.provider IN ('bedrock','vertex-anthropic'))
+    LOOP
+        RAISE NOTICE 'Route % (models=%, group=%) has Anthropic-family mix % — count_tokens dropped from request_kinds (bedrock/vertex-anthropic do not support it). Add a separate count_tokens route on a claudecode-only group if needed.',
             r.route_id, r.model_names, r.upstream_group_id, r.providers;
     END LOOP;
 END $$;
