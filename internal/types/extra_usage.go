@@ -53,12 +53,13 @@ const (
 // keyed by project_id. Created on first top-up (with enabled=false) or via
 // the dashboard; mutated by DeductExtraUsage / TopUpExtraUsage / admin PUT.
 type ExtraUsageSettings struct {
-	ProjectID       string    `json:"project_id"`
-	Enabled         bool      `json:"enabled"`
-	BalanceFen      int64     `json:"balance_fen"`
-	MonthlyLimitFen int64     `json:"monthly_limit_fen"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ProjectID          string    `json:"project_id"`
+	Enabled            bool      `json:"enabled"`
+	BalanceFen         int64     `json:"balance_fen"`
+	MonthlyLimitFen    int64     `json:"monthly_limit_fen"`
+	BypassBalanceCheck bool      `json:"bypass_balance_check"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // ExtraUsageTransaction is one immutable ledger row.

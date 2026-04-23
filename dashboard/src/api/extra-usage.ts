@@ -12,6 +12,7 @@ export interface ExtraUsageSettingsResponse {
   min_topup_fen: number;
   max_topup_fen: number;
   daily_topup_limit_fen: number;
+  bypass_balance_check: boolean;
   updated_at?: string;
 }
 
@@ -108,5 +109,47 @@ export function useExtraUsageTopupStatus(
       ),
     enabled: !!orderId,
     refetchInterval: 3000,
+  });
+}
+
+// Admin-only: shape of a row returned by /admin/extra-usage/overview.
+export interface AdminExtraUsageRow {
+  project_id: string;
+  enabled: boolean;
+  balance_fen: number;
+  monthly_limit_fen: number;
+  bypass_balance_check: boolean;
+  created_at: string;
+  updated_at: string;
+  spend_7d_fen: number;
+}
+
+export function useAdminExtraUsageOverview() {
+  return useQuery({
+    queryKey: ["admin", "extra-usage", "overview"],
+    queryFn: () =>
+      api.get<DataResponse<AdminExtraUsageRow[]>>(
+        `/api/v1/admin/extra-usage/overview`,
+      ),
+  });
+}
+
+export function useSetExtraUsageBypass() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      projectId,
+      bypass,
+    }: {
+      projectId: string;
+      bypass: boolean;
+    }) =>
+      api.put<DataResponse<unknown>>(
+        `/api/v1/admin/extra-usage/projects/${projectId}/bypass`,
+        { bypass },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "extra-usage", "overview"] });
+    },
   });
 }

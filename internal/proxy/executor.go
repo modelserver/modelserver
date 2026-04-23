@@ -1219,7 +1219,11 @@ func (e *Executor) settleExtraUsage(ctx context.Context, rc *RequestContext, usa
 	switch {
 	case err == nil:
 		rc.ExtraUsageBalanceAfterFen = newBal
-		metrics.IncExtraUsageDeduction("ok")
+		outcome := "ok"
+		if newBal < 0 {
+			outcome = "overdraft"
+		}
+		metrics.IncExtraUsageDeduction(outcome)
 		metrics.SetExtraUsageBalance(rc.ProjectID, newBal)
 	case errors.Is(err, store.ErrInsufficientBalance):
 		e.logger.Warn("extra_usage_underdraft",

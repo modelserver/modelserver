@@ -3,6 +3,7 @@ package admin
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -25,6 +26,7 @@ type extraUsageGetResponse struct {
 	MinTopupFen        int64     `json:"min_topup_fen"`
 	MaxTopupFen        int64     `json:"max_topup_fen"`
 	DailyTopupLimitFen int64     `json:"daily_topup_limit_fen"`
+	BypassBalanceCheck bool      `json:"bypass_balance_check"`
 	UpdatedAt          time.Time `json:"updated_at,omitempty"`
 }
 
@@ -54,6 +56,7 @@ func handleGetExtraUsage(st *store.Store, cfg config.ExtraUsageConfig) http.Hand
 			resp.Enabled = settings.Enabled
 			resp.BalanceFen = settings.BalanceFen
 			resp.MonthlyLimitFen = settings.MonthlyLimitFen
+			resp.BypassBalanceCheck = settings.BypassBalanceCheck
 			resp.UpdatedAt = settings.UpdatedAt
 		}
 		resp.MonthlySpentFen = spent
@@ -315,6 +318,43 @@ func deliverExtraUsageTopupOrder(st *store.Store, order *types.Order) (int64, er
 	metrics.IncExtraUsageTopup(order.Channel)
 	metrics.SetExtraUsageBalance(order.ProjectID, bal)
 	return bal, nil
+}
+
+// handleAdminExtraUsageSetBypass flips the bypass flag on a project's
+// extra-usage settings. Superadmin only. Creates the settings row if
+// absent so the flag can be set on projects that have never topped up.
+func handleAdminExtraUsageSetBypass(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		projectID := chi.URLParam(r, "projectID")
+		var body struct {
+			Bypass *bool `json:"bypass"`
+		}
+		if err := decodeBody(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
+			return
+		}
+		if body.Bypass == nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "bypass field required")
+			return
+		}
+
+		out, err := st.SetExtraUsageBypass(projectID, *body.Bypass)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to set bypass")
+			return
+		}
+
+		actorID := ""
+		if actor := UserFromContext(r.Context()); actor != nil {
+			actorID = actor.ID
+		}
+		slog.Default().Info("extra_usage_bypass_toggled",
+			"project_id", projectID,
+			"bypass", *body.Bypass,
+			"actor_user_id", actorID)
+
+		writeData(w, http.StatusOK, out)
+	}
 }
 
 // monthWindowStart returns the start of the current month in the configured
