@@ -102,6 +102,14 @@ export function RequestsPage() {
     },
     { header: "Model", accessor: "model" },
     {
+      header: "Kind",
+      accessor: (r) => r.request_kind ? (
+        <span className="font-mono text-xs text-muted-foreground">{r.request_kind}</span>
+      ) : (
+        <span className="text-muted-foreground">-</span>
+      ),
+    },
+    {
       header: "Status",
       accessor: (r) => <StatusBadge status={r.status} />,
     },
@@ -306,6 +314,9 @@ export function RequestsPage() {
                 <DetailRow label="Msg ID" value={selected.msg_id} />
               )}
               <DetailRow label="Model" value={selected.model} />
+              {selected.request_kind && (
+                <DetailRow label="Kind" value={selected.request_kind} />
+              )}
               {selected.provider && (
                 <DetailRow label="Provider" value={selected.provider} />
               )}

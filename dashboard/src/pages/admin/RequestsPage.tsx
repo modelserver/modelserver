@@ -93,6 +93,14 @@ export function AdminRequestsPage() {
     },
     { header: "Model", accessor: "model" },
     {
+      header: "Kind",
+      accessor: (r) => r.request_kind ? (
+        <span className="font-mono text-xs text-muted-foreground">{r.request_kind}</span>
+      ) : (
+        <span className="text-muted-foreground">-</span>
+      ),
+    },
+    {
       header: "Status",
       accessor: (r) => <StatusBadge status={r.status} />,
     },
@@ -263,6 +271,9 @@ export function AdminRequestsPage() {
                 <DetailRow label="Msg ID" value={selected.msg_id} />
               )}
               <DetailRow label="Model" value={selected.model} />
+              {selected.request_kind && (
+                <DetailRow label="Kind" value={selected.request_kind} />
+              )}
               <DetailRow label="Provider" value={selected.provider} />
               <DetailRow label="Upstream" value={upstreamName(selected.upstream_id)} />
               <DetailRow label="Status" value={selected.status} />

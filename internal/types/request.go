@@ -31,6 +31,7 @@ type Request struct {
 	TraceID             string    `json:"trace_id,omitempty"`
 	MsgID               string    `json:"msg_id,omitempty"`
 	Provider            string    `json:"provider,omitempty"`
+	RequestKind         string    `json:"request_kind,omitempty"` // Wire-level endpoint kind; values from request_kind.go
 	Model               string    `json:"model"`
 	Streaming           bool      `json:"streaming"`
 	Status              string    `json:"status"`

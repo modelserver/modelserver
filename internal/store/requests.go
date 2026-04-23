@@ -17,14 +17,14 @@ func (s *Store) CreateRequest(r *types.Request) error {
 		metadataJSON, _ = json.Marshal(r.Metadata)
 	}
 	return s.pool.QueryRow(context.Background(), `
-		INSERT INTO requests (project_id, api_key_id, oauth_grant_id, upstream_id, trace_id, msg_id, provider, model, streaming,
+		INSERT INTO requests (project_id, api_key_id, oauth_grant_id, upstream_id, trace_id, msg_id, provider, request_kind, model, streaming,
 			status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 			credits_consumed, latency_ms, ttft_ms, error_message, client_ip, created_by, metadata)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
 		RETURNING id, created_at`,
 		r.ProjectID, nullString(r.APIKeyID), nullString(r.OAuthGrantID), nullString(r.UpstreamID),
 		nullString(r.TraceID), nullString(r.MsgID),
-		r.Provider, r.Model, r.Streaming, r.Status,
+		r.Provider, r.RequestKind, r.Model, r.Streaming, r.Status,
 		r.InputTokens, r.OutputTokens, r.CacheCreationTokens, r.CacheReadTokens,
 		r.CreditsConsumed, r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP, nullString(r.CreatedBy),
 		metadataJSON,
@@ -33,6 +33,8 @@ func (s *Store) CreateRequest(r *types.Request) error {
 
 // CompleteRequest updates a pending request row with final data, including
 // the upstream/provider/routing fields that are unknown at creation time.
+// Note: request_kind is intentionally not updated here — it is set at
+// CreateRequest time by the handler and never changes for a given request.
 func (s *Store) CompleteRequest(id string, r *types.Request) error {
 	_, err := s.pool.Exec(context.Background(), `
 		UPDATE requests
@@ -76,14 +78,14 @@ func (s *Store) BatchCreateRequests(requests []types.Request) error {
 			metadataJSON = []byte("{}")
 		}
 		err := tx.QueryRow(ctx, `
-			INSERT INTO requests (project_id, api_key_id, oauth_grant_id, upstream_id, trace_id, msg_id, provider, model, streaming,
+			INSERT INTO requests (project_id, api_key_id, oauth_grant_id, upstream_id, trace_id, msg_id, provider, request_kind, model, streaming,
 				status, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 				credits_consumed, latency_ms, ttft_ms, error_message, client_ip, created_by, metadata)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
 			RETURNING id, created_at`,
 			r.ProjectID, nullString(r.APIKeyID), nullString(r.OAuthGrantID), nullString(r.UpstreamID),
 			nullString(r.TraceID), nullString(r.MsgID),
-			r.Provider, r.Model, r.Streaming, r.Status,
+			r.Provider, r.RequestKind, r.Model, r.Streaming, r.Status,
 			r.InputTokens, r.OutputTokens, r.CacheCreationTokens, r.CacheReadTokens,
 			r.CreditsConsumed, r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP, nullString(r.CreatedBy),
 			metadataJSON,
@@ -110,7 +112,7 @@ func (s *Store) ListRequests(projectID string, p types.PaginationParams, filters
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT r.id, r.project_id, COALESCE(r.api_key_id::text, ''), COALESCE(r.oauth_grant_id::text, ''),
 			COALESCE(r.upstream_id::text, ''), COALESCE(r.trace_id::text, ''), COALESCE(r.msg_id, ''),
-			r.provider, r.model, r.streaming, r.status, r.input_tokens, r.output_tokens, r.cache_creation_tokens, r.cache_read_tokens,
+			r.provider, r.request_kind, r.model, r.streaming, r.status, r.input_tokens, r.output_tokens, r.cache_creation_tokens, r.cache_read_tokens,
 			r.credits_consumed, r.latency_ms, r.ttft_ms, COALESCE(r.error_message, ''), r.client_ip, r.created_at,
 			COALESCE(og.client_name, '') as oauth_grant_client_name,
 			r.metadata,
@@ -131,7 +133,7 @@ func (s *Store) ListRequests(projectID string, p types.PaginationParams, filters
 		var r types.Request
 		var metadataJSON []byte
 		if err := rows.Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.OAuthGrantID, &r.UpstreamID, &r.TraceID, &r.MsgID,
-			&r.Provider, &r.Model, &r.Streaming, &r.Status,
+			&r.Provider, &r.RequestKind, &r.Model, &r.Streaming, &r.Status,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
 			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt,
 			&r.OAuthGrantClientName, &metadataJSON, &r.HttpLogPath); err != nil {
@@ -210,7 +212,7 @@ func (s *Store) ListAllRequests(p types.PaginationParams, filters RequestFilters
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT r.id, r.project_id, COALESCE(r.api_key_id::text, ''), COALESCE(r.oauth_grant_id::text, ''),
 			COALESCE(r.upstream_id::text, ''), COALESCE(r.trace_id::text, ''), COALESCE(r.msg_id, ''),
-			r.provider, r.model, r.streaming, r.status, r.input_tokens, r.output_tokens, r.cache_creation_tokens, r.cache_read_tokens,
+			r.provider, r.request_kind, r.model, r.streaming, r.status, r.input_tokens, r.output_tokens, r.cache_creation_tokens, r.cache_read_tokens,
 			r.credits_consumed, r.latency_ms, r.ttft_ms, COALESCE(r.error_message, ''), r.client_ip, r.created_at,
 			COALESCE(og.client_name, '') as oauth_grant_client_name,
 			r.metadata,
@@ -231,7 +233,7 @@ func (s *Store) ListAllRequests(p types.PaginationParams, filters RequestFilters
 		var r types.Request
 		var metadataJSON []byte
 		if err := rows.Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.OAuthGrantID, &r.UpstreamID, &r.TraceID, &r.MsgID,
-			&r.Provider, &r.Model, &r.Streaming, &r.Status,
+			&r.Provider, &r.RequestKind, &r.Model, &r.Streaming, &r.Status,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
 			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt,
 			&r.OAuthGrantClientName, &metadataJSON, &r.HttpLogPath); err != nil {
@@ -294,7 +296,7 @@ func (s *Store) ListRequestsByTraceID(traceID string) ([]types.Request, error) {
 	rows, err := s.pool.Query(context.Background(), `
 		SELECT r.id, r.project_id, COALESCE(r.api_key_id::text, ''), COALESCE(r.oauth_grant_id::text, ''),
 			COALESCE(r.upstream_id::text, ''), COALESCE(r.trace_id::text, ''), COALESCE(r.msg_id, ''),
-			r.provider, r.model, r.streaming, r.status, r.input_tokens, r.output_tokens, r.cache_creation_tokens, r.cache_read_tokens,
+			r.provider, r.request_kind, r.model, r.streaming, r.status, r.input_tokens, r.output_tokens, r.cache_creation_tokens, r.cache_read_tokens,
 			r.credits_consumed, r.latency_ms, r.ttft_ms, COALESCE(r.error_message, ''), r.client_ip, r.created_at,
 			COALESCE(og.client_name, '') as oauth_grant_client_name,
 			r.metadata,
@@ -312,7 +314,7 @@ func (s *Store) ListRequestsByTraceID(traceID string) ([]types.Request, error) {
 		var r types.Request
 		var metadataJSON []byte
 		if err := rows.Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.OAuthGrantID, &r.UpstreamID, &r.TraceID, &r.MsgID,
-			&r.Provider, &r.Model, &r.Streaming, &r.Status,
+			&r.Provider, &r.RequestKind, &r.Model, &r.Streaming, &r.Status,
 			&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
 			&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt,
 			&r.OAuthGrantClientName, &metadataJSON, &r.HttpLogPath); err != nil {
@@ -353,7 +355,7 @@ func (s *Store) GetRequest(id string) (*types.Request, error) {
 	err := s.pool.QueryRow(context.Background(), `
 		SELECT r.id, r.project_id, COALESCE(r.api_key_id::text, ''), COALESCE(r.oauth_grant_id::text, ''),
 			COALESCE(r.upstream_id::text, ''), COALESCE(r.trace_id::text, ''), COALESCE(r.msg_id, ''),
-			r.provider, r.model, r.streaming, r.status, r.input_tokens, r.output_tokens, r.cache_creation_tokens, r.cache_read_tokens,
+			r.provider, r.request_kind, r.model, r.streaming, r.status, r.input_tokens, r.output_tokens, r.cache_creation_tokens, r.cache_read_tokens,
 			r.credits_consumed, r.latency_ms, r.ttft_ms, COALESCE(r.error_message, ''), r.client_ip, r.created_at,
 			COALESCE(og.client_name, '') as oauth_grant_client_name,
 			r.metadata,
@@ -362,7 +364,7 @@ func (s *Store) GetRequest(id string) (*types.Request, error) {
 		LEFT JOIN oauth_grants og ON og.id = r.oauth_grant_id
 		WHERE r.id = $1`, id,
 	).Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.OAuthGrantID, &r.UpstreamID, &r.TraceID, &r.MsgID,
-		&r.Provider, &r.Model, &r.Streaming, &r.Status,
+		&r.Provider, &r.RequestKind, &r.Model, &r.Streaming, &r.Status,
 		&r.InputTokens, &r.OutputTokens, &r.CacheCreationTokens, &r.CacheReadTokens,
 		&r.CreditsConsumed, &r.LatencyMs, &r.TTFTMs, &r.ErrorMessage, &r.ClientIP, &r.CreatedAt,
 		&r.OAuthGrantClientName, &metadataJSON, &r.HttpLogPath)

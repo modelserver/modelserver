@@ -151,6 +151,7 @@ export interface Request {
   trace_id?: string;
   msg_id?: string;
   provider: string;
+  request_kind?: string;
   model: string;
   streaming: boolean;
   status: "success" | "error" | "rate_limited";
