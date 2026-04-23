@@ -10,7 +10,7 @@ import (
 
 	"github.com/modelserver/modelserver/internal/config"
 	"github.com/modelserver/modelserver/internal/metrics"
-	"github.com/modelserver/modelserver/internal/store"
+	"github.com/modelserver/modelserver/internal/types"
 )
 
 const (
@@ -64,13 +64,20 @@ func ExtraUsageContextFromContext(ctx context.Context) (ExtraUsageContext, bool)
 	return c, ok
 }
 
+// extraUsageStore is the subset of *store.Store the guard needs. Extracted
+// so tests can inject a fake without spinning up Postgres.
+type extraUsageStore interface {
+	GetExtraUsageSettings(projectID string) (*types.ExtraUsageSettings, error)
+	GetMonthlyExtraSpendFen(projectID string) (int64, error)
+}
+
 // ExtraUsageGuardMiddleware checks the global circuit breaker and per-project
 // settings (enabled / balance / monthly limit) when an extra-usage intent was
 // set upstream. It either approves (attaching ExtraUsageContext for the
 // executor) or rejects with HTTP 429 + descriptive headers/body.
 //
 // When no intent is present the middleware is a no-op.
-func ExtraUsageGuardMiddleware(cfg config.ExtraUsageConfig, st *store.Store, logger *slog.Logger) func(http.Handler) http.Handler {
+func ExtraUsageGuardMiddleware(cfg config.ExtraUsageConfig, st extraUsageStore, logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// count_tokens is a zero-cost probe that the executor never
@@ -116,24 +123,30 @@ func ExtraUsageGuardMiddleware(cfg config.ExtraUsageConfig, st *store.Store, log
 				return
 			}
 
-			if settings == nil || !settings.Enabled {
-				writeExtraUsageRejected(w, http.StatusTooManyRequests, intent.Reason, guardStateRejected{
-					Enabled: false,
-					Message: rejectedMessage(intent.Reason, "not_enabled"),
-				})
-				recordExtraUsageResult(intent.Reason, "rejected")
-				return
-			}
-			if settings.BalanceFen <= 0 {
-				writeExtraUsageRejected(w, http.StatusTooManyRequests, intent.Reason, guardStateRejected{
-					Enabled:    true,
-					BalanceFen: settings.BalanceFen,
-					Message:    rejectedMessage(intent.Reason, "balance_depleted"),
-				})
-				recordExtraUsageResult(intent.Reason, "rejected")
-				return
+			bypass := settings != nil && settings.BypassBalanceCheck
+
+			if !bypass {
+				if settings == nil || !settings.Enabled {
+					writeExtraUsageRejected(w, http.StatusTooManyRequests, intent.Reason, guardStateRejected{
+						Enabled: false,
+						Message: rejectedMessage(intent.Reason, "not_enabled"),
+					})
+					recordExtraUsageResult(intent.Reason, "rejected")
+					return
+				}
+				if settings.BalanceFen <= 0 {
+					writeExtraUsageRejected(w, http.StatusTooManyRequests, intent.Reason, guardStateRejected{
+						Enabled:    true,
+						BalanceFen: settings.BalanceFen,
+						Message:    rejectedMessage(intent.Reason, "balance_depleted"),
+					})
+					recordExtraUsageResult(intent.Reason, "rejected")
+					return
+				}
 			}
 
+			// Monthly-limit check: runs for both bypass and normal paths.
+			// When bypass is on, settings != nil (bypass requires a row).
 			var monthlySpent int64
 			if settings.MonthlyLimitFen > 0 {
 				spent, err := st.GetMonthlyExtraSpendFen(project.ID)
@@ -162,7 +175,11 @@ func ExtraUsageGuardMiddleware(cfg config.ExtraUsageConfig, st *store.Store, log
 				MonthlyLimitFen:   settings.MonthlyLimitFen,
 				MonthlySpentFen:   monthlySpent,
 			})
-			recordExtraUsageResult(intent.Reason, "allowed")
+			result := "allowed"
+			if bypass {
+				result = "allowed_bypass"
+			}
+			recordExtraUsageResult(intent.Reason, result)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
