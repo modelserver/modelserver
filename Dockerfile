@@ -6,7 +6,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /modelserver ./cmd/modelserver
 
 FROM alpine:3.23
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add ca-certificates tzdata
 WORKDIR /app
 COPY --from=builder /modelserver .
 COPY config.example.yml ./config.yml
