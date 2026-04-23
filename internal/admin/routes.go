@@ -144,6 +144,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 				r.Use(RequireSuperadmin)
 				r.Get("/overview", handleAdminExtraUsageOverview(st))
 				r.Post("/projects/{projectID}/topup", handleAdminExtraUsageDirectTopup(st))
+				r.Put("/projects/{projectID}/bypass", handleAdminExtraUsageSetBypass(st))
 			})
 
 			// Projects.
