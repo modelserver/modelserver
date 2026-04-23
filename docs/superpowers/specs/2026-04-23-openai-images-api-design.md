@@ -141,10 +141,10 @@ r.Post("/images/edits", handler.HandleImagesEdits)
 change. Admin API's `GET /admin/routing/request-kinds` returns the new
 constants automatically (it iterates `AllRequestKinds`).
 
-### Migration 020 — update CHECK constraint
+### Migration 023 — update CHECK constraint
 
 ```sql
--- migrations/020_images_request_kinds.sql
+-- internal/store/migrations/023_images_request_kinds.sql
 BEGIN;
 
 ALTER TABLE routes DROP CONSTRAINT routes_request_kinds_valid;
@@ -615,10 +615,10 @@ The two fields are conceptually mutually exclusive per-model but not
 enforced: operators configure whichever applies. `gpt-image-2` has only
 `DefaultImageCreditRate` set.
 
-### Migration 021 — add model column
+### Migration 024 — add model column
 
 ```sql
--- migrations/021_models_image_credit_rate.sql
+-- internal/store/migrations/024_models_image_credit_rate.sql
 BEGIN;
 ALTER TABLE models ADD COLUMN default_image_credit_rate JSONB;
 COMMIT;
@@ -916,9 +916,9 @@ constants is accepted by the existing validator (relies on
 
 ### Migration tests
 
-- Migration 020 against a fixture DB with existing routes → CHECK
+- Migration 023 against a fixture DB with existing routes → CHECK
   constraint permits new kinds; rejects unknown kinds.
-- Migration 021 against a fixture DB → column added, existing rows have
+- Migration 024 against a fixture DB → column added, existing rows have
   NULL, inserts with populated JSON work.
 
 ### Manual smoke after deploy
@@ -944,8 +944,8 @@ Single atomic PR containing:
 
 1. Forward-compat patch to `store/routes.go` (filter unknown kinds with
    WARN).
-2. Migration 020 (CHECK constraint update).
-3. Migration 021 (models column add).
+2. Migration 023 (routes CHECK constraint update for new kinds).
+3. Migration 024 (models table adds `default_image_credit_rate` column).
 4. All server code: types, config, middleware, handlers, executor
    branches, parsers, billing.
 5. Dashboard: model edit image-billing section.
@@ -963,10 +963,10 @@ Deploy order (runs in one deployment unit):
 If a regression surfaces, roll back the server. The schema changes are
 backward compatible:
 
-- Migration 020 simply permits two additional kinds; old code can ignore
+- Migration 023 simply permits two additional kinds; old code can ignore
   them because of the forward-compat patch (step 1 above) — old scanRoute
   silently drops unknown kinds.
-- Migration 021 adds a nullable column that old code does not read.
+- Migration 024 adds a nullable column that old code does not read.
 
 Rollback restores pre-images behavior. Image traffic returns 404. No data
 loss.
