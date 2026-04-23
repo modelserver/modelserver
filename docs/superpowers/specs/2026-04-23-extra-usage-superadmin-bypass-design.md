@@ -46,7 +46,7 @@ page lists projects and exposes the toggle.
 
 ## Schema change
 
-New migration `internal/store/migrations/018_extra_usage_bypass.sql`:
+New migration `internal/store/migrations/022_extra_usage_bypass.sql`:
 
 ```sql
 ALTER TABLE extra_usage_settings
