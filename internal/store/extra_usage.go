@@ -39,11 +39,13 @@ type TopUpExtraUsageReq struct {
 // no row exists yet (project has never topped up or opened the dashboard).
 func (s *Store) GetExtraUsageSettings(projectID string) (*types.ExtraUsageSettings, error) {
 	row := s.pool.QueryRow(context.Background(), `
-		SELECT project_id, enabled, balance_fen, monthly_limit_fen, created_at, updated_at
+		SELECT project_id, enabled, balance_fen, monthly_limit_fen,
+		       bypass_balance_check, created_at, updated_at
 		FROM extra_usage_settings WHERE project_id = $1`, projectID)
 	out := &types.ExtraUsageSettings{}
 	err := row.Scan(&out.ProjectID, &out.Enabled, &out.BalanceFen,
-		&out.MonthlyLimitFen, &out.CreatedAt, &out.UpdatedAt)
+		&out.MonthlyLimitFen, &out.BypassBalanceCheck,
+		&out.CreatedAt, &out.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -65,13 +67,39 @@ func (s *Store) UpsertExtraUsageSettings(projectID string, enabled bool, monthly
 			SET enabled           = EXCLUDED.enabled,
 			    monthly_limit_fen = EXCLUDED.monthly_limit_fen,
 			    updated_at        = NOW()
-		RETURNING project_id, enabled, balance_fen, monthly_limit_fen, created_at, updated_at`,
+		RETURNING project_id, enabled, balance_fen, monthly_limit_fen,
+		          bypass_balance_check, created_at, updated_at`,
 		projectID, enabled, monthlyLimitFen)
 	out := &types.ExtraUsageSettings{}
 	err := row.Scan(&out.ProjectID, &out.Enabled, &out.BalanceFen,
-		&out.MonthlyLimitFen, &out.CreatedAt, &out.UpdatedAt)
+		&out.MonthlyLimitFen, &out.BypassBalanceCheck,
+		&out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("upsert extra_usage_settings: %w", err)
+	}
+	return out, nil
+}
+
+// SetExtraUsageBypass flips the bypass_balance_check flag for a project.
+// Used by superadmins to keep a project served even when its balance has
+// been depleted or `enabled` is false. Creates the settings row if none
+// exists so the flag can be set on a project that has never topped up.
+func (s *Store) SetExtraUsageBypass(projectID string, bypass bool) (*types.ExtraUsageSettings, error) {
+	row := s.pool.QueryRow(context.Background(), `
+		INSERT INTO extra_usage_settings (project_id, bypass_balance_check)
+		VALUES ($1, $2)
+		ON CONFLICT (project_id) DO UPDATE
+			SET bypass_balance_check = EXCLUDED.bypass_balance_check,
+			    updated_at           = NOW()
+		RETURNING project_id, enabled, balance_fen, monthly_limit_fen,
+		          bypass_balance_check, created_at, updated_at`,
+		projectID, bypass)
+	out := &types.ExtraUsageSettings{}
+	err := row.Scan(&out.ProjectID, &out.Enabled, &out.BalanceFen,
+		&out.MonthlyLimitFen, &out.BypassBalanceCheck,
+		&out.CreatedAt, &out.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("set extra_usage bypass: %w", err)
 	}
 	return out, nil
 }
@@ -105,8 +133,8 @@ func (s *Store) DeductExtraUsage(req DeductExtraUsageReq) (int64, error) {
 		   SET balance_fen = balance_fen - $2, updated_at = NOW()
 		  FROM month_spend
 		 WHERE s.project_id = $1
-		   AND s.enabled     = TRUE
-		   AND s.balance_fen >= $2
+		   AND (s.bypass_balance_check = TRUE OR s.enabled = TRUE)
+		   AND (s.bypass_balance_check = TRUE OR s.balance_fen >= $2)
 		   AND (s.monthly_limit_fen = 0 OR month_spend.spent + $2 <= s.monthly_limit_fen)
 		RETURNING s.balance_fen`,
 		req.ProjectID, req.AmountFen,
@@ -142,20 +170,20 @@ func (s *Store) DeductExtraUsage(req DeductExtraUsageReq) (int64, error) {
 // The re-query is tolerant: if any step errors, we fall back to the balance
 // error (the common case) rather than leak a confusing low-level error.
 func classifyDeductFailure(ctx context.Context, tx pgx.Tx, projectID string, amount int64) error {
-	var enabled bool
+	var enabled, bypass bool
 	var balance, monthlyLimit int64
 	err := tx.QueryRow(ctx, `
-		SELECT enabled, balance_fen, monthly_limit_fen
+		SELECT enabled, balance_fen, monthly_limit_fen, bypass_balance_check
 		FROM extra_usage_settings
 		WHERE project_id = $1`, projectID,
-	).Scan(&enabled, &balance, &monthlyLimit)
+	).Scan(&enabled, &balance, &monthlyLimit, &bypass)
 	if err != nil {
 		return ErrExtraUsageNotEnabled
 	}
-	if !enabled {
+	if !bypass && !enabled {
 		return ErrExtraUsageNotEnabled
 	}
-	if balance < amount {
+	if !bypass && balance < amount {
 		return ErrInsufficientBalance
 	}
 	if monthlyLimit > 0 {
@@ -307,7 +335,8 @@ func (s *Store) ListExtraUsageTransactions(projectID string, p types.PaginationP
 // ListExtraUsageSettings returns every settings row (admin overview).
 func (s *Store) ListExtraUsageSettings() ([]types.ExtraUsageSettings, error) {
 	rows, err := s.pool.Query(context.Background(), `
-		SELECT project_id, enabled, balance_fen, monthly_limit_fen, created_at, updated_at
+		SELECT project_id, enabled, balance_fen, monthly_limit_fen,
+		       bypass_balance_check, created_at, updated_at
 		FROM extra_usage_settings
 		ORDER BY updated_at DESC`)
 	if err != nil {
@@ -319,7 +348,8 @@ func (s *Store) ListExtraUsageSettings() ([]types.ExtraUsageSettings, error) {
 	for rows.Next() {
 		var s types.ExtraUsageSettings
 		if err := rows.Scan(&s.ProjectID, &s.Enabled, &s.BalanceFen,
-			&s.MonthlyLimitFen, &s.CreatedAt, &s.UpdatedAt); err != nil {
+			&s.MonthlyLimitFen, &s.BypassBalanceCheck,
+			&s.CreatedAt, &s.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan settings: %w", err)
 		}
 		out = append(out, s)
