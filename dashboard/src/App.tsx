@@ -39,6 +39,7 @@ import { ProjectSettingsPage } from "@/pages/settings/ProjectSettingsPage";
 // Admin
 import { UsersPage } from "@/pages/admin/UsersPage";
 import { AdminProjectsPage } from "@/pages/admin/ProjectsPage";
+import { AdminExtraUsagePage } from "@/pages/admin/ExtraUsagePage";
 
 // Subscription
 import { SubscriptionPage } from "@/pages/subscriptions/SubscriptionPage";
@@ -105,6 +106,7 @@ export function App() {
                 <Route path="settings" element={<UserSettingsPage />} />
                 <Route path="admin/users" element={<UsersPage />} />
                 <Route path="admin/projects" element={<AdminProjectsPage />} />
+                <Route path="admin/extra-usage" element={<AdminExtraUsagePage />} />
                 <Route path="admin/plans" element={<PlansPage />} />
                 <Route path="admin/models" element={<ModelsPage />} />
                 <Route path="admin/requests" element={<AdminRequestsPage />} />

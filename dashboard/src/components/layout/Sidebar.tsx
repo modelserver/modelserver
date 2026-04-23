@@ -143,6 +143,9 @@ export function Sidebar() {
             <SidebarLink to="/admin/plans" icon={Coins}>
               Plans
             </SidebarLink>
+            <SidebarLink to="/admin/extra-usage" icon={Zap}>
+              Extra Usage
+            </SidebarLink>
             <SidebarLink to="/admin/requests" icon={FileText}>
               Requests
             </SidebarLink>
