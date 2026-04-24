@@ -318,7 +318,11 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 					},
 				},
 				"max_output_tokens":   16,
-				"stream":              false,
+				// Codex backend rejects stream:false with "Stream must be set
+				// to true". The test only checks status code, so a 200 SSE
+				// reply is enough — the response body is read and discarded
+				// below for all providers.
+				"stream":              true,
 				"instructions":        "",
 				"tools":               []interface{}{},
 				"tool_choice":         "auto",
