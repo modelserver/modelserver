@@ -179,11 +179,37 @@ export function useUpstreamCodexOAuthRefresh() {
   });
 }
 
+export interface CodexRateLimitWindow {
+  used_percent: number;
+  limit_window_seconds: number;
+  reset_after_seconds: number;
+  reset_at: number;
+}
+
+export interface CodexRateLimitDetails {
+  allowed: boolean;
+  limit_reached: boolean;
+  primary_window?: CodexRateLimitWindow;
+  secondary_window?: CodexRateLimitWindow;
+}
+
+export interface CodexCreditDetails {
+  has_credits: boolean;
+  unlimited: boolean;
+  balance?: string;
+}
+
+export interface CodexUtilization {
+  plan_type: string;
+  rate_limit?: CodexRateLimitDetails;
+  credits?: CodexCreditDetails;
+}
+
 export function useCodexUtilization(upstreamId: string | undefined) {
   return useQuery({
     queryKey: ["admin", "upstreams", upstreamId, "codex-utilization"],
     queryFn: () =>
-      api.get<DataResponse<unknown>>(
+      api.get<DataResponse<CodexUtilization>>(
         `/api/v1/upstreams/${upstreamId}/codex/utilization`,
       ),
     enabled: !!upstreamId,

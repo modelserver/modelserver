@@ -15,6 +15,7 @@ import {
   useCodexOAuthExchange,
   useUpstreamCodexOAuthStatus,
   useUpstreamCodexOAuthRefresh,
+  useCodexUtilization,
 } from "@/api/upstreams";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
@@ -196,6 +197,62 @@ function UtilizationBadge({ upstreamId }: { upstreamId: string }) {
         <span className="text-xs tabular-nums text-muted-foreground" title={extraUsage.monthly_limit != null ? `Limit: $${extraUsage.monthly_limit}` : "Unlimited"}>
           Extra: {extraUsage.used_credits != null ? `$${extraUsage.used_credits}` : "on"}
           {extraUsage.monthly_limit != null ? `/$${extraUsage.monthly_limit}` : ""}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function CodexUtilizationBadge({ upstreamId }: { upstreamId: string }) {
+  const { data, isLoading } = useCodexUtilization(upstreamId);
+  if (isLoading) return <span className="text-xs text-muted-foreground">...</span>;
+  const util = data?.data;
+  if (!util) return <span className="text-xs text-muted-foreground">N/A</span>;
+
+  function pctColor(pct: number): string {
+    if (pct >= 80) return "text-red-600 dark:text-red-400";
+    if (pct >= 50) return "text-yellow-600 dark:text-yellow-400";
+    return "text-green-600 dark:text-green-400";
+  }
+
+  function formatWindow(seconds: number): string {
+    if (seconds === 18000) return "5h";
+    if (seconds === 86400) return "1d";
+    if (seconds === 604800) return "7d";
+    if (seconds % 86400 === 0) return `${seconds / 86400}d`;
+    if (seconds % 3600 === 0) return `${seconds / 3600}h`;
+    return `${seconds}s`;
+  }
+
+  function formatReset(secs: number): string {
+    if (secs <= 0) return "expired";
+    const hours = Math.floor(secs / 3600);
+    const mins = Math.floor((secs % 3600) / 60);
+    return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+  }
+
+  const primary = util.rate_limit?.primary_window;
+  const secondary = util.rate_limit?.secondary_window;
+
+  if (!primary && !secondary) {
+    return <span className="text-xs text-muted-foreground">{util.plan_type}</span>;
+  }
+
+  return (
+    <div className="flex flex-col gap-0.5 items-end">
+      {primary && (
+        <span className="text-xs tabular-nums">
+          {formatWindow(primary.limit_window_seconds)}:{" "}
+          <span className={pctColor(primary.used_percent)}>{primary.used_percent}%</span>
+          <span className="text-muted-foreground ml-1">({formatReset(primary.reset_after_seconds)})</span>
+          <span className="text-muted-foreground ml-1">{util.plan_type}</span>
+        </span>
+      )}
+      {secondary && (
+        <span className="text-xs tabular-nums">
+          {formatWindow(secondary.limit_window_seconds)}:{" "}
+          <span className={pctColor(secondary.used_percent)}>{secondary.used_percent}%</span>
+          <span className="text-muted-foreground ml-1">({formatReset(secondary.reset_after_seconds)})</span>
         </span>
       )}
     </div>
@@ -526,6 +583,9 @@ export function UpstreamsPage() {
       accessor: (u) => {
         if (u.provider === "claudecode") {
           return <UtilizationBadge upstreamId={u.id} />;
+        }
+        if (u.provider === "codex") {
+          return <CodexUtilizationBadge upstreamId={u.id} />;
         }
         const usage = usageMap.get(u.id);
         const pct5h = usage ? (usage.credits_5h / MAX20X_5H * 100) : 0;
