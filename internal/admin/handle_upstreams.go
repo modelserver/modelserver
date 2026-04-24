@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/modelserver/modelserver/internal/crypto"
 	"github.com/modelserver/modelserver/internal/modelcatalog"
+	"github.com/modelserver/modelserver/internal/proxy"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 	"golang.org/x/oauth2/google"
@@ -294,6 +295,25 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 				"max_tokens": 10,
 				"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
 			})
+		case types.ProviderCodex:
+			// Codex (ChatGPT subscription) sends Responses API requests to the
+			// ChatGPT backend. No /v1 prefix — the real endpoint is /responses.
+			codexBase := baseURL
+			if codexBase == "" {
+				codexBase = "https://chatgpt.com/backend-api/codex"
+			}
+			endpoint = codexBase + "/responses"
+			reqBody, _ = json.Marshal(map[string]interface{}{
+				"model":               upstreamTestModel,
+				"input":               "Hi",
+				"max_output_tokens":   16,
+				"stream":              false,
+				"instructions":        "",
+				"tools":               []interface{}{},
+				"tool_choice":         "auto",
+				"parallel_tool_calls": false,
+				"store":               false,
+			})
 		case types.ProviderVertexAnthropic:
 			base := baseURL
 			if len(base) > 0 && base[len(base)-1] == '/' {
@@ -392,6 +412,29 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 			req.Header.Set("Anthropic-Version", "2023-06-01")
 			req.Header.Set("Anthropic-Beta", "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14")
 			req.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
+		case types.ProviderCodex:
+			var codexCreds proxy.CodexCredentials
+			if err := json.Unmarshal(apiKey, &codexCreds); err != nil || codexCreds.AccessToken == "" {
+				writeData(w, http.StatusOK, map[string]interface{}{
+					"success": false,
+					"error":   "failed to parse codex credentials",
+				})
+				return
+			}
+			codexCreds = refreshCodexCredentialsIfNeeded(r.Context(), st, encKey, chi.URLParam(r, "upstreamID"), codexCreds)
+			req.Header.Set("Authorization", "Bearer "+codexCreds.AccessToken)
+			if codexCreds.ChatGPTAccountID != "" {
+				req.Header.Set("ChatGPT-Account-ID", codexCreds.ChatGPTAccountID)
+			}
+			req.Header.Set("User-Agent", proxy.CodexUserAgent)
+			req.Header.Set("Version", proxy.CodexVersion)
+			req.Header.Set("Originator", "codex_cli_rs")
+			req.Header.Set("session_id", fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+				time.Now().UnixNano()&0xffffffff,
+				time.Now().UnixNano()&0xffff,
+				time.Now().UnixNano()&0xffff,
+				time.Now().UnixNano()&0xffff,
+				time.Now().UnixNano()%(1<<48)))
 		case types.ProviderVertexAnthropic, types.ProviderVertexGoogle, types.ProviderVertexOpenAI:
 			creds, err := google.CredentialsFromJSON(r.Context(), apiKey, "https://www.googleapis.com/auth/cloud-platform")
 			if err != nil {

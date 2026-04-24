@@ -2,6 +2,7 @@ package admin
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -323,6 +324,81 @@ func extractCodexAccountID(idToken string) string {
 	return claims.Auth.ChatGPTAccountID
 }
 
+// refreshCodexCredentialsIfNeeded performs an inline best-effort refresh if
+// the given creds are within the expiry buffer and have a refresh token.
+// On success it persists the new blob and returns the refreshed credentials.
+// On any failure (including no refresh token available) it returns the
+// original creds unchanged.
+func refreshCodexCredentialsIfNeeded(
+	ctx context.Context,
+	st *store.Store,
+	encKey []byte,
+	upstreamID string,
+	creds proxy.CodexCredentials,
+) proxy.CodexCredentials {
+	if time.Now().Unix() <= creds.ExpiresAt-300 || creds.RefreshToken == "" {
+		return creds
+	}
+	clientID := creds.ClientID
+	if clientID == "" {
+		clientID = proxy.CodexClientID
+	}
+	refBody, _ := json.Marshal(map[string]string{
+		"client_id":     clientID,
+		"grant_type":    "refresh_token",
+		"refresh_token": creds.RefreshToken,
+	})
+	refReq, err := http.NewRequestWithContext(ctx, http.MethodPost, codexOAuthTokenURL, bytes.NewReader(refBody))
+	if err != nil {
+		return creds
+	}
+	refReq.Header.Set("Content-Type", "application/json")
+	refReq.Header.Set("Originator", "codex_cli_rs")
+	refReq.Header.Set("User-Agent", proxy.CodexUserAgent)
+	refClient := &http.Client{Timeout: 15 * time.Second}
+	refResp, err := refClient.Do(refReq)
+	if err != nil {
+		return creds
+	}
+	defer refResp.Body.Close()
+	if refResp.StatusCode != http.StatusOK {
+		return creds
+	}
+	var tokenResp struct {
+		IDToken      *string `json:"id_token"`
+		AccessToken  *string `json:"access_token"`
+		RefreshToken *string `json:"refresh_token"`
+		ExpiresIn    int64   `json:"expires_in"`
+	}
+	rb, _ := io.ReadAll(io.LimitReader(refResp.Body, 8192))
+	if json.Unmarshal(rb, &tokenResp) != nil {
+		return creds
+	}
+	newCreds := creds
+	if tokenResp.AccessToken != nil {
+		newCreds.AccessToken = *tokenResp.AccessToken
+	}
+	if tokenResp.RefreshToken != nil {
+		newCreds.RefreshToken = *tokenResp.RefreshToken
+	}
+	if tokenResp.IDToken != nil {
+		newCreds.IDToken = *tokenResp.IDToken
+		if id := extractCodexAccountID(*tokenResp.IDToken); id != "" {
+			newCreds.ChatGPTAccountID = id
+		}
+	}
+	if tokenResp.ExpiresIn > 0 {
+		newCreds.ExpiresAt = time.Now().Unix() + tokenResp.ExpiresIn
+	}
+	newCreds.ClientID = clientID
+	if cj, err := json.Marshal(newCreds); err == nil {
+		if enc, err := crypto.Encrypt(encKey, cj); err == nil {
+			_ = st.UpdateUpstream(upstreamID, map[string]interface{}{"api_key_encrypted": enc})
+		}
+	}
+	return newCreds
+}
+
 // codexUsageURL is overridable in tests.
 var codexUsageURL = "https://chatgpt.com/backend-api/wham/usage"
 
@@ -356,64 +432,10 @@ func handleCodexUtilization(st *store.Store, encKey []byte) http.HandlerFunc {
 			return
 		}
 
-		accessToken := creds.AccessToken
 		// If the token is within the expiry buffer, do an inline refresh
 		// (mirrors the claudecode utilization helper).
-		if time.Now().Unix() > creds.ExpiresAt-300 && creds.RefreshToken != "" {
-			clientID := creds.ClientID
-			if clientID == "" {
-				clientID = proxy.CodexClientID
-			}
-			refBody, _ := json.Marshal(map[string]string{
-				"client_id":     clientID,
-				"grant_type":    "refresh_token",
-				"refresh_token": creds.RefreshToken,
-			})
-			refReq, refReqErr := http.NewRequest(http.MethodPost, codexOAuthTokenURL, bytes.NewReader(refBody))
-			if refReqErr == nil {
-				refReq.Header.Set("Content-Type", "application/json")
-				refReq.Header.Set("Originator", "codex_cli_rs")
-				refReq.Header.Set("User-Agent", proxy.CodexUserAgent)
-				refClient := &http.Client{Timeout: 15 * time.Second}
-				refResp, refErr := refClient.Do(refReq)
-				if refErr == nil {
-					defer refResp.Body.Close()
-					if refResp.StatusCode == http.StatusOK {
-						var tokenResp struct {
-							IDToken      *string `json:"id_token"`
-							AccessToken  *string `json:"access_token"`
-							RefreshToken *string `json:"refresh_token"`
-							ExpiresIn    int64   `json:"expires_in"`
-						}
-						if rb, _ := io.ReadAll(io.LimitReader(refResp.Body, 8192)); json.Unmarshal(rb, &tokenResp) == nil {
-							newCreds := creds
-							if tokenResp.AccessToken != nil {
-								newCreds.AccessToken = *tokenResp.AccessToken
-								accessToken = *tokenResp.AccessToken
-							}
-							if tokenResp.RefreshToken != nil {
-								newCreds.RefreshToken = *tokenResp.RefreshToken
-							}
-							if tokenResp.IDToken != nil {
-								newCreds.IDToken = *tokenResp.IDToken
-								if id := extractCodexAccountID(*tokenResp.IDToken); id != "" {
-									newCreds.ChatGPTAccountID = id
-								}
-							}
-							if tokenResp.ExpiresIn > 0 {
-								newCreds.ExpiresAt = time.Now().Unix() + tokenResp.ExpiresIn
-							}
-							newCreds.ClientID = clientID
-							if cj, err := json.Marshal(newCreds); err == nil {
-								if enc, err := crypto.Encrypt(encKey, cj); err == nil {
-									_ = st.UpdateUpstream(upstreamID, map[string]interface{}{"api_key_encrypted": enc})
-								}
-							}
-						}
-					}
-				}
-			}
-		}
+		creds = refreshCodexCredentialsIfNeeded(r.Context(), st, encKey, upstreamID, creds)
+		accessToken := creds.AccessToken
 
 		// Cache hit — serve.
 		if cached, ok := cache.Load(upstreamID); ok {
