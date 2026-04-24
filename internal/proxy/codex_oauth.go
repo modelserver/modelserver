@@ -1,8 +1,11 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -10,6 +13,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/modelserver/modelserver/internal/crypto"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
@@ -146,6 +150,156 @@ func (m *CodexOAuthTokenManager) LoadCredentials(upstreams []types.Upstream, dec
 		}
 		m.credentials[u.ID] = &creds
 	}
+}
+
+// GetAccessToken returns a valid access token, refreshing if within the
+// expiry buffer. On refresh failure the previous token is returned (it may
+// still work for a brief grace period).
+func (m *CodexOAuthTokenManager) GetAccessToken(upstreamID string) (string, error) {
+	m.mu.RLock()
+	creds, ok := m.credentials[upstreamID]
+	if !ok {
+		m.mu.RUnlock()
+		return "", fmt.Errorf("no credentials for codex upstream %s", upstreamID)
+	}
+	token := creds.AccessToken
+	needsRefresh := time.Now().Unix() > creds.ExpiresAt-codexExpiryBuffer
+	m.mu.RUnlock()
+
+	if needsRefresh {
+		_, err, _ := m.sfGroup.Do(upstreamID, func() (interface{}, error) {
+			return nil, m.refreshToken(upstreamID)
+		})
+		if err != nil {
+			if m.logger != nil {
+				m.logger.Error("failed to refresh codex token", "upstream_id", upstreamID, "error", err)
+			}
+			return token, nil
+		}
+		m.mu.RLock()
+		token = m.credentials[upstreamID].AccessToken
+		m.mu.RUnlock()
+	}
+	return token, nil
+}
+
+// GetAccountID returns the ChatGPT account id (workspace) associated with
+// this upstream, or an empty string if the credentials don't carry one.
+// Returns an error only when the upstream is unknown.
+func (m *CodexOAuthTokenManager) GetAccountID(upstreamID string) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	creds, ok := m.credentials[upstreamID]
+	if !ok {
+		return "", fmt.Errorf("no credentials for codex upstream %s", upstreamID)
+	}
+	return creds.ChatGPTAccountID, nil
+}
+
+// ForceRefreshAccessToken unconditionally refreshes the token (ignoring the
+// expiry buffer). Used by the executor to recover from upstream 401/403.
+func (m *CodexOAuthTokenManager) ForceRefreshAccessToken(upstreamID string) (string, error) {
+	_, err, _ := m.sfGroup.Do("force:"+upstreamID, func() (interface{}, error) {
+		return nil, m.refreshToken(upstreamID)
+	})
+	if err != nil {
+		return "", fmt.Errorf("forced codex token refresh failed: %w", err)
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	creds, ok := m.credentials[upstreamID]
+	if !ok {
+		return "", fmt.Errorf("no credentials after refresh for upstream %s", upstreamID)
+	}
+	return creds.AccessToken, nil
+}
+
+// refreshToken posts to the OAuth token endpoint and merges the response
+// into the in-memory credentials. id_token / access_token / refresh_token
+// are all optional in the response per codex CLI behaviour; absent fields
+// preserve their previous values. The chatgpt_account_id is re-extracted
+// only when a new id_token is returned.
+func (m *CodexOAuthTokenManager) refreshToken(upstreamID string) error {
+	m.mu.RLock()
+	creds, ok := m.credentials[upstreamID]
+	if !ok {
+		m.mu.RUnlock()
+		return fmt.Errorf("no credentials for upstream %s", upstreamID)
+	}
+	refreshToken := creds.RefreshToken
+	clientID := creds.ClientID
+	m.mu.RUnlock()
+
+	if clientID == "" {
+		clientID = CodexClientID
+	}
+	body, _ := json.Marshal(map[string]string{
+		"client_id":     clientID,
+		"grant_type":    "refresh_token",
+		"refresh_token": refreshToken,
+	})
+
+	resp, err := m.httpClient.Post(m.tokenURL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("oauth token request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("codex token refresh returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var tokenResp struct {
+		IDToken      *string `json:"id_token"`
+		AccessToken  *string `json:"access_token"`
+		RefreshToken *string `json:"refresh_token"`
+		ExpiresIn    int64   `json:"expires_in"`
+	}
+	if err := json.Unmarshal(respBody, &tokenResp); err != nil {
+		return fmt.Errorf("failed to parse codex token response: %w", err)
+	}
+
+	m.mu.Lock()
+	cur := m.credentials[upstreamID]
+	updated := *cur
+	if tokenResp.AccessToken != nil {
+		updated.AccessToken = *tokenResp.AccessToken
+	}
+	if tokenResp.RefreshToken != nil {
+		updated.RefreshToken = *tokenResp.RefreshToken
+	}
+	if tokenResp.IDToken != nil {
+		updated.IDToken = *tokenResp.IDToken
+		if id := extractChatGPTAccountIDFromIDToken(*tokenResp.IDToken); id != "" {
+			updated.ChatGPTAccountID = id
+		}
+	}
+	if tokenResp.ExpiresIn > 0 {
+		updated.ExpiresAt = time.Now().Unix() + tokenResp.ExpiresIn
+	}
+	updated.ClientID = clientID
+	m.credentials[upstreamID] = &updated
+	m.mu.Unlock()
+
+	if m.store != nil && len(m.encryptionKey) > 0 {
+		blob, err := json.Marshal(updated)
+		if err != nil {
+			return fmt.Errorf("failed to marshal refreshed codex credentials: %w", err)
+		}
+		enc, err := crypto.Encrypt(m.encryptionKey, blob)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt refreshed codex credentials: %w", err)
+		}
+		if err := m.store.UpdateUpstream(upstreamID, map[string]interface{}{
+			"api_key_encrypted": enc,
+		}); err != nil && m.logger != nil {
+			m.logger.Error("failed to persist refreshed codex token", "upstream_id", upstreamID, "error", err)
+		}
+	}
+	if m.logger != nil {
+		m.logger.Info("refreshed codex token", "upstream_id", upstreamID)
+	}
+	return nil
 }
 
 // Reload re-loads credentials from the database, preserving any in-memory
