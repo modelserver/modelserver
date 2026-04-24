@@ -1376,6 +1376,7 @@ func sanitizeOutboundHeaders(h http.Header) http.Header {
 			canon == "X-Goog-Api-Key",
 			// Codex (ChatGPT subscription) headers.
 			canon == "Chatgpt-Account-Id",
+			canon == "Originator",
 			canon == "Version",
 			canon == "Session_id":
 			allowed[canon] = vals

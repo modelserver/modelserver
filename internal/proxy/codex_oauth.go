@@ -28,7 +28,7 @@ const (
 	// CodexTokenURL is the OAuth token endpoint.
 	CodexTokenURL = CodexIssuerURL + "/oauth/token"
 	// CodexScopes is the scope list used by the codex CLI authorize flow.
-	CodexScopes = "openid profile email offline_access"
+	CodexScopes = "openid profile email offline_access api.connectors.read api.connectors.invoke"
 	// codexExpiryBuffer triggers proactive refresh this many seconds before expiry.
 	codexExpiryBuffer = 300
 )
