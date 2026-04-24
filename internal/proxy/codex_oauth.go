@@ -63,16 +63,23 @@ func NewCodexOAuthTokenManager(st *store.Store, encKey []byte, logger *slog.Logg
 	}
 }
 
-// ParseCodexAccessTokenAndAccount accepts either a bare access token or a
-// CodexCredentials JSON blob. Returns the bare token and account id; on a
-// bare token the account id is empty.
+// ParseCodexAccessTokenAndAccount parses raw into an access token and account
+// id using the following rules:
+//
+//   - Empty input or non-JSON input (raw[0] != '{'): returned unchanged as the
+//     access token; account id is empty.
+//   - Valid JSON blob: parsed as CodexCredentials; access token and account id
+//     are taken from the blob.
+//   - JSON-shaped input (starts with '{') that fails to unmarshal: returns
+//     ("", "") to signal the input is unusable. The caller is expected to
+//     error or fall back rather than forwarding the garbage as a bearer token.
 func ParseCodexAccessTokenAndAccount(raw string) (accessToken, accountID string) {
 	if len(raw) == 0 || raw[0] != '{' {
 		return raw, ""
 	}
 	var creds CodexCredentials
 	if json.Unmarshal([]byte(raw), &creds) != nil {
-		return raw, ""
+		return "", ""
 	}
 	return creds.AccessToken, creds.ChatGPTAccountID
 }

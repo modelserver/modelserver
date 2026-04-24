@@ -34,6 +34,15 @@ func TestParseCodexAccessTokenAndAccount_JSONBlob(t *testing.T) {
 	}
 }
 
+func TestParseCodexAccessTokenAndAccount_MalformedJSON(t *testing.T) {
+	// A '{'-prefixed string that doesn't parse should return ("", "")
+	// rather than passing the garbage through as a bearer token.
+	at, acct := ParseCodexAccessTokenAndAccount("{not valid json")
+	if at != "" || acct != "" {
+		t.Errorf("got (%q, %q), want (\"\", \"\")", at, acct)
+	}
+}
+
 func TestExtractChatGPTAccountIDFromIDToken(t *testing.T) {
 	// Build a fake JWT (header.payload.signature) where the payload contains
 	// the OpenAI custom-namespace claim with chatgpt_account_id.
