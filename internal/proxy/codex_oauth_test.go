@@ -204,6 +204,12 @@ func TestCodex_RefreshToken_RoundTrip(t *testing.T) {
 		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
 			t.Errorf("Content-Type = %q, want application/json", ct)
 		}
+		if orig := r.Header.Get("Originator"); orig != "codex_cli_rs" {
+			t.Errorf("Originator = %q, want codex_cli_rs", orig)
+		}
+		if ua := r.Header.Get("User-Agent"); ua != codexUserAgent {
+			t.Errorf("User-Agent = %q, want %q", ua, codexUserAgent)
+		}
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		if body["grant_type"] != "refresh_token" {
