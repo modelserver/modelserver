@@ -135,6 +135,12 @@ func TestHandleCodexTokenStatus_NotFound(t *testing.T) {
 	}
 }
 
+func TestHandleCodexUtilization_ConstructorOK(t *testing.T) {
+	if h := handleCodexUtilization(nil, nil); h == nil {
+		t.Fatal("handleCodexUtilization returned nil")
+	}
+}
+
 // base64URL is a tiny helper for tests to avoid importing encoding/base64 with
 // padding handling.
 func base64URL(s string) string {

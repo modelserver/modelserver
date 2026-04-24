@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -312,4 +313,147 @@ func extractCodexAccountID(idToken string) string {
 		return ""
 	}
 	return claims.Auth.ChatGPTAccountID
+}
+
+// codexUsageURL is overridable in tests.
+var codexUsageURL = "https://chatgpt.com/backend-api/wham/usage"
+
+func handleCodexUtilization(st *store.Store, encKey []byte) http.HandlerFunc {
+	type cacheEntry struct {
+		body      []byte
+		fetchedAt time.Time
+	}
+	var cache sync.Map // upstreamID → *cacheEntry
+	const cacheTTL = 60 * time.Second
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		upstreamID := chi.URLParam(r, "upstreamID")
+		u, err := st.GetUpstreamByID(upstreamID)
+		if err != nil || u == nil {
+			writeError(w, http.StatusNotFound, "not_found", "upstream not found")
+			return
+		}
+		if u.Provider != "codex" {
+			writeError(w, http.StatusBadRequest, "bad_request", "upstream is not a codex upstream")
+			return
+		}
+		plaintext, err := crypto.Decrypt(encKey, u.APIKeyEncrypted)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to decrypt credentials")
+			return
+		}
+		var creds proxy.CodexCredentials
+		if err := json.Unmarshal(plaintext, &creds); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to parse credentials")
+			return
+		}
+
+		accessToken := creds.AccessToken
+		// If the token is within the expiry buffer, do an inline refresh
+		// (mirrors the claudecode utilization helper).
+		if time.Now().Unix() > creds.ExpiresAt-300 && creds.RefreshToken != "" {
+			clientID := creds.ClientID
+			if clientID == "" {
+				clientID = proxy.CodexClientID
+			}
+			refBody, _ := json.Marshal(map[string]string{
+				"client_id":     clientID,
+				"grant_type":    "refresh_token",
+				"refresh_token": creds.RefreshToken,
+			})
+			client := &http.Client{Timeout: 15 * time.Second}
+			refResp, refErr := client.Post(codexOAuthTokenURL, "application/json", bytes.NewReader(refBody))
+			if refErr == nil {
+				defer refResp.Body.Close()
+				if refResp.StatusCode == http.StatusOK {
+					var tokenResp struct {
+						IDToken      *string `json:"id_token"`
+						AccessToken  *string `json:"access_token"`
+						RefreshToken *string `json:"refresh_token"`
+						ExpiresIn    int64   `json:"expires_in"`
+					}
+					if rb, _ := io.ReadAll(io.LimitReader(refResp.Body, 8192)); json.Unmarshal(rb, &tokenResp) == nil {
+						newCreds := creds
+						if tokenResp.AccessToken != nil {
+							newCreds.AccessToken = *tokenResp.AccessToken
+							accessToken = *tokenResp.AccessToken
+						}
+						if tokenResp.RefreshToken != nil {
+							newCreds.RefreshToken = *tokenResp.RefreshToken
+						}
+						if tokenResp.IDToken != nil {
+							newCreds.IDToken = *tokenResp.IDToken
+							if id := extractCodexAccountID(*tokenResp.IDToken); id != "" {
+								newCreds.ChatGPTAccountID = id
+							}
+						}
+						if tokenResp.ExpiresIn > 0 {
+							newCreds.ExpiresAt = time.Now().Unix() + tokenResp.ExpiresIn
+						}
+						newCreds.ClientID = clientID
+						if cj, err := json.Marshal(newCreds); err == nil {
+							if enc, err := crypto.Encrypt(encKey, cj); err == nil {
+								_ = st.UpdateUpstream(upstreamID, map[string]interface{}{"api_key_encrypted": enc})
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Cache hit — serve.
+		if cached, ok := cache.Load(upstreamID); ok {
+			entry := cached.(*cacheEntry)
+			if time.Since(entry.fetchedAt) < cacheTTL {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(entry.body)
+				return
+			}
+		}
+
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, codexUsageURL, nil)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to create request")
+			return
+		}
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+		req.Header.Set("User-Agent", "codex_cli_rs/0.55.0 (Linux; x64) Codex")
+		req.Header.Set("Version", "0.55.0")
+		if creds.ChatGPTAccountID != "" {
+			req.Header.Set("ChatGPT-Account-ID", creds.ChatGPTAccountID)
+		}
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "upstream_error", fmt.Sprintf("codex usage fetch failed: %v", err))
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 16384))
+		if resp.StatusCode != http.StatusOK {
+			if resp.StatusCode == http.StatusTooManyRequests {
+				if cached, ok := cache.Load(upstreamID); ok {
+					entry := cached.(*cacheEntry)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write(entry.body)
+					return
+				}
+			}
+			writeError(w, http.StatusBadGateway, "upstream_error", fmt.Sprintf("codex usage returned %d", resp.StatusCode))
+			return
+		}
+		if !json.Valid(body) {
+			writeError(w, http.StatusBadGateway, "upstream_error", "codex usage returned invalid JSON")
+			return
+		}
+		full := []byte(fmt.Sprintf(`{"data":%s}`, string(body)))
+		cache.Store(upstreamID, &cacheEntry{body: full, fetchedAt: time.Now()})
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(full)
+	}
 }
