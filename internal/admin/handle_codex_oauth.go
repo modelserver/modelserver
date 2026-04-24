@@ -146,14 +146,14 @@ func handleCodexOAuthExchange() http.HandlerFunc {
 		}
 
 		creds := proxy.CodexCredentials{
-			IDToken:      tokenResp.IDToken,
-			AccessToken:  tokenResp.AccessToken,
-			RefreshToken: tokenResp.RefreshToken,
-			ExpiresAt:    time.Now().Unix() + tokenResp.ExpiresIn,
-			ClientID:     proxy.CodexClientID,
+			AccessToken:      tokenResp.AccessToken,
+			RefreshToken:     tokenResp.RefreshToken,
+			ChatGPTAccountID: extractCodexAccountID(tokenResp.IDToken),
+			ExpiresAt:        time.Now().Unix() + tokenResp.ExpiresIn,
+			ClientID:         proxy.CodexClientID,
 		}
-		// Best-effort account-id extraction; absent claim is fine.
-		creds.ChatGPTAccountID = extractCodexAccountID(tokenResp.IDToken)
+		// IDToken is intentionally omitted: account_id is already extracted above,
+		// and the signed JWT should not be forwarded to the browser.
 
 		writeData(w, http.StatusOK, creds)
 	}
