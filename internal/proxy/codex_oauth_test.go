@@ -309,3 +309,31 @@ func TestCodex_ForceRefresh_BypassesBuffer(t *testing.T) {
 		t.Errorf("got %q, %v", tok, err)
 	}
 }
+
+func TestRouter_GetCodexAccessToken(t *testing.T) {
+	mgr := NewCodexOAuthTokenManager(nil, nil, nil)
+	mgr.mu.Lock()
+	mgr.credentials["cx1"] = &CodexCredentials{
+		AccessToken:      "valid",
+		ChatGPTAccountID: "org_1",
+		ExpiresAt:        time.Now().Add(time.Hour).Unix(),
+	}
+	mgr.mu.Unlock()
+
+	r := &Router{codexOAuthMgr: mgr}
+	tok, err := r.GetCodexAccessToken("cx1")
+	if err != nil || tok != "valid" {
+		t.Errorf("token = %q, err = %v", tok, err)
+	}
+	id, err := r.GetCodexAccountID("cx1")
+	if err != nil || id != "org_1" {
+		t.Errorf("account id = %q, err = %v", id, err)
+	}
+}
+
+func TestRouter_GetCodexAccessToken_NoManager(t *testing.T) {
+	r := &Router{}
+	if _, err := r.GetCodexAccessToken("cx1"); err == nil {
+		t.Error("expected error when manager is nil")
+	}
+}
