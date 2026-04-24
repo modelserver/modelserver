@@ -11,6 +11,8 @@ import {
   useUpstreamOAuthRefresh,
   useUpstreamOAuthStatus,
   useClaudeCodeUtilization,
+  useCodexOAuthStart,
+  useCodexOAuthExchange,
 } from "@/api/upstreams";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
@@ -195,6 +197,8 @@ export function UpstreamsPage() {
   const oauthStart = useClaudeCodeOAuthStart();
   const oauthExchange = useClaudeCodeOAuthExchange();
   const oauthRefresh = useUpstreamOAuthRefresh();
+  const codexOAuthStart = useCodexOAuthStart();
+  const codexOAuthExchange = useCodexOAuthExchange();
   const { data: usageData } = useUpstreamUsage();
 
   const usageMap = useMemo(() => {
@@ -368,7 +372,9 @@ export function UpstreamsPage() {
 
   async function handleOAuthStart() {
     try {
-      const res = await oauthStart.mutateAsync({});
+      const res = form.provider === "codex"
+        ? await codexOAuthStart.mutateAsync({})
+        : await oauthStart.mutateAsync({});
       setOauthData(res.data);
       setOauthStep("started");
     } catch {
@@ -379,12 +385,19 @@ export function UpstreamsPage() {
   async function handleOAuthExchange() {
     if (!oauthData || !callbackUrl) return;
     try {
-      const res = await oauthExchange.mutateAsync({
-        callback_url: callbackUrl,
-        code_verifier: oauthData.code_verifier,
-        state: oauthData.state,
-        redirect_uri: oauthData.redirect_uri,
-      });
+      const res = form.provider === "codex"
+        ? await codexOAuthExchange.mutateAsync({
+            callback_url: callbackUrl,
+            code_verifier: oauthData.code_verifier,
+            state: oauthData.state,
+            redirect_uri: oauthData.redirect_uri,
+          })
+        : await oauthExchange.mutateAsync({
+            callback_url: callbackUrl,
+            code_verifier: oauthData.code_verifier,
+            state: oauthData.state,
+            redirect_uri: oauthData.redirect_uri,
+          });
       const credsJson = JSON.stringify(res.data);
       setOauthStep("complete");
       setForm((p) => ({ ...p, api_key: credsJson }));
@@ -641,6 +654,7 @@ export function UpstreamsPage() {
                   <SelectItem value="gemini">Gemini</SelectItem>
                   <SelectItem value="bedrock">AWS Bedrock</SelectItem>
                   <SelectItem value="claudecode">Claude Code</SelectItem>
+                  <SelectItem value="codex">Codex (ChatGPT)</SelectItem>
                   <SelectItem value="vertex-anthropic">Google Vertex AI (Anthropic)</SelectItem>
                   <SelectItem value="vertex-google">Google Vertex AI (Gemini)</SelectItem>
                   <SelectItem value="vertex-openai">Google Vertex AI (OpenAI)</SelectItem>
@@ -671,7 +685,7 @@ export function UpstreamsPage() {
                   : "https://api.anthropic.com"}
               />
             </div>
-            {form.provider === "claudecode" ? (
+            {(form.provider === "claudecode" || form.provider === "codex") ? (
               <div className="space-y-3">
                 <Label>OAuth Authorization</Label>
                 {oauthStep === "idle" && !editingId && (
@@ -681,13 +695,15 @@ export function UpstreamsPage() {
                       variant="outline"
                       className="w-full"
                       onClick={handleOAuthStart}
-                      disabled={oauthStart.isPending}
+                      disabled={oauthStart.isPending || codexOAuthStart.isPending}
                     >
                       <KeyRound className="mr-2 h-4 w-4" />
-                      {oauthStart.isPending ? "Starting..." : "Start OAuth Authorization"}
+                      {(oauthStart.isPending || codexOAuthStart.isPending) ? "Starting..." : "Start OAuth Authorization"}
                     </Button>
                     <p className="text-xs text-muted-foreground">
-                      Authorize via Anthropic OAuth to get access tokens automatically.
+                      {form.provider === "codex"
+                        ? "Authorize via OpenAI ChatGPT subscription OAuth to get access tokens automatically."
+                        : "Authorize via Anthropic OAuth to get access tokens automatically."}
                     </p>
                   </div>
                 )}
@@ -701,7 +717,7 @@ export function UpstreamsPage() {
                       variant="outline"
                       className="w-full"
                       onClick={handleOAuthStart}
-                      disabled={oauthStart.isPending}
+                      disabled={oauthStart.isPending || codexOAuthStart.isPending}
                     >
                       <RefreshCw className="mr-2 h-4 w-4" />
                       Re-authorize
@@ -718,7 +734,7 @@ export function UpstreamsPage() {
                         rel="noopener noreferrer"
                         className="text-primary underline inline-flex items-center gap-1 break-all"
                       >
-                        Open Anthropic Authorization Page
+                        {form.provider === "codex" ? "Open OpenAI Authorization Page" : "Open Anthropic Authorization Page"}
                         <ExternalLink className="h-3 w-3 flex-shrink-0" />
                       </a>
                     </div>
@@ -738,9 +754,9 @@ export function UpstreamsPage() {
                       type="button"
                       className="w-full"
                       onClick={handleOAuthExchange}
-                      disabled={!callbackUrl || oauthExchange.isPending}
+                      disabled={!callbackUrl || oauthExchange.isPending || codexOAuthExchange.isPending}
                     >
-                      {oauthExchange.isPending ? "Exchanging..." : "Complete Authorization"}
+                      {(oauthExchange.isPending || codexOAuthExchange.isPending) ? "Exchanging..." : "Complete Authorization"}
                     </Button>
                   </div>
                 )}
@@ -906,8 +922,9 @@ export function UpstreamsPage() {
               disabled={
                 !form.name ||
                 !form.base_url ||
-                (!editingId && !form.api_key && form.provider !== "claudecode") ||
+                (!editingId && !form.api_key && form.provider !== "claudecode" && form.provider !== "codex") ||
                 (!editingId && form.provider === "claudecode" && oauthStep !== "complete") ||
+                (!editingId && form.provider === "codex" && oauthStep !== "complete") ||
                 isSaving
               }
             >
