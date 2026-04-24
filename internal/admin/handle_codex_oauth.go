@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -226,12 +227,14 @@ func handleCodexTokenRefresh(st *store.Store, encKey []byte) http.HandlerFunc {
 		client := &http.Client{Timeout: 15 * time.Second}
 		resp, err := client.Post(codexOAuthTokenURL, "application/json", bytes.NewReader(body))
 		if err != nil {
+			slog.Error("codex manual token refresh: request failed", "upstream_id", upstreamID, "error", err)
 			writeError(w, http.StatusBadGateway, "upstream_error", fmt.Sprintf("codex refresh request failed: %v", err))
 			return
 		}
 		defer resp.Body.Close()
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
 		if resp.StatusCode != http.StatusOK {
+			slog.Error("codex manual token refresh: upstream error", "upstream_id", upstreamID, "status", resp.StatusCode, "body", string(respBody))
 			writeError(w, http.StatusBadGateway, "upstream_error",
 				fmt.Sprintf("codex refresh returned %d: %s", resp.StatusCode, string(respBody)))
 			return
@@ -243,6 +246,7 @@ func handleCodexTokenRefresh(st *store.Store, encKey []byte) http.HandlerFunc {
 			ExpiresIn    int64   `json:"expires_in"`
 		}
 		if err := json.Unmarshal(respBody, &tokenResp); err != nil {
+			slog.Error("codex manual token refresh: parse error", "upstream_id", upstreamID, "error", err)
 			writeError(w, http.StatusInternalServerError, "internal", "failed to parse codex token response")
 			return
 		}
@@ -275,9 +279,11 @@ func handleCodexTokenRefresh(st *store.Store, encKey []byte) http.HandlerFunc {
 			return
 		}
 		if err := st.UpdateUpstream(upstreamID, map[string]interface{}{"api_key_encrypted": enc}); err != nil {
+			slog.Error("codex manual token refresh: db update failed", "upstream_id", upstreamID, "error", err)
 			writeError(w, http.StatusInternalServerError, "internal", "failed to persist credentials")
 			return
 		}
+		slog.Info("codex token manually refreshed", "upstream_id", upstreamID, "expires_at", newCreds.ExpiresAt)
 		writeData(w, http.StatusOK, map[string]interface{}{
 			"expires_at":         newCreds.ExpiresAt,
 			"has_refresh_token":  newCreds.RefreshToken != "",
