@@ -13,6 +13,8 @@ import {
   useClaudeCodeUtilization,
   useCodexOAuthStart,
   useCodexOAuthExchange,
+  useUpstreamCodexOAuthStatus,
+  useUpstreamCodexOAuthRefresh,
 } from "@/api/upstreams";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
@@ -51,6 +53,40 @@ import { toast } from "sonner";
 
 function TokenStatusBadge({ upstreamId }: { upstreamId: string }) {
   const { data, isLoading } = useUpstreamOAuthStatus(upstreamId);
+
+  if (isLoading) return <span className="text-xs text-muted-foreground">...</span>;
+
+  const status = data?.data;
+  if (!status) return null;
+
+  const now = Math.floor(Date.now() / 1000);
+  const diff = status.expires_at - now;
+
+  let color: string;
+  let text: string;
+  if (diff <= 0) {
+    color = "text-red-600 dark:text-red-400";
+    text = "Token expired";
+  } else if (diff < 300) {
+    color = "text-yellow-600 dark:text-yellow-400";
+    text = `Expiring (${Math.floor(diff / 60)}m)`;
+  } else {
+    const hours = Math.floor(diff / 3600);
+    const mins = Math.floor((diff % 3600) / 60);
+    color = "text-green-600 dark:text-green-400";
+    text = hours > 0 ? `Token OK (${hours}h ${mins}m)` : `Token OK (${mins}m)`;
+  }
+
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs ${color}`}>
+      <Clock className="h-3 w-3" />
+      {text}
+    </span>
+  );
+}
+
+function CodexTokenStatusBadge({ upstreamId }: { upstreamId: string }) {
+  const { data, isLoading } = useUpstreamCodexOAuthStatus(upstreamId);
 
   if (isLoading) return <span className="text-xs text-muted-foreground">...</span>;
 
@@ -197,6 +233,7 @@ export function UpstreamsPage() {
   const oauthStart = useClaudeCodeOAuthStart();
   const oauthExchange = useClaudeCodeOAuthExchange();
   const oauthRefresh = useUpstreamOAuthRefresh();
+  const codexOAuthRefresh = useUpstreamCodexOAuthRefresh();
   const codexOAuthStart = useCodexOAuthStart();
   const codexOAuthExchange = useCodexOAuthExchange();
   const { data: usageData } = useUpstreamUsage();
@@ -407,13 +444,15 @@ export function UpstreamsPage() {
     }
   }
 
-  async function handleOAuthRefresh(upstreamId: string, upstreamName: string) {
+  async function handleOAuthRefresh(upstreamId: string, upstreamName: string, provider?: string) {
     try {
-      const res = await oauthRefresh.mutateAsync(upstreamId);
+      const res = provider === "codex"
+        ? await codexOAuthRefresh.mutateAsync(upstreamId)
+        : await oauthRefresh.mutateAsync(upstreamId);
       const expiresAt = new Date(res.data.expires_at * 1000);
-      toast.success(`${upstreamName}: token refreshed, expires ${expiresAt.toLocaleString()}`);
+      toast.success(`Token refreshed for "${upstreamName}". Expires at ${expiresAt.toLocaleString()}`);
     } catch {
-      toast.error(`${upstreamName}: token refresh failed`);
+      toast.error(`Failed to refresh token for "${upstreamName}"`);
     }
   }
 
@@ -438,6 +477,8 @@ export function UpstreamsPage() {
       accessor: (u) =>
         u.provider === "claudecode" ? (
           <TokenStatusBadge upstreamId={u.id} />
+        ) : u.provider === "codex" ? (
+          <CodexTokenStatusBadge upstreamId={u.id} />
         ) : (
           <span className="text-xs text-muted-foreground">—</span>
         ),
@@ -550,8 +591,17 @@ export function UpstreamsPage() {
             </DropdownMenuItem>
             {u.provider === "claudecode" && (
               <DropdownMenuItem
-                onClick={() => handleOAuthRefresh(u.id, u.name)}
+                onClick={() => handleOAuthRefresh(u.id, u.name, "claudecode")}
                 disabled={oauthRefresh.isPending}
+              >
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Refresh Token
+              </DropdownMenuItem>
+            )}
+            {u.provider === "codex" && (
+              <DropdownMenuItem
+                onClick={() => handleOAuthRefresh(u.id, u.name, "codex")}
+                disabled={codexOAuthRefresh.isPending}
               >
                 <RefreshCw className="mr-2 h-4 w-4" />
                 Refresh Token
