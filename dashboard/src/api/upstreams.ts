@@ -118,6 +118,78 @@ export function useUpstreamOAuthRefresh() {
   });
 }
 
+// --- Codex (ChatGPT subscription) OAuth ---
+export function useCodexOAuthStart() {
+  return useMutation({
+    mutationFn: (body?: { redirect_uri?: string }) =>
+      api.post<DataResponse<{
+        auth_url: string;
+        state: string;
+        code_verifier: string;
+        redirect_uri: string;
+      }>>("/api/v1/upstreams/codex/oauth/start", body ?? {}),
+  });
+}
+
+export function useCodexOAuthExchange() {
+  return useMutation({
+    mutationFn: (body: {
+      callback_url: string;
+      code_verifier: string;
+      state: string;
+      redirect_uri: string;
+    }) =>
+      api.post<DataResponse<{
+        id_token?: string;
+        access_token: string;
+        refresh_token: string;
+        chatgpt_account_id?: string;
+        expires_at: number;
+        client_id: string;
+      }>>("/api/v1/upstreams/codex/oauth/exchange", body),
+  });
+}
+
+export function useUpstreamCodexOAuthStatus(upstreamId: string | undefined) {
+  return useQuery({
+    queryKey: ["admin", "upstreams", upstreamId, "codex-oauth-status"],
+    queryFn: () =>
+      api.get<DataResponse<{
+        expires_at: number;
+        has_refresh_token: boolean;
+        chatgpt_account_id?: string;
+      }>>(`/api/v1/upstreams/${upstreamId}/codex/oauth/status`),
+    enabled: !!upstreamId,
+    refetchInterval: 60_000,
+  });
+}
+
+export function useUpstreamCodexOAuthRefresh() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (upstreamId: string) =>
+      api.post<DataResponse<{
+        expires_at: number;
+        has_refresh_token: boolean;
+        chatgpt_account_id?: string;
+      }>>(`/api/v1/upstreams/${upstreamId}/codex/oauth/refresh`),
+    onSuccess: (_, upstreamId) => {
+      qc.invalidateQueries({ queryKey: ["admin", "upstreams", upstreamId, "codex-oauth-status"] });
+    },
+  });
+}
+
+export function useCodexUtilization(upstreamId: string | undefined) {
+  return useQuery({
+    queryKey: ["admin", "upstreams", upstreamId, "codex-utilization"],
+    queryFn: () =>
+      api.get<DataResponse<unknown>>(
+        `/api/v1/upstreams/${upstreamId}/codex/utilization`,
+      ),
+    enabled: !!upstreamId,
+    refetchInterval: 5 * 60_000,
+  });
+}
 
 // --- Upstream Groups ---
 export function useUpstreamGroups(page = 1, perPage = 20) {
