@@ -1288,10 +1288,14 @@ func sanitizeOutboundHeaders(h http.Header) http.Header {
 			canon == "X-Claude-Remote-Container-Id",
 			canon == "X-Claude-Remote-Session-Id",
 			// Gemini API key header.
-			canon == "X-Goog-Api-Key":
+			canon == "X-Goog-Api-Key",
+			// Codex (ChatGPT subscription) headers.
+			canon == "Chatgpt-Account-Id",
+			canon == "Version",
+			canon == "Session_id":
 			allowed[canon] = vals
 		default:
-			if strings.HasPrefix(canon, "X-Stainless-") {
+			if strings.HasPrefix(canon, "X-Stainless-") || strings.HasPrefix(canon, "X-Codex-") {
 				allowed[canon] = vals
 			}
 		}
