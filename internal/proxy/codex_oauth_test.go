@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/modelserver/modelserver/internal/types"
 )
 
 func TestParseCodexAccessTokenAndAccount_RawAccessToken(t *testing.T) {
@@ -78,5 +81,67 @@ func TestExtractChatGPTAccountIDFromIDToken_Malformed(t *testing.T) {
 		if got := extractChatGPTAccountIDFromIDToken(c); got != "" {
 			t.Errorf("input %q: expected empty, got %q", c, got)
 		}
+	}
+}
+
+func TestCodex_LoadCredentials(t *testing.T) {
+	mgr := NewCodexOAuthTokenManager(nil, nil, nil)
+
+	creds := CodexCredentials{
+		AccessToken:      "at-1",
+		RefreshToken:     "rt-1",
+		ChatGPTAccountID: "org_a",
+		ExpiresAt:        time.Now().Add(time.Hour).Unix(),
+	}
+	credsJSON, _ := json.Marshal(creds)
+
+	upstreams := []types.Upstream{
+		{ID: "cx1", Provider: types.ProviderCodex},
+		{ID: "ot2", Provider: types.ProviderOpenAI},
+	}
+	keys := map[string]string{
+		"cx1": string(credsJSON),
+		"ot2": "sk-...",
+	}
+
+	mgr.LoadCredentials(upstreams, keys)
+
+	mgr.mu.RLock()
+	defer mgr.mu.RUnlock()
+	if got := mgr.credentials["cx1"]; got == nil || got.AccessToken != "at-1" {
+		t.Errorf("cx1 not loaded correctly: %+v", got)
+	}
+	if _, present := mgr.credentials["ot2"]; present {
+		t.Error("non-codex upstream should not be loaded")
+	}
+}
+
+func TestCodex_Reload_PreservesNewerInMemory(t *testing.T) {
+	mgr := NewCodexOAuthTokenManager(nil, nil, nil)
+
+	// Existing in-memory creds with later expiry (simulating a recent refresh
+	// not yet persisted to DB).
+	mgr.mu.Lock()
+	mgr.credentials["cx1"] = &CodexCredentials{
+		AccessToken: "fresh-at",
+		ExpiresAt:   time.Now().Add(2 * time.Hour).Unix(),
+	}
+	mgr.mu.Unlock()
+
+	// DB returns an older snapshot.
+	old := CodexCredentials{
+		AccessToken: "stale-at",
+		ExpiresAt:   time.Now().Add(30 * time.Minute).Unix(),
+	}
+	oldJSON, _ := json.Marshal(old)
+	mgr.Reload(
+		[]types.Upstream{{ID: "cx1", Provider: types.ProviderCodex}},
+		map[string]string{"cx1": string(oldJSON)},
+	)
+
+	mgr.mu.RLock()
+	defer mgr.mu.RUnlock()
+	if mgr.credentials["cx1"].AccessToken != "fresh-at" {
+		t.Errorf("Reload clobbered fresher in-memory token: %+v", mgr.credentials["cx1"])
 	}
 }

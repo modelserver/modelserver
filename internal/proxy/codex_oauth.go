@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/modelserver/modelserver/internal/store"
+	"github.com/modelserver/modelserver/internal/types"
 )
 
 const (
@@ -121,4 +122,61 @@ func splitJWT(token string) []string {
 	}
 	out = append(out, token[start:])
 	return out
+}
+
+// LoadCredentials parses and stores credentials for all codex upstreams.
+// Called at router init.
+func (m *CodexOAuthTokenManager) LoadCredentials(upstreams []types.Upstream, decryptedKeys map[string]string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, u := range upstreams {
+		if u.Provider != types.ProviderCodex {
+			continue
+		}
+		raw, ok := decryptedKeys[u.ID]
+		if !ok || raw == "" {
+			continue
+		}
+		var creds CodexCredentials
+		if err := json.Unmarshal([]byte(raw), &creds); err != nil {
+			if m.logger != nil {
+				m.logger.Error("failed to parse codex credentials", "upstream_id", u.ID, "error", err)
+			}
+			continue
+		}
+		m.credentials[u.ID] = &creds
+	}
+}
+
+// Reload re-loads credentials from the database, preserving any in-memory
+// credentials whose ExpiresAt is later than what the DB has (these are
+// freshly refreshed tokens that may not yet be persisted).
+func (m *CodexOAuthTokenManager) Reload(upstreams []types.Upstream, decryptedKeys map[string]string) {
+	newCreds := make(map[string]*CodexCredentials)
+	for _, u := range upstreams {
+		if u.Provider != types.ProviderCodex {
+			continue
+		}
+		raw, ok := decryptedKeys[u.ID]
+		if !ok || raw == "" {
+			continue
+		}
+		var creds CodexCredentials
+		if err := json.Unmarshal([]byte(raw), &creds); err != nil {
+			if m.logger != nil {
+				m.logger.Error("failed to parse codex credentials on reload", "upstream_id", u.ID, "error", err)
+			}
+			continue
+		}
+		newCreds[u.ID] = &creds
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, existing := range m.credentials {
+		if dbCreds, ok := newCreds[id]; ok && existing.ExpiresAt > dbCreds.ExpiresAt {
+			newCreds[id] = existing
+		}
+	}
+	m.credentials = newCreds
 }
