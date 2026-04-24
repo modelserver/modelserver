@@ -27,8 +27,11 @@ Add a new `codex` upstream provider that:
   manager parallel to `OAuthTokenManager`.
 - Proxies wire-compatible OpenAI Responses requests (`POST /responses`) to
   `https://chatgpt.com/backend-api/codex` with the headers the ChatGPT backend
-  requires (`Authorization`, `ChatGPT-Account-ID`, `OpenAI-Beta`, `originator`,
-  `version`, `session_id`, codex-flavored `User-Agent`).
+  requires (`Authorization`, `ChatGPT-Account-ID`, `version`, `session_id`,
+  `x-codex-window-id`, codex-flavored `User-Agent`). The `originator` is
+  embedded in `User-Agent` (codex CLI behaviour), not sent as a separate
+  header. `OpenAI-Beta` is **not** sent for the HTTP transport (it is only
+  used by the websocket path in codex CLI).
 - Recovers from upstream-side token revocation by force-refreshing once on
   401/403, mirroring the claudecode behaviour in `executor.go`.
 - Surfaces a complete authorize → paste-callback-URL → exchange UI in the
@@ -149,27 +152,32 @@ const (
     // Pinned to a recent codex CLI release at implementation time. Bumping
     // these is a deliberate maintenance task (analogous to `fixedUserAgent`
     // in normalize_identity.go for claudecode); we do not chase upstream.
-    codexUserAgent      = "codex_cli_rs/<version> (<os>; <arch>) Codex"
-    codexOriginator     = "codex_cli_rs"
-    codexVersion        = "<version>"
-    codexOpenAIBeta     = "responses=experimental"
+    // The originator string ("codex_cli_rs") is part of the User-Agent
+    // prefix per codex CLI's get_codex_user_agent(); it is NOT sent as a
+    // standalone header.
+    codexUserAgent = "codex_cli_rs/<version> (<os>; <arch>) Codex"
+    codexVersion   = "<version>"
 )
 
 func directorSetCodexUpstream(req *http.Request, baseURL, accessToken, accountID, upstreamID string) {
     // 1. Set scheme/host/path from baseURL (default codexDefaultBaseURL).
-    // 2. Bearer token, ChatGPT-Account-ID (only if non-empty).
-    // 3. Strip x-api-key.
-    // 4. Set OpenAI-Beta, originator, version, User-Agent (always overwrite).
-    // 5. session_id: preserve client's value if present, else derive a fresh UUID.
-    // 6. Defensive Connection: keep-alive.
+    // 2. Bearer token; ChatGPT-Account-ID (only if non-empty).
+    // 3. Strip x-api-key (clients sending an OpenAI sk-... key shouldn't
+    //    accidentally leak it to the ChatGPT backend).
+    // 4. Set User-Agent and version (always overwrite — these are codex
+    //    fingerprint headers the backend uses to gate access).
+    // 5. session_id: preserve client's value if present, else fill a fresh
+    //    random UUID. Header name is lowercase "session_id" with an
+    //    underscore (matches codex CLI's build_conversation_headers).
+    // 6. Do NOT set OpenAI-Beta — that header is websocket-only in codex CLI.
+    // 7. Defensive Connection: keep-alive.
 }
 
-// deriveCodexFallbackSessionID returns a random UUIDv4-style string for use
-// when the client did not supply a Session-Id header. It is NOT derived from
-// upstream.ID — that would make every request look like one giant session to
-// the ChatGPT backend and risk being mistaken for a runaway session or having
-// prompt-cache reuse fail.
-func deriveCodexFallbackSessionID() string { ... }
+// fillCodexFallbackSessionID returns a random UUIDv4 string used when the
+// client did not supply a session_id header. It is NOT derived from
+// upstream.ID — that would make every request look like one giant session
+// to the ChatGPT backend and risk being mistaken for a runaway session.
+func fillCodexFallbackSessionID() string { ... }
 ```
 
 ### CodexCredentials & CodexOAuthTokenManager (`internal/proxy/codex_oauth.go`)
@@ -213,14 +221,28 @@ func (m *CodexOAuthTokenManager) refreshToken(upstreamID string) error
 func ParseCodexAccessTokenAndAccount(raw string) (accessToken, accountID string)
 ```
 
-`refreshToken` POSTs JSON `{grant_type:"refresh_token", client_id, refresh_token, scope}` to
-`CodexTokenURL`. The response includes new `access_token`, `id_token`,
-`refresh_token`, `expires_in`. After a successful refresh, the manager:
+`refreshToken` POSTs JSON `{client_id, grant_type:"refresh_token", refresh_token}`
+to `CodexTokenURL` (no `scope` field — codex CLI's `RefreshRequest` struct
+omits it, and OpenAI's auth server rejects requests that include both a
+scope and a refresh_token). The response shape is:
 
-1. Re-parses `chatgpt_account_id` from the new `id_token` if present (the
-   account id is stable across refreshes; we only re-extract to keep the
-   stored blob complete).
-2. Persists the encrypted credentials JSON via `store.UpdateUpstream`.
+```json
+{
+  "id_token": "<optional>",
+  "access_token": "<optional>",
+  "refresh_token": "<optional>",
+  "expires_in": 3600
+}
+```
+
+All three token fields are optional in the refresh response (matches codex
+CLI's `Option<String>` typing). After a successful refresh, the manager:
+
+1. Updates `access_token`, `id_token`, `refresh_token` only if the response
+   actually carried them (otherwise keep the previous values).
+2. Re-parses `chatgpt_account_id` from the new `id_token` only if a new
+   `id_token` was returned; otherwise preserve the existing account id.
+3. Persists the encrypted credentials JSON via `store.UpdateUpstream`.
 
 OIDC parsing of the `id_token` extracts `chatgpt_account_id` from the
 `https://api.openai.com/auth.chatgpt_account_id` claim. Implementation is a
@@ -283,14 +305,20 @@ adding a new parameter to the `ProviderTransformer` interface.
 Add codex-related keys to the allowed list:
 
 ```go
-canon == "Openai-Beta",
 canon == "Chatgpt-Account-Id",
-canon == "Originator",
-canon == "Session-Id",
 canon == "Version",
-// Codex CLI fingerprint headers, if/when the client provides them.
+// Note on session_id: it has no hyphens, so http.CanonicalHeaderKey
+// returns "Session_id" (only the first letter capitalized). Match that
+// literal — do NOT use "Session-Id".
+canon == "Session_id",
+// Codex CLI per-turn / per-window fingerprint headers, if/when the client
+// provides them. The backend tolerates absent values; we never invent them.
 strings.HasPrefix(canon, "X-Codex-")
 ```
+
+Notably absent from the allowlist:
+- `Originator` — codex CLI never sends this as a standalone header; it's part of `User-Agent`.
+- `Openai-Beta` — codex CLI only sends this on the websocket transport, not on HTTP `/responses`. Adding it would diverge from real CLI fingerprint.
 
 ### Admin endpoints (`internal/admin/handle_codex_oauth.go`, `routes.go`)
 
@@ -466,6 +494,12 @@ Admin              Dashboard            Backend           OpenAI Auth
 - **Header allow-list regression**: extending `sanitizeOutboundHeaders` is the
   one cross-cutting change. The codex_test golden assertions will catch a
   missing entry on day one.
+- **`session_id` underscore handling**: Go's `http.CanonicalHeaderKey` keeps
+  underscores intact (`session_id` → `Session_id`). Some HTTP servers (notably
+  nginx with the default `underscores_in_headers off`) drop such headers, but
+  the ChatGPT backend already accepts them — codex CLI sends the same name —
+  so no special handling is needed on our side. The codex_test golden test
+  pins the on-the-wire spelling to catch any future Go stdlib change.
 
 ## Open Questions (resolved during brainstorming)
 
