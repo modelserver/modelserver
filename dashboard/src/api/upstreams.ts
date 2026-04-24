@@ -186,11 +186,22 @@ export interface CodexRateLimitWindow {
   reset_at: number;
 }
 
+export interface CodexUpstreamBreakdown {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  credits_consumed: number;
+  request_count: number;
+}
+
 export interface CodexRateLimitDetails {
   allowed: boolean;
   limit_reached: boolean;
   primary_window?: CodexRateLimitWindow;
   secondary_window?: CodexRateLimitWindow;
+  local_primary?: Record<string, CodexUpstreamBreakdown>;
+  local_secondary?: Record<string, CodexUpstreamBreakdown>;
 }
 
 export interface CodexCreditDetails {
