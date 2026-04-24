@@ -207,8 +207,8 @@ func TestCodex_RefreshToken_RoundTrip(t *testing.T) {
 		if orig := r.Header.Get("Originator"); orig != "codex_cli_rs" {
 			t.Errorf("Originator = %q, want codex_cli_rs", orig)
 		}
-		if ua := r.Header.Get("User-Agent"); ua != codexUserAgent {
-			t.Errorf("User-Agent = %q, want %q", ua, codexUserAgent)
+		if ua := r.Header.Get("User-Agent"); ua != CodexUserAgent {
+			t.Errorf("User-Agent = %q, want %q", ua, CodexUserAgent)
 		}
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)

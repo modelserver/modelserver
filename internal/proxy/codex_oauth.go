@@ -245,7 +245,7 @@ func (m *CodexOAuthTokenManager) refreshToken(upstreamID string) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Originator", codexOriginator)
-	req.Header.Set("User-Agent", codexUserAgent)
+	req.Header.Set("User-Agent", CodexUserAgent)
 	resp, err := m.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("oauth token request failed: %w", err)

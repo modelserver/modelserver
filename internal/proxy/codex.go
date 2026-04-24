@@ -8,12 +8,15 @@ import (
 	"path"
 )
 
-// codex outbound constants. Pinned to a recent codex CLI release at
-// implementation time; bumping is a deliberate maintenance task.
+// codex outbound constants. Pinned to codex CLI 0.124.0; bumping is a
+// deliberate maintenance task.
 const (
 	codexDefaultBaseURL = "https://chatgpt.com/backend-api/codex"
-	codexVersion        = "0.55.0"
-	codexUserAgent      = "codex_cli_rs/0.55.0 (Linux; x64) Codex"
+	// CodexVersion and CodexUserAgent are exported so internal/admin can reuse
+	// them for token-refresh and utilization requests without duplicating the
+	// literals.
+	CodexVersion   = "0.124.0"
+	CodexUserAgent = "codex_cli_rs/0.124.0 (Linux; x64) Codex"
 	// codexOriginator is sent as both part of the User-Agent and as a
 	// standalone "Originator" header on every outbound request. This matches
 	// codex CLI's default_headers() which inserts it via reqwest's
@@ -49,9 +52,9 @@ func directorSetCodexUpstream(req *http.Request, baseURL, accessToken, accountID
 
 	// Codex fingerprint headers always overwrite — the backend gates
 	// access on these.
-	req.Header.Set("User-Agent", codexUserAgent)
+	req.Header.Set("User-Agent", CodexUserAgent)
 	req.Header.Set("Originator", codexOriginator)
-	req.Header.Set("Version", codexVersion)
+	req.Header.Set("Version", CodexVersion)
 	req.Header.Set("Connection", "keep-alive")
 
 	// session_id: preserve whatever the client provided; otherwise fill

@@ -29,8 +29,8 @@ func TestDirectorSetCodexUpstream_DefaultBaseURL(t *testing.T) {
 	if r.Header.Get("x-api-key") != "" {
 		t.Error("x-api-key was not stripped")
 	}
-	if got := r.Header.Get("Version"); got != codexVersion {
-		t.Errorf("Version = %q, want %q", got, codexVersion)
+	if got := r.Header.Get("Version"); got != CodexVersion {
+		t.Errorf("Version = %q, want %q", got, CodexVersion)
 	}
 	if got := r.Header.Get("User-Agent"); !strings.HasPrefix(got, "codex_cli_rs/") {
 		t.Errorf("User-Agent = %q, want codex_cli_rs/* prefix", got)
@@ -92,7 +92,7 @@ func TestSanitizeOutboundHeaders_PassesCodexHeaders(t *testing.T) {
 		"Authorization":      {"Bearer x"},
 		"Chatgpt-Account-Id": {"org_1"},
 		"Originator":         {"codex_cli_rs"},
-		"Version":            {"0.55.0"},
+		"Version":            {CodexVersion},
 		"Session_id":         {"uuid"},
 		"X-Codex-Window-Id":  {"win-1"},
 		"X-Random-Garbage":   {"drop me"},
