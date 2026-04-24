@@ -317,11 +317,14 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 						},
 					},
 				},
-				"max_output_tokens":   16,
-				// Codex backend rejects stream:false with "Stream must be set
-				// to true". The test only checks status code, so a 200 SSE
-				// reply is enough — the response body is read and discarded
-				// below for all providers.
+				// Codex backend has no max_output_tokens param (not in
+				// ResponsesApiRequest at /root/codex/codex-rs/codex-api/src/common.rs:163)
+				// and rejects it with "Unsupported parameter: max_output_tokens".
+				// The test message is one word, so the unbounded reply is small.
+				//
+				// stream:false is also rejected ("Stream must be set to true").
+				// The test only checks status code, so a 200 SSE reply is
+				// enough — the response body is read and discarded below.
 				"stream":              true,
 				"instructions":        "",
 				"tools":               []interface{}{},
