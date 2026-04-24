@@ -119,6 +119,19 @@ func TestHandleCodexOAuthExchange(t *testing.T) {
 	if resp.Data.ChatGPTAccountID != "org_test" {
 		t.Errorf("chatgpt_account_id = %q", resp.Data.ChatGPTAccountID)
 	}
+	if resp.Data.IDToken != "" {
+		t.Errorf("id_token should be empty in response, got %q", resp.Data.IDToken)
+	}
+
+	// Verify the raw JSON does not contain an id_token key at all.
+	var rawResp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &rawResp); err == nil {
+		if data, ok := rawResp["data"].(map[string]any); ok {
+			if _, present := data["id_token"]; present {
+				t.Error("response leaked id_token to client")
+			}
+		}
+	}
 }
 
 func TestHandleCodexTokenStatus_NotFound(t *testing.T) {
