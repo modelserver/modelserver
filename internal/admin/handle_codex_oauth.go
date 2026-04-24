@@ -225,8 +225,16 @@ func handleCodexTokenRefresh(st *store.Store, encKey []byte) http.HandlerFunc {
 			"grant_type":    "refresh_token",
 			"refresh_token": creds.RefreshToken,
 		})
+		req, err := http.NewRequest(http.MethodPost, codexOAuthTokenURL, bytes.NewReader(body))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to build refresh request")
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Originator", "codex_cli_rs")
+		req.Header.Set("User-Agent", "codex_cli_rs/0.55.0 (Linux; x64) Codex")
 		client := &http.Client{Timeout: 15 * time.Second}
-		resp, err := client.Post(codexOAuthTokenURL, "application/json", bytes.NewReader(body))
+		resp, err := client.Do(req)
 		if err != nil {
 			slog.Error("codex manual token refresh: request failed", "upstream_id", upstreamID, "error", err)
 			writeError(w, http.StatusBadGateway, "upstream_error", fmt.Sprintf("codex refresh request failed: %v", err))
@@ -361,39 +369,45 @@ func handleCodexUtilization(st *store.Store, encKey []byte) http.HandlerFunc {
 				"grant_type":    "refresh_token",
 				"refresh_token": creds.RefreshToken,
 			})
-			client := &http.Client{Timeout: 15 * time.Second}
-			refResp, refErr := client.Post(codexOAuthTokenURL, "application/json", bytes.NewReader(refBody))
-			if refErr == nil {
-				defer refResp.Body.Close()
-				if refResp.StatusCode == http.StatusOK {
-					var tokenResp struct {
-						IDToken      *string `json:"id_token"`
-						AccessToken  *string `json:"access_token"`
-						RefreshToken *string `json:"refresh_token"`
-						ExpiresIn    int64   `json:"expires_in"`
-					}
-					if rb, _ := io.ReadAll(io.LimitReader(refResp.Body, 8192)); json.Unmarshal(rb, &tokenResp) == nil {
-						newCreds := creds
-						if tokenResp.AccessToken != nil {
-							newCreds.AccessToken = *tokenResp.AccessToken
-							accessToken = *tokenResp.AccessToken
+			refReq, refReqErr := http.NewRequest(http.MethodPost, codexOAuthTokenURL, bytes.NewReader(refBody))
+			if refReqErr == nil {
+				refReq.Header.Set("Content-Type", "application/json")
+				refReq.Header.Set("Originator", "codex_cli_rs")
+				refReq.Header.Set("User-Agent", "codex_cli_rs/0.55.0 (Linux; x64) Codex")
+				refClient := &http.Client{Timeout: 15 * time.Second}
+				refResp, refErr := refClient.Do(refReq)
+				if refErr == nil {
+					defer refResp.Body.Close()
+					if refResp.StatusCode == http.StatusOK {
+						var tokenResp struct {
+							IDToken      *string `json:"id_token"`
+							AccessToken  *string `json:"access_token"`
+							RefreshToken *string `json:"refresh_token"`
+							ExpiresIn    int64   `json:"expires_in"`
 						}
-						if tokenResp.RefreshToken != nil {
-							newCreds.RefreshToken = *tokenResp.RefreshToken
-						}
-						if tokenResp.IDToken != nil {
-							newCreds.IDToken = *tokenResp.IDToken
-							if id := extractCodexAccountID(*tokenResp.IDToken); id != "" {
-								newCreds.ChatGPTAccountID = id
+						if rb, _ := io.ReadAll(io.LimitReader(refResp.Body, 8192)); json.Unmarshal(rb, &tokenResp) == nil {
+							newCreds := creds
+							if tokenResp.AccessToken != nil {
+								newCreds.AccessToken = *tokenResp.AccessToken
+								accessToken = *tokenResp.AccessToken
 							}
-						}
-						if tokenResp.ExpiresIn > 0 {
-							newCreds.ExpiresAt = time.Now().Unix() + tokenResp.ExpiresIn
-						}
-						newCreds.ClientID = clientID
-						if cj, err := json.Marshal(newCreds); err == nil {
-							if enc, err := crypto.Encrypt(encKey, cj); err == nil {
-								_ = st.UpdateUpstream(upstreamID, map[string]interface{}{"api_key_encrypted": enc})
+							if tokenResp.RefreshToken != nil {
+								newCreds.RefreshToken = *tokenResp.RefreshToken
+							}
+							if tokenResp.IDToken != nil {
+								newCreds.IDToken = *tokenResp.IDToken
+								if id := extractCodexAccountID(*tokenResp.IDToken); id != "" {
+									newCreds.ChatGPTAccountID = id
+								}
+							}
+							if tokenResp.ExpiresIn > 0 {
+								newCreds.ExpiresAt = time.Now().Unix() + tokenResp.ExpiresIn
+							}
+							newCreds.ClientID = clientID
+							if cj, err := json.Marshal(newCreds); err == nil {
+								if enc, err := crypto.Encrypt(encKey, cj); err == nil {
+									_ = st.UpdateUpstream(upstreamID, map[string]interface{}{"api_key_encrypted": enc})
+								}
 							}
 						}
 					}

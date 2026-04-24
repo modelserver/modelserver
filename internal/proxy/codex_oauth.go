@@ -239,7 +239,14 @@ func (m *CodexOAuthTokenManager) refreshToken(upstreamID string) error {
 		"refresh_token": refreshToken,
 	})
 
-	resp, err := m.httpClient.Post(m.tokenURL, "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, m.tokenURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("oauth token request build failed: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Originator", codexOriginator)
+	req.Header.Set("User-Agent", codexUserAgent)
+	resp, err := m.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("oauth token request failed: %w", err)
 	}
