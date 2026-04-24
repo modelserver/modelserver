@@ -191,6 +191,24 @@ func toStringSlice(v interface{}) ([]string, bool) {
 	}
 }
 
+// toInt64 turns an interface{} decoded from JSON into int64. JSON numbers
+// decode to float64 by default; this helper also accepts int/int64 for
+// callers that pre-typed the value.
+func toInt64(v interface{}) (int64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return int64(n), true
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	case nil:
+		return 0, true
+	default:
+		return 0, false
+	}
+}
+
 // writeUnknownModelsError maps a *modelcatalog.UnknownModelsError to a 400
 // response whose `details` carries every unknown name. Any other error is
 // treated as a 500.

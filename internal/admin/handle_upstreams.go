@@ -66,7 +66,6 @@ func handleCreateUpstream(st *store.Store, encKey []byte, catalog modelcatalog.C
 			MaxConcurrent   int                       `json:"max_concurrent"`
 			TestModel       string                    `json:"test_model"`
 			HealthCheck     *types.HealthCheckConfig   `json:"health_check"`
-			DialTimeout     time.Duration             `json:"dial_timeout"`
 			ReadTimeout     time.Duration             `json:"read_timeout"`
 		}
 		if err := decodeBody(r, &body); err != nil {
@@ -111,7 +110,6 @@ func handleCreateUpstream(st *store.Store, encKey []byte, catalog modelcatalog.C
 			MaxConcurrent:   body.MaxConcurrent,
 			TestModel:       body.TestModel,
 			HealthCheck:     body.HealthCheck,
-			DialTimeout:     body.DialTimeout,
 			ReadTimeout:     body.ReadTimeout,
 			Status:          types.UpstreamStatusActive,
 		}
@@ -148,7 +146,7 @@ func handleUpdateUpstream(st *store.Store, encKey []byte, catalog modelcatalog.C
 		for _, field := range []string{
 			"name", "base_url", "provider", "supported_models", "model_map",
 			"weight", "max_concurrent", "test_model", "health_check",
-			"dial_timeout", "read_timeout", "status",
+			"read_timeout", "status",
 		} {
 			v, ok := body[field]
 			if !ok {
@@ -189,6 +187,19 @@ func handleUpdateUpstream(st *store.Store, encKey []byte, catalog modelcatalog.C
 				}
 				mapJSON, _ := json.Marshal(normalized)
 				v = mapJSON
+			case "read_timeout":
+				// JSON numbers decode to float64; the DB column is INTERVAL.
+				// Match the create path: 0 -> NULL, non-zero -> time.Duration.
+				ns, ok := toInt64(v)
+				if !ok {
+					writeError(w, http.StatusBadRequest, "bad_request", field+" must be a number (nanoseconds)")
+					return
+				}
+				if ns <= 0 {
+					v = nil
+				} else {
+					v = time.Duration(ns)
+				}
 			}
 			updates[field] = v
 		}

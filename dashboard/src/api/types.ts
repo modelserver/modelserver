@@ -364,7 +364,6 @@ export interface Upstream {
   model_map?: Record<string, string>;
   weight: number;
   max_concurrent: number;
-  dial_timeout?: number;
   read_timeout?: number;
   test_model?: string;
   health_check?: HealthCheckConfig;

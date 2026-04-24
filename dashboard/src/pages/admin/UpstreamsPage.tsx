@@ -240,7 +240,6 @@ export function UpstreamsPage() {
     model_map: [] as { from: string; to: string }[],
     weight: "1",
     max_concurrent: "10",
-    dial_timeout: "",
     read_timeout: "",
     test_model: "",
     status: "active",
@@ -275,7 +274,6 @@ export function UpstreamsPage() {
       model_map: [],
       weight: "1",
       max_concurrent: "10",
-      dial_timeout: "",
       read_timeout: "",
       test_model: "",
       status: "active",
@@ -298,7 +296,6 @@ export function UpstreamsPage() {
       model_map: modelMapEntries,
       weight: String(u.weight),
       max_concurrent: String(u.max_concurrent),
-      dial_timeout: nsToSecondsString(u.dial_timeout),
       read_timeout: nsToSecondsString(u.read_timeout),
       test_model: u.test_model ?? "",
       status: u.status,
@@ -316,7 +313,6 @@ export function UpstreamsPage() {
           modelMap[entry.from] = entry.to;
         }
       }
-      const dialNs = secondsStringToNs(form.dial_timeout);
       const readNs = secondsStringToNs(form.read_timeout);
       if (editingId) {
         const body: Record<string, unknown> = {
@@ -328,7 +324,6 @@ export function UpstreamsPage() {
           model_map: modelMap,
           weight: Number(form.weight) || 1,
           max_concurrent: Number(form.max_concurrent) || 10,
-          dial_timeout: dialNs ?? 0,
           read_timeout: readNs ?? 0,
           test_model: form.test_model || undefined,
           status: form.status,
@@ -349,7 +344,6 @@ export function UpstreamsPage() {
           test_model: form.test_model || undefined,
           status: form.status as Upstream["status"],
         };
-        if (dialNs !== null) createBody.dial_timeout = dialNs;
         if (readNs !== null) createBody.read_timeout = readNs;
         await createUpstream.mutateAsync(createBody as Parameters<typeof createUpstream.mutateAsync>[0]);
         toast.success("Upstream created");
@@ -888,18 +882,6 @@ export function UpstreamsPage() {
                   value={form.max_concurrent}
                   onChange={(e) => setForm((p) => ({ ...p, max_concurrent: e.target.value }))}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label>Dial Timeout (s)</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={form.dial_timeout}
-                  onChange={(e) => setForm((p) => ({ ...p, dial_timeout: e.target.value }))}
-                  placeholder="10"
-                />
-                <p className="text-xs text-muted-foreground">Empty = default 10s</p>
               </div>
               <div className="space-y-2">
                 <Label>Read Timeout (s)</Label>

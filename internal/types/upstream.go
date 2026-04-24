@@ -32,7 +32,6 @@ type Upstream struct {
 	ModelMap        map[string]string  `json:"model_map"`
 	Weight          int                `json:"weight"`                  // Default LB weight (can be overridden per-group)
 	MaxConcurrent   int                `json:"max_concurrent"`          // 0 = unlimited
-	DialTimeout     time.Duration      `json:"dial_timeout,omitempty"`  // Per-upstream TCP dial timeout (default: 10s)
 	ReadTimeout     time.Duration      `json:"read_timeout,omitempty"`  // Per-upstream response timeout (default: 300s for streaming)
 	TestModel       string             `json:"test_model,omitempty"`
 	HealthCheck     *HealthCheckConfig `json:"health_check,omitempty"`  // Per-upstream health check config
