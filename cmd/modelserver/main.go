@@ -151,7 +151,8 @@ func main() {
 	catalog := modelcatalog.New(initialModels)
 
 	oauthMgr := proxy.NewOAuthTokenManager(st, encryptionKey, logger)
-	router := proxy.NewRouter(upstreams, groups, routingRoutes, encryptionKey, logger, cfg.Trace.SessionTTL, oauthMgr, catalog)
+	codexOAuthMgr := proxy.NewCodexOAuthTokenManager(st, encryptionKey, logger)
+	router := proxy.NewRouter(upstreams, groups, routingRoutes, encryptionKey, logger, cfg.Trace.SessionTTL, oauthMgr, codexOAuthMgr, catalog)
 	router.StartSessionCleanup(10 * time.Minute)
 	// Start health checker.
 	router.HealthChecker().Start(context.Background())

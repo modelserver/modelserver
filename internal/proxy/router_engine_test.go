@@ -46,7 +46,7 @@ func newTestRouterForSession(t *testing.T) (*Router, *resolvedGroup) {
 		Status:          "active",
 	}}
 
-	r := NewRouter(upstreams, groups, routes, nil, logger, time.Hour, nil, nil)
+	r := NewRouter(upstreams, groups, routes, nil, logger, time.Hour, nil, nil, nil)
 	g, err := r.Match("", "claude-sonnet", types.KindAnthropicMessages)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
@@ -206,7 +206,7 @@ func TestSelectWithRetry_BoundUpstreamUnavailableFallsThrough(t *testing.T) {
 		},
 	}}
 	routes := []types.Route{{ID: "r1", ModelNames: []string{"claude-sonnet"}, RequestKinds: []string{types.KindAnthropicMessages}, UpstreamGroupID: "grp", MatchPriority: 1, Status: "active"}}
-	r := NewRouter(upstreams, groups, routes, nil, logger, time.Hour, nil, nil)
+	r := NewRouter(upstreams, groups, routes, nil, logger, time.Hour, nil, nil, nil)
 	g, err := r.Match("", "claude-sonnet", types.KindAnthropicMessages)
 	if err != nil {
 		t.Fatalf("Match failed: %v", err)
@@ -333,7 +333,7 @@ func newRouterWithRoutes(t *testing.T, routes ...*types.Route) *Router {
 	for i, r := range routes {
 		asValues[i] = *r
 	}
-	return NewRouter(upstreams, groups, asValues, nil, logger, time.Hour, nil, nil)
+	return NewRouter(upstreams, groups, asValues, nil, logger, time.Hour, nil, nil, nil)
 }
 
 func TestMatch_KindIsRequired_NoMatchingKindReturnsError(t *testing.T) {

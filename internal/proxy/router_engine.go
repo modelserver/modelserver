@@ -52,8 +52,9 @@ type Router struct {
 
 	catalog modelcatalog.Catalog // for ActiveModels and status checks
 
-	logger   *slog.Logger
-	oauthMgr *OAuthTokenManager
+	logger        *slog.Logger
+	oauthMgr      *OAuthTokenManager
+	codexOAuthMgr *CodexOAuthTokenManager
 }
 
 type resolvedGroup struct {
@@ -85,13 +86,15 @@ func NewRouter(
 	logger *slog.Logger,
 	sessionTTL time.Duration,
 	oauthMgr *OAuthTokenManager,
+	codexOAuthMgr *CodexOAuthTokenManager,
 	catalog modelcatalog.Catalog,
 ) *Router {
 	r := &Router{
-		sessionTTL: sessionTTL,
-		logger:     logger,
-		oauthMgr:   oauthMgr,
-		catalog:    catalog,
+		sessionTTL:    sessionTTL,
+		logger:        logger,
+		oauthMgr:      oauthMgr,
+		codexOAuthMgr: codexOAuthMgr,
+		catalog:       catalog,
 	}
 
 	// Create the Vertex AI token manager.
@@ -223,6 +226,11 @@ func (r *Router) buildMaps(
 	// Load/reload OAuth credentials for claudecode upstreams.
 	if r.oauthMgr != nil {
 		r.oauthMgr.Reload(upstreams, keys)
+	}
+
+	// Load/reload OAuth credentials for codex upstreams.
+	if r.codexOAuthMgr != nil {
+		r.codexOAuthMgr.Reload(upstreams, keys)
 	}
 }
 
@@ -534,6 +542,33 @@ func (r *Router) ForceRefreshClaudeCodeAccessToken(upstreamID string) (string, e
 		return "", fmt.Errorf("OAuthTokenManager not configured")
 	}
 	return r.oauthMgr.ForceRefreshAccessToken(upstreamID)
+}
+
+// GetCodexAccessToken returns a fresh access token for a codex upstream,
+// refreshing if needed.
+func (r *Router) GetCodexAccessToken(upstreamID string) (string, error) {
+	if r.codexOAuthMgr == nil {
+		return "", fmt.Errorf("CodexOAuthTokenManager not configured")
+	}
+	return r.codexOAuthMgr.GetAccessToken(upstreamID)
+}
+
+// GetCodexAccountID returns the ChatGPT-Account-ID for a codex upstream
+// (may be empty for accounts without a workspace).
+func (r *Router) GetCodexAccountID(upstreamID string) (string, error) {
+	if r.codexOAuthMgr == nil {
+		return "", fmt.Errorf("CodexOAuthTokenManager not configured")
+	}
+	return r.codexOAuthMgr.GetAccountID(upstreamID)
+}
+
+// ForceRefreshCodexAccessToken bypasses the expiry buffer to recover from
+// upstream 401/403.
+func (r *Router) ForceRefreshCodexAccessToken(upstreamID string) (string, error) {
+	if r.codexOAuthMgr == nil {
+		return "", fmt.Errorf("CodexOAuthTokenManager not configured")
+	}
+	return r.codexOAuthMgr.ForceRefreshAccessToken(upstreamID)
 }
 
 // ConnTracker returns the shared connection tracker.
