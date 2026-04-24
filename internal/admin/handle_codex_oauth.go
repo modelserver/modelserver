@@ -486,6 +486,52 @@ func handleCodexUtilization(st *store.Store, encKey []byte) http.HandlerFunc {
 			writeError(w, http.StatusBadGateway, "upstream_error", "codex usage returned invalid JSON")
 			return
 		}
+
+		// Enrich with per-model token+credit breakdown from our DB, mirroring
+		// the claudecode utilization handler. Adds local_primary and
+		// local_secondary keys to the rate_limit object.
+		var utilResp map[string]interface{}
+		if err := json.Unmarshal(body, &utilResp); err == nil {
+			rateLimit, _ := utilResp["rate_limit"].(map[string]interface{})
+			if rateLimit != nil {
+				type windowInfo struct {
+					srcKey   string // "primary_window" or "secondary_window"
+					localKey string // "local_primary" or "local_secondary"
+				}
+				windows := []windowInfo{
+					{"primary_window", "local_primary"},
+					{"secondary_window", "local_secondary"},
+				}
+				for _, win := range windows {
+					wObj, ok := rateLimit[win.srcKey].(map[string]interface{})
+					if !ok {
+						continue
+					}
+					// limit_window_seconds and reset_at are JSON numbers — float64 in Go.
+					secs, ok := wObj["limit_window_seconds"].(float64)
+					if !ok || secs <= 0 {
+						continue
+					}
+					resetAtF, ok := wObj["reset_at"].(float64)
+					if !ok || resetAtF <= 0 {
+						// No reset_at — fall back to "now - window".
+						resetAtF = float64(time.Now().Unix()) + secs
+					}
+					// Window started at reset_at - limit_window_seconds.
+					since := time.Unix(int64(resetAtF), 0).Add(-time.Duration(secs) * time.Second)
+					breakdown, err := st.GetTokenBreakdownByUpstreamAndModelSince(upstreamID, since)
+					if err != nil {
+						continue
+					}
+					rateLimit[win.localKey] = breakdown
+				}
+				utilResp["rate_limit"] = rateLimit
+			}
+			if enriched, err := json.Marshal(utilResp); err == nil {
+				body = enriched
+			}
+		}
+
 		full := []byte(fmt.Sprintf(`{"data":%s}`, string(body)))
 		cache.Store(upstreamID, &cacheEntry{body: full, fetchedAt: time.Now()})
 

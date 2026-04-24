@@ -231,8 +231,22 @@ function CodexUtilizationBadge({ upstreamId }: { upstreamId: string }) {
     return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
   }
 
+  function sumCredits(m?: Record<string, { credits_consumed: number }>): number | null {
+    if (!m) return null;
+    let total = 0;
+    for (const b of Object.values(m)) total += b.credits_consumed;
+    return total;
+  }
+
+  function formatCredits(c: number): string {
+    if (c >= 1000) return `${(c / 1000).toFixed(1)}kc`;
+    return `${c.toFixed(1)}c`;
+  }
+
   const primary = util.rate_limit?.primary_window;
   const secondary = util.rate_limit?.secondary_window;
+  const localPrimary = sumCredits(util.rate_limit?.local_primary);
+  const localSecondary = sumCredits(util.rate_limit?.local_secondary);
 
   if (!primary && !secondary) {
     return <span className="text-xs text-muted-foreground">{util.plan_type}</span>;
@@ -244,6 +258,9 @@ function CodexUtilizationBadge({ upstreamId }: { upstreamId: string }) {
         <span className="text-xs tabular-nums">
           {formatWindow(primary.limit_window_seconds)}:{" "}
           <span className={pctColor(primary.used_percent)}>{primary.used_percent}%</span>
+          {localPrimary != null && (
+            <span className="text-muted-foreground ml-1">local {formatCredits(localPrimary)}</span>
+          )}
           <span className="text-muted-foreground ml-1">({formatReset(primary.reset_after_seconds)})</span>
           <span className="text-muted-foreground ml-1">{util.plan_type}</span>
         </span>
@@ -252,6 +269,9 @@ function CodexUtilizationBadge({ upstreamId }: { upstreamId: string }) {
         <span className="text-xs tabular-nums">
           {formatWindow(secondary.limit_window_seconds)}:{" "}
           <span className={pctColor(secondary.used_percent)}>{secondary.used_percent}%</span>
+          {localSecondary != null && (
+            <span className="text-muted-foreground ml-1">local {formatCredits(localSecondary)}</span>
+          )}
           <span className="text-muted-foreground ml-1">({formatReset(secondary.reset_after_seconds)})</span>
         </span>
       )}
