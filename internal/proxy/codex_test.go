@@ -35,6 +35,9 @@ func TestDirectorSetCodexUpstream_DefaultBaseURL(t *testing.T) {
 	if got := r.Header.Get("User-Agent"); !strings.HasPrefix(got, "codex_cli_rs/") {
 		t.Errorf("User-Agent = %q, want codex_cli_rs/* prefix", got)
 	}
+	if got := r.Header.Get("Originator"); got != "codex_cli_rs" {
+		t.Errorf("Originator = %q, want codex_cli_rs", got)
+	}
 	if got := r.Header.Get("session_id"); got == "" {
 		t.Error("session_id should be auto-filled")
 	}
@@ -71,17 +74,31 @@ func TestDirectorSetCodexUpstream_CustomBaseURL(t *testing.T) {
 	}
 }
 
+func TestRandomCodexSessionID_Format(t *testing.T) {
+	got := randomCodexSessionID()
+	// 36 chars, 4 hyphens at positions 8, 13, 18, 23
+	if len(got) != 36 {
+		t.Errorf("len = %d, want 36; got %q", len(got), got)
+	}
+	for _, pos := range []int{8, 13, 18, 23} {
+		if got[pos] != '-' {
+			t.Errorf("expected '-' at index %d, got %q", pos, got)
+		}
+	}
+}
+
 func TestSanitizeOutboundHeaders_PassesCodexHeaders(t *testing.T) {
 	in := http.Header{
 		"Authorization":      {"Bearer x"},
 		"Chatgpt-Account-Id": {"org_1"},
+		"Originator":         {"codex_cli_rs"},
 		"Version":            {"0.55.0"},
 		"Session_id":         {"uuid"},
 		"X-Codex-Window-Id":  {"win-1"},
 		"X-Random-Garbage":   {"drop me"},
 	}
 	out := sanitizeOutboundHeaders(in)
-	for _, want := range []string{"Authorization", "Chatgpt-Account-Id", "Version", "Session_id", "X-Codex-Window-Id"} {
+	for _, want := range []string{"Authorization", "Chatgpt-Account-Id", "Originator", "Version", "Session_id", "X-Codex-Window-Id"} {
 		if out.Get(want) == "" {
 			t.Errorf("expected header %q to pass through", want)
 		}

@@ -2,7 +2,7 @@ package proxy
 
 import (
 	"crypto/rand"
-	"encoding/hex"
+	"fmt"
 	"net/http"
 	"net/url"
 	"path"
@@ -12,11 +12,13 @@ import (
 // implementation time; bumping is a deliberate maintenance task.
 const (
 	codexDefaultBaseURL = "https://chatgpt.com/backend-api/codex"
-	// The originator string ("codex_cli_rs") is part of the User-Agent
-	// prefix per codex CLI's get_codex_user_agent(); it is NOT sent as a
-	// standalone header.
-	codexVersion   = "0.55.0"
-	codexUserAgent = "codex_cli_rs/0.55.0 (Linux; x64) Codex"
+	codexVersion        = "0.55.0"
+	codexUserAgent      = "codex_cli_rs/0.55.0 (Linux; x64) Codex"
+	// codexOriginator is sent as both part of the User-Agent and as a
+	// standalone "Originator" header on every outbound request. This matches
+	// codex CLI's default_headers() which inserts it via reqwest's
+	// default_headers mechanism (auth/default_client.rs).
+	codexOriginator = "codex_cli_rs"
 )
 
 // directorSetCodexUpstream rewrites the request to target the codex backend
@@ -48,6 +50,7 @@ func directorSetCodexUpstream(req *http.Request, baseURL, accessToken, accountID
 	// Codex fingerprint headers always overwrite — the backend gates
 	// access on these.
 	req.Header.Set("User-Agent", codexUserAgent)
+	req.Header.Set("Originator", codexOriginator)
 	req.Header.Set("Version", codexVersion)
 	req.Header.Set("Connection", "keep-alive")
 
@@ -59,11 +62,16 @@ func directorSetCodexUpstream(req *http.Request, baseURL, accessToken, accountID
 	}
 }
 
-// randomCodexSessionID returns a 32-hex-char value used as a fallback
-// session_id when the client didn't supply one. Cheaper than a real UUIDv4
-// formatter and equally opaque to the upstream.
+// randomCodexSessionID returns a hyphenated UUIDv4 string used as a fallback
+// session_id when the client didn't supply one. Codex CLI uses UUIDv7 (time-
+// ordered); v4 (random) is interchangeable for this opaque correlator. The
+// hyphenated 8-4-4-4-12 format matches what the ChatGPT backend expects.
 func randomCodexSessionID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
+	// Set version (4) and variant (RFC 4122) bits.
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
