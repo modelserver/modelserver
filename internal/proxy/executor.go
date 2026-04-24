@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -236,6 +237,7 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 	// claudecode upstream on this request. We retry at most once per request
 	// to avoid infinite loops.
 	claudeCodeOAuthRetried := false
+	codexOAuthRetried := false
 
 	// 6. Retry loop: try each candidate in order.
 	for attempt, candidate := range candidates {
@@ -362,6 +364,18 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 				apiKeyForUpstream = token
 			} else {
 				logger.Warn("claudecode token resolution failed, falling back to stored key", "error", err)
+			}
+		}
+		if upstream.Provider == types.ProviderCodex {
+			if token, err := e.router.GetCodexAccessToken(upstream.ID); err == nil {
+				accountID, _ := e.router.GetCodexAccountID(upstream.ID)
+				blob, _ := json.Marshal(map[string]string{
+					"access_token":       token,
+					"chatgpt_account_id": accountID,
+				})
+				apiKeyForUpstream = string(blob)
+			} else {
+				logger.Warn("codex token resolution failed, falling back to stored key", "error", err)
 			}
 		}
 
@@ -499,6 +513,77 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			retryReq.Host = outReq.Host
 			retryReq.Header = outReq.Header.Clone()
 			retryReq.Header.Set("Authorization", "Bearer "+newToken)
+
+			e.router.ConnTracker().Acquire(upstream.ID)
+
+			retryCtx := retryReq.Context()
+			var retryCancelFn context.CancelFunc
+			if timeout := upstreamTimeout(upstream, reqCtx.IsStream); timeout > 0 {
+				retryCtx, retryCancelFn = context.WithTimeout(retryCtx, timeout)
+			}
+			retryReq = retryReq.WithContext(retryCtx)
+
+			resp, doErr = e.httpClient.Do(retryReq)
+			if retryCancelFn != nil && doErr != nil {
+				retryCancelFn()
+			}
+			cancelFn = retryCancelFn
+
+			// Fall through to the normal commit path with the retry result.
+		}
+
+		// 6h3. Codex OAuth 401/403 recovery: mirrors the claudecode block above.
+		//       Additionally re-applies the ChatGPT-Account-ID header because
+		//       codex requires it alongside the bearer token.
+		if upstream.Provider == types.ProviderCodex && resp != nil &&
+			(resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) &&
+			!codexOAuthRetried {
+			codexOAuthRetried = true
+
+			// Discard the error response body and clean up.
+			io.ReadAll(io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			e.router.ConnTracker().Release(upstream.ID)
+			if cancelFn != nil {
+				cancelFn()
+			}
+
+			newToken, refreshErr := e.router.ForceRefreshCodexAccessToken(upstream.ID)
+			if refreshErr != nil {
+				logger.Warn("codex OAuth refresh failed on 401/403, returning original error", "error", refreshErr)
+				writeProxyError(w, resp.StatusCode, "upstream authentication failed")
+				// Complete the request record so it doesn't stay in "processing" forever.
+				if reqCtx.RequestID != "" {
+					duration := time.Since(startTime).Milliseconds()
+					failReq := types.Request{
+						OAuthGrantID: reqCtx.OAuthGrantID,
+						Status:       types.RequestStatusError,
+						LatencyMs:    duration,
+						ErrorMessage: "codex OAuth refresh failed",
+						ClientIP:     reqCtx.ClientIP,
+					}
+					go func() {
+						if err := e.store.CompleteRequest(reqCtx.RequestID, &failReq); err != nil {
+							e.logger.Error("failed to complete request", "request_id", reqCtx.RequestID, "error", err)
+						}
+					}()
+				}
+				return
+			}
+
+			logger.Info("retrying codex request after OAuth token refresh", "upstream_id", upstream.ID)
+
+			// Rebuild the outgoing request with the refreshed token.
+			// Use outReq.URL (the upstream URL set by SetUpstream), not
+			// r.URL (the original client URL).
+			retryReq, _ := http.NewRequestWithContext(r.Context(), r.Method, outReq.URL.String(), io.NopCloser(bytes.NewReader(transformedBody)))
+			retryReq.ContentLength = int64(len(transformedBody))
+			retryReq.Host = outReq.Host
+			retryReq.Header = outReq.Header.Clone()
+			retryReq.Header.Set("Authorization", "Bearer "+newToken)
+			if accountID, _ := e.router.GetCodexAccountID(upstream.ID); accountID != "" {
+				retryReq.Header.Set("ChatGPT-Account-ID", accountID)
+			}
 
 			e.router.ConnTracker().Acquire(upstream.ID)
 
