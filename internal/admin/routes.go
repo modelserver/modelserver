@@ -233,6 +233,8 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 				r.Get("/usage", handleUpstreamUsage(st))
 				r.Post("/claudecode/oauth/start", handleClaudeCodeOAuthStart())
 				r.Post("/claudecode/oauth/exchange", handleClaudeCodeOAuthExchange())
+				r.Post("/codex/oauth/start", handleCodexOAuthStart())
+				r.Post("/codex/oauth/exchange", handleCodexOAuthExchange())
 				r.Route("/{upstreamID}", func(r chi.Router) {
 					r.Get("/", handleGetUpstream(st))
 					r.Put("/", handleUpdateUpstream(st, encKey, catalog))
@@ -241,6 +243,9 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 					r.Get("/oauth/status", handleClaudeCodeTokenStatus(st, encKey))
 					r.Post("/oauth/refresh", handleClaudeCodeTokenRefresh(st, encKey))
 					r.Get("/utilization", handleClaudeCodeUtilization(st, encKey))
+					r.Get("/codex/oauth/status", handleCodexTokenStatus(st, encKey))
+					r.Post("/codex/oauth/refresh", handleCodexTokenRefresh(st, encKey))
+					r.Get("/codex/utilization", handleCodexUtilization(st, encKey))
 					r.Get("/utilization-snapshots", handleListUtilizationSnapshots(st))
 					r.Get("/utilization-analysis", handleUtilizationAnalysis(st))
 				})
