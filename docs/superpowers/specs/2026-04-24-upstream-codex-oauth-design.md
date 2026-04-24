@@ -146,9 +146,12 @@ Mirrors `claudecode.go`:
 ```go
 const (
     codexDefaultBaseURL = "https://chatgpt.com/backend-api/codex"
-    codexUserAgent      = "codex_cli_rs/0.55.0 (...)"   // Pinned to a real codex CLI release.
+    // Pinned to a recent codex CLI release at implementation time. Bumping
+    // these is a deliberate maintenance task (analogous to `fixedUserAgent`
+    // in normalize_identity.go for claudecode); we do not chase upstream.
+    codexUserAgent      = "codex_cli_rs/<version> (<os>; <arch>) Codex"
     codexOriginator     = "codex_cli_rs"
-    codexVersion        = "0.55.0"
+    codexVersion        = "<version>"
     codexOpenAIBeta     = "responses=experimental"
 )
 
@@ -349,11 +352,13 @@ the credentials JSON to be stored as the upstream's `api_key`:
 }
 ```
 
-`handleCodexUtilization` calls `GET https://chatgpt.com/backend-api/codex/usage`
-(or whichever endpoint the codex CLI uses for its 5h/7d windows) with the
-refreshed bearer + `ChatGPT-Account-ID`, applies the same 60-second cache and
-auto-snapshot logic as `handleClaudeCodeUtilization`. The returned JSON is
-served verbatim under `{"data": ...}`.
+`handleCodexUtilization` calls `GET https://chatgpt.com/backend-api/wham/usage`
+with the refreshed bearer + `ChatGPT-Account-ID`. (The ChatGPT-subscription
+usage endpoint is `wham/usage`, not `codex/usage` — `codex/usage` is the
+API-key path. Confirmed against `codex-rs/backend-client/src/client.rs`'s
+`PathStyle::ChatGptApi` branch.) The handler applies the same 60-second
+cache and auto-snapshot logic as `handleClaudeCodeUtilization`. The returned
+JSON is served verbatim under `{"data": ...}`.
 
 ### Dashboard (`dashboard/src/api/upstreams.ts`, `dashboard/src/pages/admin/UpstreamsPage.tsx`)
 
