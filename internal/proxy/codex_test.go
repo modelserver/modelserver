@@ -17,8 +17,8 @@ func TestDirectorSetCodexUpstream_DefaultBaseURL(t *testing.T) {
 	if r.URL.Host != "chatgpt.com" {
 		t.Errorf("Host = %q, want chatgpt.com", r.URL.Host)
 	}
-	if r.URL.Path != "/backend-api/codex/v1/responses" {
-		t.Errorf("Path = %q, want /backend-api/codex/v1/responses", r.URL.Path)
+	if r.URL.Path != "/backend-api/codex/responses" {
+		t.Errorf("Path = %q, want /backend-api/codex/responses", r.URL.Path)
 	}
 	if got := r.Header.Get("Authorization"); got != "Bearer fresh-token" {
 		t.Errorf("Authorization = %q, want Bearer fresh-token", got)
@@ -69,8 +69,26 @@ func TestDirectorSetCodexUpstream_CustomBaseURL(t *testing.T) {
 	if r.URL.Host != "example.com" {
 		t.Errorf("Host = %q, want example.com", r.URL.Host)
 	}
-	if r.URL.Path != "/api/v1/responses" {
-		t.Errorf("Path = %q, want /api/v1/responses", r.URL.Path)
+	if r.URL.Path != "/api/responses" {
+		t.Errorf("Path = %q, want /api/responses (/v1 stripped before join)", r.URL.Path)
+	}
+}
+
+func TestDirectorSetCodexUpstream_StripsV1Prefix(t *testing.T) {
+	// /v1/responses → /responses (no /v1 segment in final URL)
+	r := httptest.NewRequest(http.MethodPost, "http://proxy.local/v1/responses", nil)
+	directorSetCodexUpstream(r, "", "tok", "", "up-1")
+	if r.URL.Path != "/backend-api/codex/responses" {
+		t.Errorf("Path = %q, want /backend-api/codex/responses (no /v1)", r.URL.Path)
+	}
+}
+
+func TestDirectorSetCodexUpstream_NonV1PathPassesThrough(t *testing.T) {
+	// A request that doesn't start with /v1 should be joined as-is.
+	r := httptest.NewRequest(http.MethodPost, "http://proxy.local/responses", nil)
+	directorSetCodexUpstream(r, "", "tok", "", "up-1")
+	if r.URL.Path != "/backend-api/codex/responses" {
+		t.Errorf("Path = %q, want /backend-api/codex/responses", r.URL.Path)
 	}
 }
 

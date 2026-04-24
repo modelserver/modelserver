@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strings"
 )
 
 // codex outbound constants. Pinned to codex CLI 0.124.0; bumping is a
@@ -36,8 +37,17 @@ func directorSetCodexUpstream(req *http.Request, baseURL, accessToken, accountID
 	if u, err := url.Parse(target); err == nil {
 		req.URL.Scheme = u.Scheme
 		req.URL.Host = u.Host
+		// The proxy receives requests at /v1/responses (OpenAI's path convention),
+		// but the ChatGPT backend's codex endpoint is at /responses (no /v1 prefix).
+		// Strip the leading /v1 before joining so the final URL is correct.
+		incoming := strings.TrimPrefix(req.URL.Path, "/v1")
+		if incoming == "" {
+			incoming = "/"
+		}
 		if u.Path != "" && u.Path != "/" {
-			req.URL.Path = path.Join(u.Path, req.URL.Path)
+			req.URL.Path = path.Join(u.Path, incoming)
+		} else {
+			req.URL.Path = incoming
 		}
 	}
 	req.Host = req.URL.Host
