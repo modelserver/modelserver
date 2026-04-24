@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -12,7 +13,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/modelserver/modelserver/internal/crypto"
 	"github.com/modelserver/modelserver/internal/proxy"
+	"github.com/modelserver/modelserver/internal/store"
 )
 
 const defaultCodexRedirectURI = "http://localhost:1455/auth/callback"
@@ -150,6 +154,135 @@ func handleCodexOAuthExchange() http.HandlerFunc {
 		creds.ChatGPTAccountID = extractCodexAccountID(tokenResp.IDToken)
 
 		writeData(w, http.StatusOK, creds)
+	}
+}
+
+func handleCodexTokenStatus(st *store.Store, encKey []byte) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		upstreamID := chi.URLParam(r, "upstreamID")
+		u, err := st.GetUpstreamByID(upstreamID)
+		if err != nil || u == nil {
+			writeError(w, http.StatusNotFound, "not_found", "upstream not found")
+			return
+		}
+		if u.Provider != "codex" {
+			writeError(w, http.StatusBadRequest, "bad_request", "upstream is not a codex upstream")
+			return
+		}
+		plaintext, err := crypto.Decrypt(encKey, u.APIKeyEncrypted)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to decrypt credentials")
+			return
+		}
+		var creds proxy.CodexCredentials
+		if err := json.Unmarshal(plaintext, &creds); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to parse credentials")
+			return
+		}
+		writeData(w, http.StatusOK, map[string]interface{}{
+			"expires_at":         creds.ExpiresAt,
+			"has_refresh_token":  creds.RefreshToken != "",
+			"chatgpt_account_id": creds.ChatGPTAccountID,
+		})
+	}
+}
+
+func handleCodexTokenRefresh(st *store.Store, encKey []byte) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		upstreamID := chi.URLParam(r, "upstreamID")
+		u, err := st.GetUpstreamByID(upstreamID)
+		if err != nil || u == nil {
+			writeError(w, http.StatusNotFound, "not_found", "upstream not found")
+			return
+		}
+		if u.Provider != "codex" {
+			writeError(w, http.StatusBadRequest, "bad_request", "upstream is not a codex upstream")
+			return
+		}
+		plaintext, err := crypto.Decrypt(encKey, u.APIKeyEncrypted)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to decrypt credentials")
+			return
+		}
+		var creds proxy.CodexCredentials
+		if err := json.Unmarshal(plaintext, &creds); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to parse credentials")
+			return
+		}
+		if creds.RefreshToken == "" {
+			writeError(w, http.StatusBadRequest, "bad_request", "no refresh token; please re-authorize")
+			return
+		}
+		clientID := creds.ClientID
+		if clientID == "" {
+			clientID = proxy.CodexClientID
+		}
+
+		body, _ := json.Marshal(map[string]string{
+			"client_id":     clientID,
+			"grant_type":    "refresh_token",
+			"refresh_token": creds.RefreshToken,
+		})
+		client := &http.Client{Timeout: 15 * time.Second}
+		resp, err := client.Post(codexOAuthTokenURL, "application/json", bytes.NewReader(body))
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "upstream_error", fmt.Sprintf("codex refresh request failed: %v", err))
+			return
+		}
+		defer resp.Body.Close()
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+		if resp.StatusCode != http.StatusOK {
+			writeError(w, http.StatusBadGateway, "upstream_error",
+				fmt.Sprintf("codex refresh returned %d: %s", resp.StatusCode, string(respBody)))
+			return
+		}
+		var tokenResp struct {
+			IDToken      *string `json:"id_token"`
+			AccessToken  *string `json:"access_token"`
+			RefreshToken *string `json:"refresh_token"`
+			ExpiresIn    int64   `json:"expires_in"`
+		}
+		if err := json.Unmarshal(respBody, &tokenResp); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to parse codex token response")
+			return
+		}
+		newCreds := creds
+		if tokenResp.AccessToken != nil {
+			newCreds.AccessToken = *tokenResp.AccessToken
+		}
+		if tokenResp.RefreshToken != nil {
+			newCreds.RefreshToken = *tokenResp.RefreshToken
+		}
+		if tokenResp.IDToken != nil {
+			newCreds.IDToken = *tokenResp.IDToken
+			if id := extractCodexAccountID(*tokenResp.IDToken); id != "" {
+				newCreds.ChatGPTAccountID = id
+			}
+		}
+		if tokenResp.ExpiresIn > 0 {
+			newCreds.ExpiresAt = time.Now().Unix() + tokenResp.ExpiresIn
+		}
+		newCreds.ClientID = clientID
+
+		credsJSON, err := json.Marshal(newCreds)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to marshal credentials")
+			return
+		}
+		enc, err := crypto.Encrypt(encKey, credsJSON)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to encrypt credentials")
+			return
+		}
+		if err := st.UpdateUpstream(upstreamID, map[string]interface{}{"api_key_encrypted": enc}); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to persist credentials")
+			return
+		}
+		writeData(w, http.StatusOK, map[string]interface{}{
+			"expires_at":         newCreds.ExpiresAt,
+			"has_refresh_token":  newCreds.RefreshToken != "",
+			"chatgpt_account_id": newCreds.ChatGPTAccountID,
+		})
 	}
 }
 
