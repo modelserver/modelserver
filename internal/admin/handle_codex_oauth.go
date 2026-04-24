@@ -232,7 +232,7 @@ func handleCodexTokenRefresh(st *store.Store, encKey []byte) http.HandlerFunc {
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Originator", "codex_cli_rs")
-		req.Header.Set("User-Agent", "codex_cli_rs/0.55.0 (Linux; x64) Codex")
+		req.Header.Set("User-Agent", proxy.CodexUserAgent)
 		client := &http.Client{Timeout: 15 * time.Second}
 		resp, err := client.Do(req)
 		if err != nil {
@@ -373,7 +373,7 @@ func handleCodexUtilization(st *store.Store, encKey []byte) http.HandlerFunc {
 			if refReqErr == nil {
 				refReq.Header.Set("Content-Type", "application/json")
 				refReq.Header.Set("Originator", "codex_cli_rs")
-				refReq.Header.Set("User-Agent", "codex_cli_rs/0.55.0 (Linux; x64) Codex")
+				refReq.Header.Set("User-Agent", proxy.CodexUserAgent)
 				refClient := &http.Client{Timeout: 15 * time.Second}
 				refResp, refErr := refClient.Do(refReq)
 				if refErr == nil {
@@ -432,9 +432,9 @@ func handleCodexUtilization(st *store.Store, encKey []byte) http.HandlerFunc {
 			return
 		}
 		req.Header.Set("Authorization", "Bearer "+accessToken)
-		req.Header.Set("User-Agent", "codex_cli_rs/0.55.0 (Linux; x64) Codex")
+		req.Header.Set("User-Agent", proxy.CodexUserAgent)
 		req.Header.Set("Originator", "codex_cli_rs")
-		req.Header.Set("Version", "0.55.0")
+		req.Header.Set("Version", proxy.CodexVersion)
 		if creds.ChatGPTAccountID != "" {
 			req.Header.Set("ChatGPT-Account-ID", creds.ChatGPTAccountID)
 		}
