@@ -303,9 +303,20 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 				codexBase = "https://chatgpt.com/backend-api/codex"
 			}
 			endpoint = codexBase + "/responses"
+			// Codex backend requires `input` as a list of ResponseItem objects
+			// (Vec<ResponseItem> in /root/codex/codex-rs/protocol/src/models.rs:447).
+			// A bare string is rejected with "Input must be a list".
 			reqBody, _ = json.Marshal(map[string]interface{}{
-				"model":               upstreamTestModel,
-				"input":               "Hi",
+				"model": upstreamTestModel,
+				"input": []map[string]interface{}{
+					{
+						"type": "message",
+						"role": "user",
+						"content": []map[string]interface{}{
+							{"type": "input_text", "text": "Hi"},
+						},
+					},
+				},
 				"max_output_tokens":   16,
 				"stream":              false,
 				"instructions":        "",
