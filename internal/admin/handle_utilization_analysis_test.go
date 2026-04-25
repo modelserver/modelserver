@@ -62,6 +62,47 @@ func TestSuggestRatesForFixedLimitScalesKnownRates(t *testing.T) {
 	}
 }
 
+func TestUtilizationAnalysisBaseRates_GPT55SubscriptionDiscount(t *testing.T) {
+	rate := utilizationAnalysisBaseRates["gpt-5.5"]
+	if math.Abs(rate.InputRate-0.044) > 0.000001 {
+		t.Fatalf("InputRate = %v, want subscription discount 0.044", rate.InputRate)
+	}
+	if math.Abs(rate.OutputRate-0.261) > 0.000001 {
+		t.Fatalf("OutputRate = %v, want subscription discount 0.261", rate.OutputRate)
+	}
+	if math.Abs(rate.CacheReadRate-0.0044) > 0.000001 {
+		t.Fatalf("CacheReadRate = %v, want subscription discount 0.0044", rate.CacheReadRate)
+	}
+	if rate.LongContext == nil {
+		t.Fatal("LongContext is nil")
+	}
+	if rate.LongContext.ThresholdInputTokens != 272000 ||
+		rate.LongContext.InputMultiplier != 2.0 ||
+		rate.LongContext.OutputMultiplier != 1.5 {
+		t.Fatalf("LongContext = %+v, want 272000/2.0/1.5", rate.LongContext)
+	}
+}
+
+func TestScaleCreditRatePreservesLongContext(t *testing.T) {
+	rate := scaleCreditRate(types.CreditRate{
+		InputRate:  0.667,
+		OutputRate: 4,
+		LongContext: &types.LongContextCreditRate{
+			ThresholdInputTokens: 272000,
+			InputMultiplier:      2,
+			OutputMultiplier:     1.5,
+		},
+	}, 0.5)
+	if rate.LongContext == nil {
+		t.Fatal("LongContext is nil")
+	}
+	if rate.LongContext.ThresholdInputTokens != 272000 ||
+		rate.LongContext.InputMultiplier != 2 ||
+		rate.LongContext.OutputMultiplier != 1.5 {
+		t.Fatalf("LongContext = %+v", rate.LongContext)
+	}
+}
+
 func TestSuggestRatesForFixedLimitNoUsableCredits(t *testing.T) {
 	got := suggestRatesForFixedLimit([]store.UtilizationSnapshot{
 		{OfficialPct: 10, TotalCredits: 0},

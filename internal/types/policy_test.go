@@ -124,6 +124,35 @@ func TestComputeCreditsWithDefault_FallbackOrder(t *testing.T) {
 	}
 }
 
+func TestComputeCreditsWithDefault_LongContext(t *testing.T) {
+	policy := &RateLimitPolicy{
+		ModelCreditRates: map[string]CreditRate{
+			"gpt-5.4": {
+				InputRate:     0.333,
+				OutputRate:    2,
+				CacheReadRate: 0.033,
+				LongContext: &LongContextCreditRate{
+					ThresholdInputTokens: 272000,
+					InputMultiplier:      2,
+					OutputMultiplier:     1.5,
+				},
+			},
+		},
+	}
+
+	gotShort := policy.ComputeCredits("gpt-5.4", 271000, 1000, 0, 1000)
+	wantShort := 0.333*271000 + 2.0*1000 + 0.033*1000
+	if math.Abs(gotShort-wantShort) > 0.001 {
+		t.Fatalf("short-context credits = %v, want %v", gotShort, wantShort)
+	}
+
+	gotLong := policy.ComputeCredits("gpt-5.4", 271001, 1000, 0, 1000)
+	wantLong := (0.333*2)*271001 + (2.0*1.5)*1000 + (0.033*2)*1000
+	if math.Abs(gotLong-wantLong) > 0.001 {
+		t.Fatalf("long-context credits = %v, want %v", gotLong, wantLong)
+	}
+}
+
 func TestPolicyIsActive(t *testing.T) {
 	now := time.Now()
 	past := now.Add(-time.Hour)
