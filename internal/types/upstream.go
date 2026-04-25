@@ -4,15 +4,15 @@ import "time"
 
 // Provider constants identify supported AI provider backends.
 const (
-	ProviderAnthropic  = "anthropic"
-	ProviderOpenAI     = "openai"
-	ProviderGemini     = "gemini"
-	ProviderBedrock    = "bedrock"
-	ProviderClaudeCode = "claudecode"
+	ProviderAnthropic       = "anthropic"
+	ProviderOpenAI          = "openai"
+	ProviderGemini          = "gemini"
+	ProviderBedrock         = "bedrock"
+	ProviderClaudeCode      = "claudecode"
 	ProviderVertexAnthropic = "vertex-anthropic"
-	ProviderVertexGoogle = "vertex-google"
-	ProviderVertexOpenAI = "vertex-openai"
-	ProviderCodex        = "codex"
+	ProviderVertexGoogle    = "vertex-google"
+	ProviderVertexOpenAI    = "vertex-openai"
+	ProviderCodex           = "codex"
 )
 
 // Upstream status constants.
@@ -24,21 +24,23 @@ const (
 
 // Upstream represents a single backend AI provider endpoint (nginx: server directive).
 type Upstream struct {
-	ID              string             `json:"id"`
-	Provider        string             `json:"provider"`
-	Name            string             `json:"name"`
-	BaseURL         string             `json:"base_url"`
-	APIKeyEncrypted []byte             `json:"-"`
-	SupportedModels []string           `json:"supported_models"`
-	ModelMap        map[string]string  `json:"model_map"`
-	Weight          int                `json:"weight"`                  // Default LB weight (can be overridden per-group)
-	MaxConcurrent   int                `json:"max_concurrent"`          // 0 = unlimited
-	ReadTimeout     time.Duration      `json:"read_timeout,omitempty"`  // Per-upstream response timeout (default: 300s for streaming)
-	TestModel       string             `json:"test_model,omitempty"`
-	HealthCheck     *HealthCheckConfig `json:"health_check,omitempty"`  // Per-upstream health check config
-	Status          string             `json:"status"`                  // active / draining / disabled
-	CreatedAt       time.Time          `json:"created_at"`
-	UpdatedAt       time.Time          `json:"updated_at"`
+	ID              string   `json:"id"`
+	Provider        string   `json:"provider"`
+	Name            string   `json:"name"`
+	BaseURL         string   `json:"base_url"`
+	APIKeyEncrypted []byte   `json:"-"`
+	SupportedModels []string `json:"supported_models"`
+	// ModelMap rewrites JSON request bodies per upstream. Multipart image edit
+	// uploads are opaque and use catalog aliases instead.
+	ModelMap      map[string]string  `json:"model_map"`
+	Weight        int                `json:"weight"`                 // Default LB weight (can be overridden per-group)
+	MaxConcurrent int                `json:"max_concurrent"`         // 0 = unlimited
+	ReadTimeout   time.Duration      `json:"read_timeout,omitempty"` // Per-upstream response timeout (default: 300s for streaming)
+	TestModel     string             `json:"test_model,omitempty"`
+	HealthCheck   *HealthCheckConfig `json:"health_check,omitempty"` // Per-upstream health check config
+	Status        string             `json:"status"`                 // active / draining / disabled
+	CreatedAt     time.Time          `json:"created_at"`
+	UpdatedAt     time.Time          `json:"updated_at"`
 }
 
 // HealthCheckConfig configures active health probes for this upstream.

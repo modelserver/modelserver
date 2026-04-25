@@ -9,15 +9,16 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"mime"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/modelserver/modelserver/internal/httplog"
 	"github.com/modelserver/modelserver/internal/collector"
 	"github.com/modelserver/modelserver/internal/config"
+	"github.com/modelserver/modelserver/internal/httplog"
 	"github.com/modelserver/modelserver/internal/metrics"
 	"github.com/modelserver/modelserver/internal/modelcatalog"
 	"github.com/modelserver/modelserver/internal/ratelimit"
@@ -35,23 +36,23 @@ var ErrMissingDefaultCreditRate = errors.New("extra usage: model has no DefaultC
 // RequestContext carries all request-scoped data through the Executor pipeline.
 // It is populated by the handler before calling Execute.
 type RequestContext struct {
-	ProjectID        string
-	APIKeyID         string
-	OAuthGrantID     string
-	UserID           string
-	Model            string   // Original canonical model name from the client request
-	ModelRef         *types.Model // Resolved catalog entry (needed for extra-usage billing)
-	ActualModel      string   // After ModelMap resolution (set per-attempt by Executor)
-	IsStream         bool
-	RequestKind      string   // Wire-level endpoint kind; set by each handler
-	TraceID          string
-	TraceSource      string
-	SessionID        string
-	ClientIP         string
-	Policy           *types.RateLimitPolicy
-	APIKey           *types.APIKey
-	Project          *types.Project
-	RequestID        string // DB request ID (pending record)
+	ProjectID    string
+	APIKeyID     string
+	OAuthGrantID string
+	UserID       string
+	Model        string       // Original canonical model name from the client request
+	ModelRef     *types.Model // Resolved catalog entry (needed for extra-usage billing)
+	ActualModel  string       // After ModelMap resolution (set per-attempt by Executor)
+	IsStream     bool
+	RequestKind  string // Wire-level endpoint kind; set by each handler
+	TraceID      string
+	TraceSource  string
+	SessionID    string
+	ClientIP     string
+	Policy       *types.RateLimitPolicy
+	APIKey       *types.APIKey
+	Project      *types.Project
+	RequestID    string // DB request ID (pending record)
 
 	// Extra-usage state. `HasExtraUsageCtx`/`ExtraUsageCtx` are filled by
 	// Execute() from the inbound r.Context so the deferred streaming callback
@@ -67,10 +68,10 @@ type RequestContext struct {
 	// HTTP logging state. HttpLogEnabled is set by the handler based on
 	// model publisher. The Captured* fields are populated by Execute()
 	// before the retry loop, capturing the original client request data.
-	HttpLogEnabled           bool
-	CapturedClientBody       []byte
-	CapturedClientHeaders    http.Header
-	CapturedClientTruncated  bool
+	HttpLogEnabled          bool
+	CapturedClientBody      []byte
+	CapturedClientHeaders   http.Header
+	CapturedClientTruncated bool
 }
 
 // proxyResult classifies the outcome of a single upstream attempt.
@@ -84,17 +85,18 @@ const (
 // Executor replaces httputil.ReverseProxy with an http.Client-based proxy engine
 // that supports cross-upstream retry with per-provider body transformations.
 type Executor struct {
-	router         *Router
-	httpClient     *http.Client
-	store          *store.Store
-	collector      *collector.Collector
-	rateLimiter    ratelimit.RateLimiter
-	catalog        modelcatalog.Catalog
-	logger         *slog.Logger
-	maxBodySize    int64
-	extraUsageCfg  config.ExtraUsageConfig
-	httpLogger     *httplog.Logger
-	httpLogCfg     config.HttpLogConfig
+	router            *Router
+	httpClient        *http.Client
+	store             *store.Store
+	collector         *collector.Collector
+	rateLimiter       ratelimit.RateLimiter
+	catalog           modelcatalog.Catalog
+	logger            *slog.Logger
+	maxBodySize       int64
+	imagesMaxBodySize int64
+	extraUsageCfg     config.ExtraUsageConfig
+	httpLogger        *httplog.Logger
+	httpLogCfg        config.HttpLogConfig
 }
 
 // NewExecutor creates a new Executor wired to the given Router and dependencies.
@@ -106,6 +108,7 @@ func NewExecutor(
 	catalog modelcatalog.Catalog,
 	logger *slog.Logger,
 	maxBodySize int64,
+	imagesMaxBodySize int64,
 	extraUsageCfg config.ExtraUsageConfig,
 	bl *httplog.Logger,
 	blCfg config.HttpLogConfig,
@@ -126,13 +129,14 @@ func NewExecutor(
 				DisableCompression: true,
 			},
 		},
-		store:       st,
-		collector:   coll,
-		rateLimiter: limiter,
-		logger:      logger,
-		maxBodySize: maxBodySize,
-		httpLogger:  bl,
-		httpLogCfg:  blCfg,
+		store:             st,
+		collector:         coll,
+		rateLimiter:       limiter,
+		logger:            logger,
+		maxBodySize:       maxBodySize,
+		imagesMaxBodySize: imagesMaxBodySize,
+		httpLogger:        bl,
+		httpLogCfg:        blCfg,
 	}
 }
 
@@ -195,13 +199,21 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 		return
 	}
 
+	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	isImagesEditMultipart := reqCtx.RequestKind == types.KindOpenAIImagesEdits &&
+		strings.EqualFold(mediaType, "multipart/form-data")
+	bodyLimit := e.maxBodySize
+	if isImagesEditMultipart && e.imagesMaxBodySize > 0 {
+		bodyLimit = e.imagesMaxBodySize
+	}
+
 	// 3. Read and buffer the original request body (for potential retries).
-	originalBody, err := io.ReadAll(io.LimitReader(r.Body, e.maxBodySize+1))
+	originalBody, err := io.ReadAll(io.LimitReader(r.Body, bodyLimit+1))
 	if err != nil {
 		writeProxyError(w, http.StatusBadRequest, "failed to read request body")
 		return
 	}
-	if int64(len(originalBody)) > e.maxBodySize {
+	if int64(len(originalBody)) > bodyLimit {
 		writeProxyError(w, http.StatusRequestEntityTooLarge, "request body too large")
 		return
 	}
@@ -279,15 +291,19 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			// Start with original body. If the model was remapped and this is
 			// not Bedrock (which strips the model field), rewrite it in the body.
 			bodyForTransform := originalBody
-			if actualModel != reqCtx.Model && upstream.Provider != types.ProviderBedrock && upstream.Provider != types.ProviderVertexAnthropic && upstream.Provider != types.ProviderGemini && upstream.Provider != types.ProviderVertexGoogle {
+			if !isImagesEditMultipart && actualModel != reqCtx.Model && upstream.Provider != types.ProviderBedrock && upstream.Provider != types.ProviderVertexAnthropic && upstream.Provider != types.ProviderGemini && upstream.Provider != types.ProviderVertexGoogle {
 				bodyForTransform, _ = sjson.SetBytes(append([]byte{}, originalBody...), "model", actualModel)
 			}
 
-			transformedBody, err = transformer.TransformBody(bodyForTransform, actualModel, reqCtx.IsStream, r.Header)
-			if err != nil {
-				logger.Error("body transform failed", "provider", upstream.Provider, "error", err)
-				// Transform failure is not retryable; skip this upstream.
-				continue
+			if isImagesEditMultipart {
+				transformedBody = bodyForTransform
+			} else {
+				transformedBody, err = transformer.TransformBody(bodyForTransform, actualModel, reqCtx.IsStream, r.Header)
+				if err != nil {
+					logger.Error("body transform failed", "provider", upstream.Provider, "error", err)
+					// Transform failure is not retryable; skip this upstream.
+					continue
+				}
 			}
 			if upstream.Provider == types.ProviderClaudeCode {
 				transformedBody = normalizeRequestBody(transformedBody, DeriveClaudeCodeDeviceID(upstream.ID))
@@ -304,7 +320,11 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			continue
 		}
 		outReq.ContentLength = int64(len(transformedBody))
-		outReq.Header.Set("Content-Type", "application/json")
+		if isImagesEditMultipart {
+			outReq.Header.Set("Content-Type", r.Header.Get("Content-Type"))
+		} else {
+			outReq.Header.Set("Content-Type", "application/json")
+		}
 
 		// Forward select client headers that upstream providers need.
 		for _, h := range []string{
@@ -859,91 +879,16 @@ func (e *Executor) commitStreamingResponse(
 
 	w.WriteHeader(resp.StatusCode)
 
-	// Wrap with provider-specific stream interceptor.
-	wrapped := transformer.WrapStream(resp.Body, startTime, func(metrics StreamMetrics) {
-		// Release connection when stream completes.
-		e.router.ConnTracker().Release(candidate.Upstream.ID)
-		if cancelFn != nil {
-			cancelFn()
-		}
-
-		model := metrics.Model
-		if model == "" {
-			model = reqCtx.Model
-		}
-
-		duration := time.Since(startTime).Milliseconds()
-
-		var credits float64
-		if reqCtx.Policy != nil {
-			credits = reqCtx.Policy.ComputeCreditsWithDefault(model, e.catalogDefaultRate(model), metrics.InputTokens, metrics.OutputTokens, metrics.CacheCreationTokens, metrics.CacheReadTokens)
-		}
-
-		// Settle extra-usage BEFORE persisting the request row so the ledger
-		// and the request's is_extra_usage columns stay consistent.
-		e.settleExtraUsage(context.Background(), reqCtx, types.TokenUsage{
-			InputTokens:         metrics.InputTokens,
-			OutputTokens:        metrics.OutputTokens,
-			CacheCreationTokens: metrics.CacheCreationTokens,
-			CacheReadTokens:     metrics.CacheReadTokens,
+	var wrapped io.ReadCloser
+	if isImageRequestKind(reqCtx.RequestKind) {
+		wrapped = newImageStreamInterceptor(resp.Body, startTime, func(usage ImageTokenUsage, usagePresent bool, ttftMs int64) {
+			e.completeImageStreamingRequest(candidate, reqCtx, usage, usagePresent, ttftMs, startTime, cancelFn, logger)
 		})
-
-		req := types.Request{
-			ProjectID:           reqCtx.Project.ID,
-			APIKeyID:            reqCtx.APIKeyID,
-			OAuthGrantID:        reqCtx.OAuthGrantID,
-			UpstreamID:          candidate.Upstream.ID,
-			TraceID:             reqCtx.TraceID,
-			MsgID:               metrics.MsgID,
-			Provider:            candidate.Upstream.Provider,
-			RequestKind:         reqCtx.RequestKind,
-			Model:               model,
-			Streaming:           true,
-			Status:              types.RequestStatusSuccess,
-			InputTokens:         metrics.InputTokens,
-			OutputTokens:        metrics.OutputTokens,
-			CacheCreationTokens: metrics.CacheCreationTokens,
-			CacheReadTokens:     metrics.CacheReadTokens,
-			CreditsConsumed:     credits,
-			LatencyMs:           duration,
-			TTFTMs:              metrics.TTFTMs,
-			ClientIP:            reqCtx.ClientIP,
-			IsExtraUsage:        reqCtx.IsExtraUsage,
-			ExtraUsageCostFen:   reqCtx.ExtraUsageCostFen,
-			ExtraUsageReason:    reqCtx.ExtraUsageReason,
-		}
-		if reqCtx.RequestID != "" {
-			go func() {
-				if err := e.store.CompleteRequest(reqCtx.RequestID, &req); err != nil {
-					logger.Error("failed to complete request", "request_id", reqCtx.RequestID, "error", err)
-				}
-			}()
-		} else {
-			e.collector.Record(req)
-		}
-
-		logger.Info("request completed",
-			"msg_id", metrics.MsgID,
-			"status", types.RequestStatusSuccess,
-			"streaming", true,
-			"input_tokens", metrics.InputTokens,
-			"output_tokens", metrics.OutputTokens,
-			"cache_creation_tokens", metrics.CacheCreationTokens,
-			"cache_read_tokens", metrics.CacheReadTokens,
-			"credits", credits,
-			"duration_ms", duration,
-			"ttft_ms", metrics.TTFTMs,
-		)
-
-		if e.rateLimiter != nil {
-			e.rateLimiter.PostRecord(context.Background(), reqCtx.Project.ID, reqCtx.APIKeyID, reqCtx.UserID, model, types.TokenUsage{
-				InputTokens:         metrics.InputTokens,
-				OutputTokens:        metrics.OutputTokens,
-				CacheCreationTokens: metrics.CacheCreationTokens,
-				CacheReadTokens:     metrics.CacheReadTokens,
-			})
-		}
-	})
+	} else {
+		wrapped = transformer.WrapStream(resp.Body, startTime, func(metrics StreamMetrics) {
+			e.completeStreamingRequest(candidate, reqCtx, metrics, startTime, cancelFn, logger)
+		})
+	}
 
 	// Optionally wrap with TeeReadCloser for http logging.
 	var streamReader io.ReadCloser = wrapped
@@ -986,6 +931,176 @@ func (e *Executor) commitStreamingResponse(
 	streamReader.Close()
 }
 
+func (e *Executor) completeStreamingRequest(
+	candidate *SelectedUpstream,
+	reqCtx *RequestContext,
+	metrics StreamMetrics,
+	startTime time.Time,
+	cancelFn context.CancelFunc,
+	logger *slog.Logger,
+) {
+	e.router.ConnTracker().Release(candidate.Upstream.ID)
+	if cancelFn != nil {
+		cancelFn()
+	}
+
+	model := metrics.Model
+	if model == "" {
+		model = reqCtx.Model
+	}
+
+	duration := time.Since(startTime).Milliseconds()
+
+	var credits float64
+	if reqCtx.Policy != nil {
+		credits = reqCtx.Policy.ComputeCreditsWithDefault(model, e.catalogDefaultRate(model), metrics.InputTokens, metrics.OutputTokens, metrics.CacheCreationTokens, metrics.CacheReadTokens)
+	}
+
+	usage := types.TokenUsage{
+		InputTokens:         metrics.InputTokens,
+		OutputTokens:        metrics.OutputTokens,
+		CacheCreationTokens: metrics.CacheCreationTokens,
+		CacheReadTokens:     metrics.CacheReadTokens,
+	}
+	e.settleExtraUsage(context.Background(), reqCtx, usage)
+
+	req := types.Request{
+		ProjectID:           reqCtx.Project.ID,
+		APIKeyID:            reqCtx.APIKeyID,
+		OAuthGrantID:        reqCtx.OAuthGrantID,
+		UpstreamID:          candidate.Upstream.ID,
+		TraceID:             reqCtx.TraceID,
+		MsgID:               metrics.MsgID,
+		Provider:            candidate.Upstream.Provider,
+		RequestKind:         reqCtx.RequestKind,
+		Model:               model,
+		Streaming:           true,
+		Status:              types.RequestStatusSuccess,
+		InputTokens:         metrics.InputTokens,
+		OutputTokens:        metrics.OutputTokens,
+		CacheCreationTokens: metrics.CacheCreationTokens,
+		CacheReadTokens:     metrics.CacheReadTokens,
+		CreditsConsumed:     credits,
+		LatencyMs:           duration,
+		TTFTMs:              metrics.TTFTMs,
+		ClientIP:            reqCtx.ClientIP,
+		IsExtraUsage:        reqCtx.IsExtraUsage,
+		ExtraUsageCostFen:   reqCtx.ExtraUsageCostFen,
+		ExtraUsageReason:    reqCtx.ExtraUsageReason,
+	}
+	if reqCtx.RequestID != "" {
+		go func() {
+			if err := e.store.CompleteRequest(reqCtx.RequestID, &req); err != nil {
+				logger.Error("failed to complete request", "request_id", reqCtx.RequestID, "error", err)
+			}
+		}()
+	} else {
+		e.collector.Record(req)
+	}
+
+	logger.Info("request completed",
+		"msg_id", metrics.MsgID,
+		"status", types.RequestStatusSuccess,
+		"streaming", true,
+		"input_tokens", metrics.InputTokens,
+		"output_tokens", metrics.OutputTokens,
+		"cache_creation_tokens", metrics.CacheCreationTokens,
+		"cache_read_tokens", metrics.CacheReadTokens,
+		"credits", credits,
+		"duration_ms", duration,
+		"ttft_ms", metrics.TTFTMs,
+	)
+
+	if e.rateLimiter != nil {
+		e.rateLimiter.PostRecord(context.Background(), reqCtx.Project.ID, reqCtx.APIKeyID, reqCtx.UserID, model, usage)
+	}
+}
+
+func (e *Executor) completeImageStreamingRequest(
+	candidate *SelectedUpstream,
+	reqCtx *RequestContext,
+	usage ImageTokenUsage,
+	usagePresent bool,
+	ttftMs int64,
+	startTime time.Time,
+	cancelFn context.CancelFunc,
+	logger *slog.Logger,
+) {
+	e.router.ConnTracker().Release(candidate.Upstream.ID)
+	if cancelFn != nil {
+		cancelFn()
+	}
+
+	if usagePresent {
+		e.settleImageExtraUsage(context.Background(), reqCtx, usage)
+	} else if reqCtx.HasExtraUsageCtx {
+		logger.Warn("image stream completed without usage; skipping extra-usage settle",
+			"project_id", reqCtx.ProjectID, "request_id", reqCtx.RequestID)
+	}
+
+	model := reqCtx.Model
+	duration := time.Since(startTime).Milliseconds()
+	tokenUsage := imageTokenUsageForRecord(usage)
+
+	var credits float64
+	if usagePresent {
+		if c, err := computeImageCredits(reqCtx.ModelRef, usage); err == nil {
+			credits = c
+		}
+	}
+
+	req := types.Request{
+		ProjectID:           reqCtx.Project.ID,
+		APIKeyID:            reqCtx.APIKeyID,
+		OAuthGrantID:        reqCtx.OAuthGrantID,
+		UpstreamID:          candidate.Upstream.ID,
+		TraceID:             reqCtx.TraceID,
+		Provider:            candidate.Upstream.Provider,
+		RequestKind:         reqCtx.RequestKind,
+		Model:               model,
+		Streaming:           true,
+		Status:              types.RequestStatusSuccess,
+		InputTokens:         tokenUsage.InputTokens,
+		OutputTokens:        tokenUsage.OutputTokens,
+		CacheCreationTokens: tokenUsage.CacheCreationTokens,
+		CacheReadTokens:     tokenUsage.CacheReadTokens,
+		CreditsConsumed:     credits,
+		LatencyMs:           duration,
+		TTFTMs:              ttftMs,
+		ClientIP:            reqCtx.ClientIP,
+		IsExtraUsage:        reqCtx.IsExtraUsage,
+		ExtraUsageCostFen:   reqCtx.ExtraUsageCostFen,
+		ExtraUsageReason:    reqCtx.ExtraUsageReason,
+	}
+	if usagePresent {
+		req.Metadata = imageUsageMetadata(usage)
+	}
+	if reqCtx.RequestID != "" {
+		go func() {
+			if err := e.store.CompleteRequest(reqCtx.RequestID, &req); err != nil {
+				logger.Error("failed to complete request", "request_id", reqCtx.RequestID, "error", err)
+			}
+		}()
+	} else {
+		e.collector.Record(req)
+	}
+
+	logger.Info("request completed",
+		"status", types.RequestStatusSuccess,
+		"streaming", true,
+		"input_tokens", tokenUsage.InputTokens,
+		"output_tokens", tokenUsage.OutputTokens,
+		"cache_read_tokens", tokenUsage.CacheReadTokens,
+		"credits", credits,
+		"duration_ms", duration,
+		"ttft_ms", ttftMs,
+	)
+
+	if e.rateLimiter != nil {
+		e.rateLimiter.PostRecord(context.Background(), reqCtx.Project.ID, reqCtx.APIKeyID, reqCtx.UserID, model, tokenUsage)
+	}
+}
+
 // commitNonStreamingResponse reads the full response, parses metrics, and
 // writes it to the client.
 func (e *Executor) commitNonStreamingResponse(
@@ -1010,6 +1125,11 @@ func (e *Executor) commitNonStreamingResponse(
 			w.Header().Del(k)
 		}
 		writeProxyError(w, http.StatusBadGateway, "failed to read upstream response body")
+		return
+	}
+
+	if isImageRequestKind(reqCtx.RequestKind) {
+		e.commitImageNonStreamingResponseBody(w, body, resp, candidate, reqCtx, startTime, logger)
 		return
 	}
 
@@ -1146,6 +1266,121 @@ func (e *Executor) commitNonStreamingResponse(
 	}
 }
 
+func (e *Executor) commitImageNonStreamingResponseBody(
+	w http.ResponseWriter,
+	body []byte,
+	resp *http.Response,
+	candidate *SelectedUpstream,
+	reqCtx *RequestContext,
+	startTime time.Time,
+	logger *slog.Logger,
+) {
+	imgMetrics, parseErr := ParseImageNonStreamingResponse(body)
+	if parseErr != nil {
+		logger.Warn("image response parse failed", "error", parseErr)
+		imgMetrics = &ImageResponseMetrics{}
+	}
+	if imgMetrics == nil {
+		imgMetrics = &ImageResponseMetrics{}
+	}
+
+	if reqCtx.HasExtraUsageCtx {
+		if imgMetrics.UsagePresent {
+			e.settleImageExtraUsage(context.Background(), reqCtx, imgMetrics.Usage)
+		} else {
+			logger.Warn("image response has no usage; skipping extra-usage settle",
+				"project_id", reqCtx.ProjectID, "request_id", reqCtx.RequestID)
+		}
+		writeExtraUsageSuccessHeaders(w, reqCtx)
+	}
+
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
+	w.WriteHeader(resp.StatusCode)
+	w.Write(body)
+
+	model := imgMetrics.Model
+	if model == "" {
+		model = reqCtx.Model
+	}
+
+	duration := time.Since(startTime).Milliseconds()
+	tokenUsage := imageTokenUsageForRecord(imgMetrics.Usage)
+
+	var credits float64
+	if imgMetrics.UsagePresent {
+		if c, err := computeImageCredits(reqCtx.ModelRef, imgMetrics.Usage); err == nil {
+			credits = c
+		}
+	}
+
+	req := types.Request{
+		ProjectID:           reqCtx.Project.ID,
+		APIKeyID:            reqCtx.APIKeyID,
+		OAuthGrantID:        reqCtx.OAuthGrantID,
+		UpstreamID:          candidate.Upstream.ID,
+		TraceID:             reqCtx.TraceID,
+		Provider:            candidate.Upstream.Provider,
+		RequestKind:         reqCtx.RequestKind,
+		Model:               model,
+		Streaming:           false,
+		Status:              types.RequestStatusSuccess,
+		InputTokens:         tokenUsage.InputTokens,
+		OutputTokens:        tokenUsage.OutputTokens,
+		CacheCreationTokens: tokenUsage.CacheCreationTokens,
+		CacheReadTokens:     tokenUsage.CacheReadTokens,
+		CreditsConsumed:     credits,
+		LatencyMs:           duration,
+		ClientIP:            reqCtx.ClientIP,
+		IsExtraUsage:        reqCtx.IsExtraUsage,
+		ExtraUsageCostFen:   reqCtx.ExtraUsageCostFen,
+		ExtraUsageReason:    reqCtx.ExtraUsageReason,
+	}
+	if imgMetrics.UsagePresent {
+		req.Metadata = imageUsageMetadata(imgMetrics.Usage)
+	}
+	if reqCtx.RequestID != "" {
+		go func() {
+			if err := e.store.CompleteRequest(reqCtx.RequestID, &req); err != nil {
+				logger.Error("failed to complete request", "request_id", reqCtx.RequestID, "error", err)
+			}
+		}()
+	} else {
+		e.collector.Record(req)
+	}
+
+	logger.Info("request completed",
+		"status", types.RequestStatusSuccess,
+		"streaming", false,
+		"input_tokens", tokenUsage.InputTokens,
+		"output_tokens", tokenUsage.OutputTokens,
+		"cache_read_tokens", tokenUsage.CacheReadTokens,
+		"credits", credits,
+		"duration_ms", duration,
+	)
+
+	if e.rateLimiter != nil {
+		e.rateLimiter.PostRecord(context.Background(), reqCtx.Project.ID, reqCtx.APIKeyID, reqCtx.UserID, model, tokenUsage)
+	}
+
+	if e.httpLogger != nil && reqCtx.HttpLogEnabled && reqCtx.RequestID != "" {
+		rec := &httplog.Record{
+			RequestID:       reqCtx.RequestID,
+			ProjectID:       reqCtx.ProjectID,
+			RequestHeaders:  reqCtx.CapturedClientHeaders,
+			RequestBody:     reqCtx.CapturedClientBody,
+			ResponseHeaders: resp.Header.Clone(),
+			ResponseBody:    body,
+			ResponseStatus:  resp.StatusCode,
+			Truncated:       reqCtx.CapturedClientTruncated,
+		}
+		if e.httpLogCfg.MaxResponseBody > 0 && int64(len(rec.ResponseBody)) > e.httpLogCfg.MaxResponseBody {
+			rec.ResponseBody = rec.ResponseBody[:e.httpLogCfg.MaxResponseBody]
+			rec.Truncated = true
+		}
+		e.httpLogger.Enqueue(rec)
+	}
+}
+
 // copyWithFlush copies from src to dst, flushing after each read if a Flusher
 // is available. Returns the number of bytes copied and any error.
 func copyWithFlush(src io.Reader, dst io.Writer, flusher http.Flusher) (int64, error) {
@@ -1230,6 +1465,27 @@ func isHopByHopHeader(key string) bool {
 	return hopByHopHeaders[http.CanonicalHeaderKey(key)]
 }
 
+func isImageRequestKind(kind string) bool {
+	return kind == types.KindOpenAIImagesGenerations || kind == types.KindOpenAIImagesEdits
+}
+
+func imageTokenUsageForRecord(u ImageTokenUsage) types.TokenUsage {
+	return types.TokenUsage{
+		InputTokens:         u.InputTokens,
+		OutputTokens:        u.OutputTokens,
+		CacheCreationTokens: 0,
+		CacheReadTokens:     u.CachedInputTokens,
+	}
+}
+
+func imageUsageMetadata(u ImageTokenUsage) map[string]string {
+	return map[string]string{
+		"image_text_input_tokens":   strconv.FormatInt(u.TextInputTokens, 10),
+		"image_image_input_tokens":  strconv.FormatInt(u.ImageInputTokens, 10),
+		"image_text_output_tokens":  strconv.FormatInt(u.TextOutputTokens, 10),
+		"image_image_output_tokens": strconv.FormatInt(u.ImageOutputTokens, 10),
+	}
+}
 
 // computeExtraUsageCostFen converts a TokenUsage to CNY fen using the
 // catalog's DefaultCreditRate. Rate is sourced from the catalog (not the
@@ -1303,6 +1559,76 @@ func (e *Executor) settleExtraUsage(ctx context.Context, rc *RequestContext, usa
 		RequestID:   rc.RequestID,
 		Reason:      euCtx.Reason,
 		Description: fmt.Sprintf("%s | credits=%.2f | model=%s", euCtx.Reason, credits, rc.Model),
+	})
+	switch {
+	case err == nil:
+		rc.ExtraUsageBalanceAfterFen = newBal
+		outcome := "ok"
+		if newBal < 0 {
+			outcome = "overdraft"
+		}
+		metrics.IncExtraUsageDeduction(outcome)
+		metrics.SetExtraUsageBalance(rc.ProjectID, newBal)
+	case errors.Is(err, store.ErrInsufficientBalance):
+		e.logger.Warn("extra_usage_underdraft",
+			"project_id", rc.ProjectID, "cost_fen", costFen)
+		metrics.IncExtraUsageDeduction("insufficient")
+		metrics.IncExtraUsageUnderdraft(rc.ProjectID)
+	case errors.Is(err, store.ErrMonthlyLimitReached):
+		e.logger.Warn("extra_usage_monthly_limit_at_settle",
+			"project_id", rc.ProjectID, "cost_fen", costFen)
+		metrics.IncExtraUsageDeduction("monthly_limit")
+	case errors.Is(err, store.ErrExtraUsageNotEnabled):
+		e.logger.Warn("extra_usage_disabled_at_settle",
+			"project_id", rc.ProjectID)
+		metrics.IncExtraUsageDeduction("not_enabled")
+	default:
+		e.logger.Error("extra_usage_deduction_failed",
+			"project_id", rc.ProjectID, "error", err)
+		metrics.IncExtraUsageDeduction("err")
+	}
+}
+
+func (e *Executor) settleImageExtraUsage(ctx context.Context, rc *RequestContext, usage ImageTokenUsage) {
+	if !rc.HasExtraUsageCtx {
+		return
+	}
+	euCtx := rc.ExtraUsageCtx
+
+	rc.IsExtraUsage = true
+	rc.ExtraUsageReason = euCtx.Reason
+
+	if usage.InputTokens+usage.OutputTokens == 0 {
+		e.logger.Warn("extra_usage_settle_no_usage",
+			"project_id", rc.ProjectID, "request_id", rc.RequestID)
+		metrics.IncExtraUsageDeduction("no_usage")
+		return
+	}
+
+	costFen, credits, err := computeImageExtraUsageCostFen(rc.ModelRef, usage, e.extraUsageCfg.CreditPriceFen)
+	if err != nil {
+		modelName := rc.Model
+		if rc.ModelRef != nil {
+			modelName = rc.ModelRef.Name
+		}
+		if errors.Is(err, ErrMissingDefaultCreditRate) {
+			e.logger.Error("extra_usage_missing_default_image_rate",
+				"project_id", rc.ProjectID, "model", modelName, "error", err)
+			metrics.IncExtraUsageMissingRate(modelName)
+			return
+		}
+		e.logger.Error("compute_image_extra_usage_cost_failed",
+			"project_id", rc.ProjectID, "model", modelName, "error", err)
+		return
+	}
+	rc.ExtraUsageCostFen = costFen
+
+	newBal, err := e.store.DeductExtraUsage(store.DeductExtraUsageReq{
+		ProjectID:   rc.ProjectID,
+		AmountFen:   costFen,
+		RequestID:   rc.RequestID,
+		Reason:      euCtx.Reason,
+		Description: fmt.Sprintf("%s | credits=%.2f | model=%s | kind=%s", euCtx.Reason, credits, rc.Model, rc.RequestKind),
 	})
 	switch {
 	case err == nil:

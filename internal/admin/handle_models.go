@@ -74,20 +74,21 @@ func handleGetModel(st *store.Store) http.HandlerFunc {
 func handleCreateModel(st *store.Store, catalog modelcatalog.Catalog) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Name              string              `json:"name"`
-			DisplayName       string              `json:"display_name"`
-			Description       string              `json:"description"`
-			Aliases           []string            `json:"aliases"`
-			DefaultCreditRate *types.CreditRate   `json:"default_credit_rate"`
-			Status            string              `json:"status"`
-			Publisher         string              `json:"publisher"`
-			Metadata          types.ModelMetadata `json:"metadata"`
+			Name                   string                 `json:"name"`
+			DisplayName            string                 `json:"display_name"`
+			Description            string                 `json:"description"`
+			Aliases                []string               `json:"aliases"`
+			DefaultCreditRate      *types.CreditRate      `json:"default_credit_rate"`
+			DefaultImageCreditRate *types.ImageCreditRate `json:"default_image_credit_rate"`
+			Status                 string                 `json:"status"`
+			Publisher              string                 `json:"publisher"`
+			Metadata               types.ModelMetadata    `json:"metadata"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
 			return
 		}
-		if err := validateModelPayload(body.Name, body.Aliases, body.Status, body.DefaultCreditRate); err != nil {
+		if err := validateModelPayload(body.Name, body.Aliases, body.Status, body.DefaultCreditRate, body.DefaultImageCreditRate); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
@@ -100,14 +101,15 @@ func handleCreateModel(st *store.Store, catalog modelcatalog.Catalog) http.Handl
 		}
 
 		m := &types.Model{
-			Name:              body.Name,
-			DisplayName:       body.DisplayName,
-			Description:       body.Description,
-			Aliases:           body.Aliases,
-			DefaultCreditRate: body.DefaultCreditRate,
-			Status:            body.Status,
-			Publisher:         body.Publisher,
-			Metadata:          body.Metadata,
+			Name:                   body.Name,
+			DisplayName:            body.DisplayName,
+			Description:            body.Description,
+			Aliases:                body.Aliases,
+			DefaultCreditRate:      body.DefaultCreditRate,
+			DefaultImageCreditRate: body.DefaultImageCreditRate,
+			Status:                 body.Status,
+			Publisher:              body.Publisher,
+			Metadata:               body.Metadata,
 		}
 		if err := st.CreateModel(m); err != nil {
 			if isUniqueViolation(err) {
@@ -195,6 +197,27 @@ func handleUpdateModel(st *store.Store, catalog modelcatalog.Catalog) http.Handl
 				updates["default_credit_rate"] = b
 			}
 		}
+		if v, ok := body["default_image_credit_rate"]; ok {
+			if v == nil {
+				updates["default_image_credit_rate"] = nil
+			} else {
+				b, err := json.Marshal(v)
+				if err != nil {
+					writeError(w, http.StatusBadRequest, "bad_request", "invalid default_image_credit_rate")
+					return
+				}
+				var rate types.ImageCreditRate
+				if err := json.Unmarshal(b, &rate); err != nil {
+					writeError(w, http.StatusBadRequest, "bad_request", "invalid default_image_credit_rate")
+					return
+				}
+				if err := validateImageCreditRate(&rate); err != nil {
+					writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+					return
+				}
+				updates["default_image_credit_rate"] = b
+			}
+		}
 		if v, ok := body["publisher"]; ok {
 			pub, _ := v.(string)
 			if err := validatePublisher(pub); err != nil {
@@ -273,7 +296,7 @@ func refreshCatalog(st *store.Store, catalog modelcatalog.Catalog) {
 // validateModelPayload runs the create-time invariant checks that are
 // cheap to express in Go. The trigger enforces the same rules at the DB
 // level as a second line of defence.
-func validateModelPayload(name string, aliases []string, status string, rate *types.CreditRate) error {
+func validateModelPayload(name string, aliases []string, status string, rate *types.CreditRate, imageRate *types.ImageCreditRate) error {
 	if name == "" {
 		return fmt.Errorf("name is required")
 	}
@@ -286,7 +309,10 @@ func validateModelPayload(name string, aliases []string, status string, rate *ty
 	if status != "" && status != types.ModelStatusActive && status != types.ModelStatusDisabled {
 		return fmt.Errorf("status must be active or disabled")
 	}
-	return validateCreditRate(rate)
+	if err := validateCreditRate(rate); err != nil {
+		return err
+	}
+	return validateImageCreditRate(imageRate)
 }
 
 func validateModelName(s string) error {
@@ -344,6 +370,17 @@ func validateCreditRate(r *types.CreditRate) error {
 		if r.LongContext.InputMultiplier <= 0 || r.LongContext.OutputMultiplier <= 0 {
 			return fmt.Errorf("long_context multipliers must be positive")
 		}
+	}
+	return nil
+}
+
+func validateImageCreditRate(r *types.ImageCreditRate) error {
+	if r == nil {
+		return nil
+	}
+	if r.TextInputRate < 0 || r.TextCachedInputRate < 0 || r.TextOutputRate < 0 ||
+		r.ImageInputRate < 0 || r.ImageCachedInputRate < 0 || r.ImageOutputRate < 0 {
+		return fmt.Errorf("image credit rates must be non-negative")
 	}
 	return nil
 }

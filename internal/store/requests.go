@@ -36,6 +36,10 @@ func (s *Store) CreateRequest(r *types.Request) error {
 // Note: request_kind is intentionally not updated here — it is set at
 // CreateRequest time by the handler and never changes for a given request.
 func (s *Store) CompleteRequest(id string, r *types.Request) error {
+	metadataJSON := []byte("{}")
+	if r.Metadata != nil {
+		metadataJSON, _ = json.Marshal(r.Metadata)
+	}
 	_, err := s.pool.Exec(context.Background(), `
 		UPDATE requests
 		SET status = $1, msg_id = $2, input_tokens = $3, output_tokens = $4,
@@ -50,8 +54,9 @@ func (s *Store) CompleteRequest(id string, r *types.Request) error {
 			selection_ms = $18,
 			is_extra_usage = $19,
 			extra_usage_cost_fen = $20,
-			extra_usage_reason = $21
-		WHERE id = $22`,
+			extra_usage_reason = $21,
+			metadata = CASE WHEN $22::jsonb = '{}'::jsonb THEN metadata ELSE metadata || $22::jsonb END
+		WHERE id = $23`,
 		r.Status, nullString(r.MsgID), r.InputTokens, r.OutputTokens,
 		r.CacheCreationTokens, r.CacheReadTokens, r.CreditsConsumed,
 		r.LatencyMs, r.TTFTMs, nullString(r.ErrorMessage), r.ClientIP,
@@ -59,6 +64,7 @@ func (s *Store) CompleteRequest(id string, r *types.Request) error {
 		nullString(r.RouteID), nullString(r.GroupID),
 		r.Attempt, nullString(r.RetryReason), r.SelectionMs,
 		r.IsExtraUsage, r.ExtraUsageCostFen, r.ExtraUsageReason,
+		metadataJSON,
 		id,
 	)
 	return err

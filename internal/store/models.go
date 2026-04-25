@@ -10,13 +10,13 @@ import (
 	"github.com/modelserver/modelserver/internal/types"
 )
 
-const modelColumns = `name, display_name, COALESCE(description, ''), aliases, default_credit_rate, status, publisher, metadata, created_at, updated_at`
+const modelColumns = `name, display_name, COALESCE(description, ''), aliases, default_credit_rate, default_image_credit_rate, status, publisher, metadata, created_at, updated_at`
 
 func scanModel(row pgx.Row) (*types.Model, error) {
 	m := &types.Model{}
-	var rateRaw, metadataRaw []byte
+	var rateRaw, imageRateRaw, metadataRaw []byte
 	if err := row.Scan(&m.Name, &m.DisplayName, &m.Description, &m.Aliases,
-		&rateRaw, &m.Status, &m.Publisher, &metadataRaw, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		&rateRaw, &imageRateRaw, &m.Status, &m.Publisher, &metadataRaw, &m.CreatedAt, &m.UpdatedAt); err != nil {
 		return nil, err
 	}
 	if m.Aliases == nil {
@@ -26,6 +26,12 @@ func scanModel(row pgx.Row) (*types.Model, error) {
 		var rate types.CreditRate
 		if err := json.Unmarshal(rateRaw, &rate); err == nil {
 			m.DefaultCreditRate = &rate
+		}
+	}
+	if len(imageRateRaw) > 0 {
+		var rate types.ImageCreditRate
+		if err := json.Unmarshal(imageRateRaw, &rate); err == nil {
+			m.DefaultImageCreditRate = &rate
 		}
 	}
 	if len(metadataRaw) > 0 {
@@ -45,6 +51,10 @@ func (s *Store) CreateModel(m *types.Model) error {
 	if m.DefaultCreditRate != nil {
 		rateJSON, _ = json.Marshal(m.DefaultCreditRate)
 	}
+	var imageRateJSON []byte
+	if m.DefaultImageCreditRate != nil {
+		imageRateJSON, _ = json.Marshal(m.DefaultImageCreditRate)
+	}
 	metadataJSON, _ := json.Marshal(m.Metadata)
 	if len(metadataJSON) == 0 {
 		metadataJSON = []byte("{}")
@@ -54,10 +64,10 @@ func (s *Store) CreateModel(m *types.Model) error {
 		status = types.ModelStatusActive
 	}
 	return s.pool.QueryRow(context.Background(), `
-		INSERT INTO models (name, display_name, description, aliases, default_credit_rate, status, publisher, metadata)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO models (name, display_name, description, aliases, default_credit_rate, default_image_credit_rate, status, publisher, metadata)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING created_at, updated_at`,
-		m.Name, m.DisplayName, nullString(m.Description), aliases, nullableJSON(rateJSON), status, m.Publisher, metadataJSON,
+		m.Name, m.DisplayName, nullString(m.Description), aliases, nullableJSON(rateJSON), nullableJSON(imageRateJSON), status, m.Publisher, metadataJSON,
 	).Scan(&m.CreatedAt, &m.UpdatedAt)
 }
 

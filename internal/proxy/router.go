@@ -18,8 +18,9 @@ import (
 // is used as a fallback when API key validation fails.
 //
 // Middleware order (spec §3.1):
-//   Auth → Trace → ResolveModel → SubscriptionEligibility
-//        → RateLimit → ExtraUsageGuard → Handler
+//
+//	Auth → Trace → ResolveModel → SubscriptionEligibility
+//	     → RateLimit → ExtraUsageGuard → Handler
 func MountRoutes(
 	r chi.Router,
 	st *store.Store,
@@ -29,6 +30,7 @@ func MountRoutes(
 	catalog modelcatalog.Catalog,
 	euCfg config.ExtraUsageConfig,
 	maxBodySize int64,
+	imagesMaxBodySize int64,
 	encKey []byte,
 	logger *slog.Logger,
 	introspector TokenIntrospector,
@@ -36,7 +38,7 @@ func MountRoutes(
 	wire := func(r chi.Router) {
 		r.Use(AuthMiddleware(st, encKey, introspector))
 		r.Use(TraceMiddleware(traceCfg, st, logger))
-		r.Use(ResolveModelMiddleware(catalog, maxBodySize))
+		r.Use(ResolveModelMiddleware(catalog, maxBodySize, imagesMaxBodySize))
 		r.Use(SubscriptionEligibilityMiddleware())
 		if limiter != nil {
 			r.Use(RateLimitMiddleware(limiter, st, logger))
@@ -50,6 +52,8 @@ func MountRoutes(
 		r.Post("/messages/count_tokens", handler.HandleCountTokens)
 		r.Post("/responses", handler.HandleResponses)
 		r.Post("/chat/completions", handler.HandleChatCompletions)
+		r.Post("/images/generations", handler.HandleImagesGenerations)
+		r.Post("/images/edits", handler.HandleImagesEdits)
 		r.Get("/models", handler.HandleListModels)
 		r.Get("/usage", handler.HandleUsage)
 	})

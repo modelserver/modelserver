@@ -44,6 +44,7 @@ import type {
   ModelListRow,
   ModelReferenceCounts,
   CreditRate,
+  ImageCreditRate,
 } from "@/api/types";
 import {
   Plus,
@@ -72,6 +73,13 @@ interface FormState {
   rate_cache_creation: string;
   rate_cache_read: string;
   has_default_rate: boolean;
+  image_text_input: string;
+  image_text_cached_input: string;
+  image_text_output: string;
+  image_image_input: string;
+  image_image_cached_input: string;
+  image_image_output: string;
+  has_default_image_rate: boolean;
   status: "active" | "disabled";
   metadata_json: string;
 }
@@ -87,12 +95,20 @@ const emptyForm: FormState = {
   rate_cache_creation: "0",
   rate_cache_read: "0",
   has_default_rate: false,
+  image_text_input: "0",
+  image_text_cached_input: "0",
+  image_text_output: "0",
+  image_image_input: "0",
+  image_image_cached_input: "0",
+  image_image_output: "0",
+  has_default_image_rate: false,
   status: "active",
   metadata_json: "{}",
 };
 
 function fromModel(m: Model): FormState {
   const rate = m.default_credit_rate;
+  const imageRate = m.default_image_credit_rate;
   return {
     name: m.name,
     display_name: m.display_name,
@@ -104,6 +120,13 @@ function fromModel(m: Model): FormState {
     rate_cache_creation: rate ? String(rate.cache_creation_rate) : "0",
     rate_cache_read: rate ? String(rate.cache_read_rate) : "0",
     has_default_rate: !!rate,
+    image_text_input: imageRate ? String(imageRate.text_input_rate) : "0",
+    image_text_cached_input: imageRate ? String(imageRate.text_cached_input_rate) : "0",
+    image_text_output: imageRate ? String(imageRate.text_output_rate) : "0",
+    image_image_input: imageRate ? String(imageRate.image_input_rate) : "0",
+    image_image_cached_input: imageRate ? String(imageRate.image_cached_input_rate) : "0",
+    image_image_output: imageRate ? String(imageRate.image_output_rate) : "0",
+    has_default_image_rate: !!imageRate,
     status: (m.status === "disabled" ? "disabled" : "active"),
     metadata_json: JSON.stringify(m.metadata ?? {}, null, 2),
   };
@@ -197,6 +220,24 @@ export function ModelsPage() {
         }
       }
     }
+    const defaultImageRate: ImageCreditRate | undefined = form.has_default_image_rate
+      ? {
+          text_input_rate: Number(form.image_text_input) || 0,
+          text_cached_input_rate: Number(form.image_text_cached_input) || 0,
+          text_output_rate: Number(form.image_text_output) || 0,
+          image_input_rate: Number(form.image_image_input) || 0,
+          image_cached_input_rate: Number(form.image_image_cached_input) || 0,
+          image_output_rate: Number(form.image_image_output) || 0,
+        }
+      : undefined;
+    if (defaultImageRate) {
+      for (const v of Object.values(defaultImageRate)) {
+        if ((v as number) < 0) {
+          toast.error("Image credit rates must be non-negative");
+          return;
+        }
+      }
+    }
 
     try {
       if (editingName) {
@@ -210,6 +251,7 @@ export function ModelsPage() {
           description: form.description,
           aliases: form.aliases,
           default_credit_rate: form.has_default_rate ? defaultRate : null,
+          default_image_credit_rate: form.has_default_image_rate ? defaultImageRate : null,
           status: form.status,
           metadata,
         });
@@ -221,6 +263,7 @@ export function ModelsPage() {
           description: form.description,
           aliases: form.aliases,
           default_credit_rate: defaultRate,
+          default_image_credit_rate: defaultImageRate,
           status: form.status,
           metadata,
         });
@@ -270,11 +313,21 @@ export function ModelsPage() {
         header: "Default Rate",
         accessor: (m) => {
           const r = m.default_credit_rate;
-          if (!r) return <span className="text-muted-foreground">—</span>;
+          const ir = m.default_image_credit_rate;
+          if (!r && !ir) return <span className="text-muted-foreground">—</span>;
           return (
-            <code className="text-xs">
-              in={r.input_rate} out={r.output_rate}
-            </code>
+            <div className="flex flex-col gap-1">
+              {r && (
+                <code className="text-xs">
+                  text in={r.input_rate} out={r.output_rate}
+                </code>
+              )}
+              {ir && (
+                <code className="text-xs">
+                  image in={ir.image_input_rate} out={ir.image_output_rate}
+                </code>
+              )}
+            </div>
           );
         },
         className: "w-48",
@@ -532,6 +585,112 @@ export function ModelsPage() {
                         setForm((p) => ({
                           ...p,
                           rate_cache_read: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="col-span-2 space-y-2">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="has-default-image-rate"
+                  checked={form.has_default_image_rate}
+                  onChange={(e) =>
+                    setForm((p) => ({
+                      ...p,
+                      has_default_image_rate: e.target.checked,
+                    }))
+                  }
+                />
+                <Label htmlFor="has-default-image-rate">
+                  Set image billing rate
+                </Label>
+              </div>
+              {form.has_default_image_rate && (
+                <div className="grid grid-cols-3 gap-2 pt-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Text Input</Label>
+                    <Input
+                      type="number"
+                      step="0.001"
+                      value={form.image_text_input}
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          image_text_input: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Text Cached Input</Label>
+                    <Input
+                      type="number"
+                      step="0.001"
+                      value={form.image_text_cached_input}
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          image_text_cached_input: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Text Output</Label>
+                    <Input
+                      type="number"
+                      step="0.001"
+                      value={form.image_text_output}
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          image_text_output: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Image Input</Label>
+                    <Input
+                      type="number"
+                      step="0.001"
+                      value={form.image_image_input}
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          image_image_input: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Image Cached Input</Label>
+                    <Input
+                      type="number"
+                      step="0.001"
+                      value={form.image_image_cached_input}
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          image_image_cached_input: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Image Output</Label>
+                    <Input
+                      type="number"
+                      step="0.001"
+                      value={form.image_image_output}
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          image_image_output: e.target.value,
                         }))
                       }
                     />
