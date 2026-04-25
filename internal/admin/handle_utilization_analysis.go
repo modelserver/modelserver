@@ -139,9 +139,9 @@ func handleUtilizationAnalysis(st *store.Store) http.HandlerFunc {
 		betaReduced, err := solveOLS(Xreduced, y)
 		if err != nil {
 			writeJSON(w, http.StatusOK, map[string]interface{}{
-				"error":       "OLS failed: " + err.Error(),
-				"data_points": n,
-				"features":    nFeatures,
+				"error":             "OLS failed: " + err.Error(),
+				"data_points":       n,
+				"features":          nFeatures,
 				"non_zero_features": len(nonZeroCols),
 			})
 			return
@@ -208,6 +208,7 @@ func handleUtilizationAnalysis(st *store.Store) http.HandlerFunc {
 		if ssTot > 0 {
 			rSquared = 1 - ssRes/ssTot
 		}
+		creditRegression := inferLimitFromTotalCredits(snaps)
 
 		// Anchored configurations.
 		// Known base input rates per model (from API pricing / 7.5).
@@ -217,6 +218,13 @@ func handleUtilizationAnalysis(st *store.Store) http.HandlerFunc {
 			"claude-sonnet-4-6":         0.4,
 			"claude-haiku-4-5":          0.133,
 			"claude-haiku-4-5-20251001": 0.133,
+			"gpt-5.5":                   0.667,
+			"gpt-5.4":                   0.333,
+			"gpt-5.3-codex":             0.233,
+			"gpt-5.2-codex":             0.233,
+			"gpt-5.2":                   0.233,
+			"gpt-5.1-codex-max":         0.167,
+			"gpt-5.1-codex-mini":        0.033,
 		}
 		knownLimits := map[string]float64{
 			"5h": 11_000_000,
@@ -230,9 +238,9 @@ func handleUtilizationAnalysis(st *store.Store) http.HandlerFunc {
 			CacheReadRate     float64 `json:"cache_read_rate"`
 		}
 		type anchoredConfig struct {
-			Anchor        string                     `json:"anchor"`
-			InferredLimit float64                    `json:"inferred_limit"`
-			InferredRates map[string]*inferredRates  `json:"inferred_rates"`
+			Anchor        string                    `json:"anchor"`
+			InferredLimit float64                   `json:"inferred_limit"`
+			InferredRates map[string]*inferredRates `json:"inferred_rates"`
 		}
 
 		var anchored []anchoredConfig
@@ -347,6 +355,7 @@ func handleUtilizationAnalysis(st *store.Store) http.HandlerFunc {
 			"rate_ratios":         ratioMap,
 			"ols_rmse_pct":        math.Round(rmsePct*1000) / 1000,
 			"ols_r_squared":       math.Round(rSquared*10000) / 10000,
+			"credit_regression":   creditRegression,
 			"anchored_configs":    anchored,
 			"hypotheses":          hypotheses,
 		})
@@ -354,6 +363,68 @@ func handleUtilizationAnalysis(st *store.Store) http.HandlerFunc {
 }
 
 // --- OLS linear algebra helpers (pure Go, no external dependencies) ---
+
+type creditLimitRegression struct {
+	DataPoints       int     `json:"data_points"`
+	InferredLimit    float64 `json:"inferred_limit"`
+	CreditsPerPct    float64 `json:"credits_per_pct"`
+	RMSEPct          float64 `json:"rmse_pct"`
+	MeanErrorPct     float64 `json:"mean_error_pct"`
+	RSquared         float64 `json:"r_squared"`
+	TotalCreditsMean float64 `json:"total_credits_mean"`
+}
+
+func inferLimitFromTotalCredits(snaps []store.UtilizationSnapshot) *creditLimitRegression {
+	var sumXY, sumXX float64
+	var usable int
+	for _, s := range snaps {
+		x := s.TotalCredits
+		y := s.OfficialPct / 100.0
+		if x <= 0 || y < 0 {
+			continue
+		}
+		sumXY += x * y
+		sumXX += x * x
+		usable++
+	}
+	if usable == 0 || sumXY <= 0 || sumXX <= 0 {
+		return nil
+	}
+
+	slope := sumXY / sumXX
+	if slope <= 0 {
+		return nil
+	}
+	inferredLimit := 1 / slope
+
+	var ssRes, ssTot, sumPct, sumErrPct, sumCredits float64
+	for _, s := range snaps {
+		sumPct += s.OfficialPct
+	}
+	meanPct := sumPct / float64(len(snaps))
+	for _, s := range snaps {
+		predPct := s.TotalCredits / inferredLimit * 100
+		residual := predPct - s.OfficialPct
+		sumErrPct += residual
+		ssRes += residual * residual
+		ssTot += (s.OfficialPct - meanPct) * (s.OfficialPct - meanPct)
+		sumCredits += s.TotalCredits
+	}
+	rSquared := 0.0
+	if ssTot > 0 {
+		rSquared = 1 - ssRes/ssTot
+	}
+
+	return &creditLimitRegression{
+		DataPoints:       len(snaps),
+		InferredLimit:    math.Round(inferredLimit),
+		CreditsPerPct:    math.Round(inferredLimit/100*1000) / 1000,
+		RMSEPct:          math.Round(math.Sqrt(ssRes/float64(len(snaps)))*1000) / 1000,
+		MeanErrorPct:     math.Round(sumErrPct/float64(len(snaps))*1000) / 1000,
+		RSquared:         math.Round(rSquared*10000) / 10000,
+		TotalCreditsMean: math.Round(sumCredits/float64(len(snaps))*1000) / 1000,
+	}
+}
 
 func dot(a, b []float64) float64 {
 	var s float64

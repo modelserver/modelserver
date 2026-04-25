@@ -512,18 +512,40 @@ func handleCodexUtilization(st *store.Store, encKey []byte) http.HandlerFunc {
 					if !ok || secs <= 0 {
 						continue
 					}
-					resetAtF, ok := wObj["reset_at"].(float64)
-					if !ok || resetAtF <= 0 {
+					resetAtF, hasResetAt := wObj["reset_at"].(float64)
+					if !hasResetAt || resetAtF <= 0 {
 						// No reset_at — fall back to "now - window".
 						resetAtF = float64(time.Now().Unix()) + secs
 					}
 					// Window started at reset_at - limit_window_seconds.
-					since := time.Unix(int64(resetAtF), 0).Add(-time.Duration(secs) * time.Second)
+					resetAt := time.Unix(int64(resetAtF), 0)
+					since := resetAt.Add(-time.Duration(secs) * time.Second)
 					breakdown, err := st.GetTokenBreakdownByUpstreamAndModelSince(upstreamID, since)
 					if err != nil {
 						continue
 					}
 					rateLimit[win.localKey] = breakdown
+
+					windowType := codexWindowTypeFromSeconds(int64(secs))
+					if windowType == "" {
+						continue
+					}
+					officialPct, hasOfficialPct := wObj["used_percent"].(float64)
+					if !hasResetAt || !hasOfficialPct {
+						continue
+					}
+					var totalCredits float64
+					for _, b := range breakdown {
+						totalCredits += b.CreditsConsumed
+					}
+					_ = st.CreateUtilizationSnapshot(&store.UtilizationSnapshot{
+						UpstreamID:     upstreamID,
+						WindowType:     windowType,
+						OfficialPct:    officialPct,
+						ResetsAt:       &resetAt,
+						ModelBreakdown: breakdown,
+						TotalCredits:   totalCredits,
+					})
 				}
 				utilResp["rate_limit"] = rateLimit
 			}
@@ -538,5 +560,16 @@ func handleCodexUtilization(st *store.Store, encKey []byte) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(full)
+	}
+}
+
+func codexWindowTypeFromSeconds(seconds int64) string {
+	switch seconds {
+	case int64((5 * time.Hour) / time.Second):
+		return "5h"
+	case int64((7 * 24 * time.Hour) / time.Second):
+		return "7d"
+	default:
+		return ""
 	}
 }

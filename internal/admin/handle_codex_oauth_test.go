@@ -154,6 +154,26 @@ func TestHandleCodexUtilization_ConstructorOK(t *testing.T) {
 	}
 }
 
+func TestCodexWindowTypeFromSeconds(t *testing.T) {
+	tests := []struct {
+		name    string
+		seconds int64
+		want    string
+	}{
+		{name: "five hour", seconds: 5 * 60 * 60, want: "5h"},
+		{name: "seven day", seconds: 7 * 24 * 60 * 60, want: "7d"},
+		{name: "unknown", seconds: 60 * 60, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := codexWindowTypeFromSeconds(tt.seconds); got != tt.want {
+				t.Fatalf("codexWindowTypeFromSeconds(%d) = %q, want %q", tt.seconds, got, tt.want)
+			}
+		})
+	}
+}
+
 // base64URL is a tiny helper for tests to avoid importing encoding/base64 with
 // padding handling.
 func base64URL(s string) string {
