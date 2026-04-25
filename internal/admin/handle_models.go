@@ -337,6 +337,14 @@ func validateCreditRate(r *types.CreditRate) error {
 	if r.InputRate < 0 || r.OutputRate < 0 || r.CacheCreationRate < 0 || r.CacheReadRate < 0 {
 		return fmt.Errorf("credit rates must be non-negative")
 	}
+	if r.LongContext != nil {
+		if r.LongContext.ThresholdInputTokens <= 0 {
+			return fmt.Errorf("long_context.threshold_input_tokens must be positive")
+		}
+		if r.LongContext.InputMultiplier <= 0 || r.LongContext.OutputMultiplier <= 0 {
+			return fmt.Errorf("long_context multipliers must be positive")
+		}
+	}
 	return nil
 }
 

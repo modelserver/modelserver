@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/modelserver/modelserver/internal/types"
@@ -96,5 +97,38 @@ func TestComputeExtraUsageCostFen_MixedTokens(t *testing.T) {
 	}
 	if cost != 13 {
 		t.Errorf("cost=%d, want 13", cost)
+	}
+}
+
+func TestComputeExtraUsageCostFen_LongContext(t *testing.T) {
+	m := &types.Model{
+		Name: "gpt-5.4",
+		DefaultCreditRate: &types.CreditRate{
+			InputRate:     0.333,
+			OutputRate:    2,
+			CacheReadRate: 0.033,
+			LongContext: &types.LongContextCreditRate{
+				ThresholdInputTokens: 272000,
+				InputMultiplier:      2,
+				OutputMultiplier:     1.5,
+			},
+		},
+	}
+
+	cost, credits, err := computeExtraUsageCostFen(m, types.TokenUsage{
+		InputTokens:     271001,
+		OutputTokens:    1000,
+		CacheReadTokens: 1000,
+	}, 5438)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	wantCredits := (0.333*2)*271001 + (2.0*1.5)*1000 + (0.033*2)*1000
+	if math.Abs(credits-wantCredits) > 0.001 {
+		t.Fatalf("credits=%v, want %v", credits, wantCredits)
+	}
+	wantCost := int64(999)
+	if cost != wantCost {
+		t.Fatalf("cost=%d, want %d", cost, wantCost)
 	}
 }

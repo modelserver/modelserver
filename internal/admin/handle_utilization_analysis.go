@@ -48,13 +48,17 @@ var utilizationAnalysisBaseRates = map[string]types.CreditRate{
 	"claude-sonnet-4-6":         {InputRate: 0.4, OutputRate: 2.0, CacheCreationRate: 0.4, CacheReadRate: 0},
 	"claude-haiku-4-5":          {InputRate: 0.133, OutputRate: 0.667, CacheCreationRate: 0.133, CacheReadRate: 0},
 	"claude-haiku-4-5-20251001": {InputRate: 0.133, OutputRate: 0.667, CacheCreationRate: 0.133, CacheReadRate: 0},
-	"gpt-5.5":                   {InputRate: 0.044, OutputRate: 0.261, CacheCreationRate: 0, CacheReadRate: 0.0044},
-	"gpt-5.4":                   {InputRate: 0.333, OutputRate: 2.0, CacheCreationRate: 0, CacheReadRate: 0.033},
-	"gpt-5.3-codex":             {InputRate: 0.233, OutputRate: 1.867, CacheCreationRate: 0, CacheReadRate: 0.023},
-	"gpt-5.2-codex":             {InputRate: 0.233, OutputRate: 1.867, CacheCreationRate: 0, CacheReadRate: 0.023},
-	"gpt-5.2":                   {InputRate: 0.233, OutputRate: 1.867, CacheCreationRate: 0, CacheReadRate: 0.023},
-	"gpt-5.1-codex-max":         {InputRate: 0.167, OutputRate: 1.333, CacheCreationRate: 0, CacheReadRate: 0.017},
-	"gpt-5.1-codex-mini":        {InputRate: 0.033, OutputRate: 0.267, CacheCreationRate: 0, CacheReadRate: 0.003},
+	"gpt-5.5": {InputRate: 0.044, OutputRate: 0.261, CacheCreationRate: 0, CacheReadRate: 0.0044, LongContext: &types.LongContextCreditRate{
+		ThresholdInputTokens: 272000,
+		InputMultiplier:      2.0,
+		OutputMultiplier:     1.5,
+	}},
+	"gpt-5.4":            {InputRate: 0.333, OutputRate: 2.0, CacheCreationRate: 0, CacheReadRate: 0.033},
+	"gpt-5.3-codex":      {InputRate: 0.233, OutputRate: 1.867, CacheCreationRate: 0, CacheReadRate: 0.023},
+	"gpt-5.2-codex":      {InputRate: 0.233, OutputRate: 1.867, CacheCreationRate: 0, CacheReadRate: 0.023},
+	"gpt-5.2":            {InputRate: 0.233, OutputRate: 1.867, CacheCreationRate: 0, CacheReadRate: 0.023},
+	"gpt-5.1-codex-max":  {InputRate: 0.167, OutputRate: 1.333, CacheCreationRate: 0, CacheReadRate: 0.017},
+	"gpt-5.1-codex-mini": {InputRate: 0.033, OutputRate: 0.267, CacheCreationRate: 0, CacheReadRate: 0.003},
 }
 
 // featureKey is "model:token_type".
@@ -465,12 +469,17 @@ func suggestRatesForFixedLimit(snaps []store.UtilizationSnapshot, windowType str
 }
 
 func scaleCreditRate(rate types.CreditRate, multiplier float64) types.CreditRate {
-	return types.CreditRate{
+	scaled := types.CreditRate{
 		InputRate:         roundFloat(rate.InputRate*multiplier, 6),
 		OutputRate:        roundFloat(rate.OutputRate*multiplier, 6),
 		CacheCreationRate: roundFloat(rate.CacheCreationRate*multiplier, 6),
 		CacheReadRate:     roundFloat(rate.CacheReadRate*multiplier, 6),
 	}
+	if rate.LongContext != nil {
+		lc := *rate.LongContext
+		scaled.LongContext = &lc
+	}
+	return scaled
 }
 
 func roundFloat(v float64, places int) float64 {

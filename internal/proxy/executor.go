@@ -1243,7 +1243,7 @@ func computeExtraUsageCostFen(m *types.Model, u types.TokenUsage, creditPriceFen
 	if creditPriceFen <= 0 {
 		return 0, 0, fmt.Errorf("extra usage: credit_price_fen must be > 0")
 	}
-	rate := m.DefaultCreditRate
+	rate := types.ApplyLongContextCreditRate(*m.DefaultCreditRate, u.InputTokens+u.CacheCreationTokens+u.CacheReadTokens)
 	credits := rate.InputRate*float64(u.InputTokens) +
 		rate.OutputRate*float64(u.OutputTokens) +
 		rate.CacheCreationRate*float64(u.CacheCreationTokens) +

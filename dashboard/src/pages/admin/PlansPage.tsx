@@ -70,6 +70,17 @@ const DEFAULT_MODEL_CREDIT_RATES: Record<string, CreditRate> = {
     cache_creation_rate: 0.133,
     cache_read_rate: 0,
   },
+  "gpt-5.5": {
+    input_rate: 0.044,
+    output_rate: 0.261,
+    cache_creation_rate: 0,
+    cache_read_rate: 0.0044,
+    long_context: {
+      threshold_input_tokens: 272000,
+      input_multiplier: 2,
+      output_multiplier: 1.5,
+    },
+  },
   _default: {
     input_rate: 0.4,
     output_rate: 2.0,

@@ -79,10 +79,21 @@ func (r CreditRule) EffectiveScope() string {
 
 // CreditRate defines per-model credit rates.
 type CreditRate struct {
-	InputRate         float64 `json:"input_rate"`
-	OutputRate        float64 `json:"output_rate"`
-	CacheCreationRate float64 `json:"cache_creation_rate"`
-	CacheReadRate     float64 `json:"cache_read_rate"`
+	InputRate         float64                `json:"input_rate"`
+	OutputRate        float64                `json:"output_rate"`
+	CacheCreationRate float64                `json:"cache_creation_rate"`
+	CacheReadRate     float64                `json:"cache_read_rate"`
+	LongContext       *LongContextCreditRate `json:"long_context,omitempty"`
+}
+
+// LongContextCreditRate describes pricing that applies when a request's total
+// input context exceeds a token threshold. OpenAI's long-context pricing
+// applies the multiplier to the whole request, not only the tokens above the
+// threshold.
+type LongContextCreditRate struct {
+	ThresholdInputTokens int64   `json:"threshold_input_tokens"`
+	InputMultiplier      float64 `json:"input_multiplier"`
+	OutputMultiplier     float64 `json:"output_multiplier"`
 }
 
 // ComputeCredits calculates credits using only the policy's own rate map.
@@ -116,10 +127,30 @@ func (p *RateLimitPolicy) ComputeCreditsWithDefault(model string, catalogDefault
 	if !ok {
 		return 0
 	}
+	rate = ApplyLongContextCreditRate(rate, inputTokens+cacheCreationTokens+cacheReadTokens)
 	return rate.InputRate*float64(inputTokens) +
 		rate.OutputRate*float64(outputTokens) +
 		rate.CacheCreationRate*float64(cacheCreationTokens) +
 		rate.CacheReadRate*float64(cacheReadTokens)
+}
+
+// ApplyLongContextCreditRate returns an effective copy of rate after applying
+// any configured long-context multipliers. It intentionally treats malformed
+// long_context values as disabled so old persisted JSON remains harmless.
+func ApplyLongContextCreditRate(rate CreditRate, totalInputTokens int64) CreditRate {
+	lc := rate.LongContext
+	if lc == nil ||
+		lc.ThresholdInputTokens <= 0 ||
+		totalInputTokens <= lc.ThresholdInputTokens ||
+		lc.InputMultiplier <= 0 ||
+		lc.OutputMultiplier <= 0 {
+		return rate
+	}
+	rate.InputRate *= lc.InputMultiplier
+	rate.CacheCreationRate *= lc.InputMultiplier
+	rate.CacheReadRate *= lc.InputMultiplier
+	rate.OutputRate *= lc.OutputMultiplier
+	return rate
 }
 
 // ClassicRule defines a traditional rate limit.

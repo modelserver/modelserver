@@ -190,6 +190,13 @@ export interface CreditRate {
   output_rate: number;
   cache_creation_rate: number;
   cache_read_rate: number;
+  long_context?: LongContextCreditRate;
+}
+
+export interface LongContextCreditRate {
+  threshold_input_tokens: number;
+  input_multiplier: number;
+  output_multiplier: number;
 }
 
 export interface ClassicRule {
