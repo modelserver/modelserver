@@ -25,6 +25,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Server.MaxRequestBody != 52428800 {
 		t.Errorf("Server.MaxRequestBody = %d, want 52428800", cfg.Server.MaxRequestBody)
 	}
+	if cfg.Images.MaxBodySize != 200<<20 {
+		t.Errorf("Images.MaxBodySize = %d, want %d", cfg.Images.MaxBodySize, int64(200<<20))
+	}
 	if cfg.Auth.AccessTokenTTL != 15*time.Minute {
 		t.Errorf("Auth.AccessTokenTTL = %v, want 15m", cfg.Auth.AccessTokenTTL)
 	}
@@ -91,6 +94,8 @@ cors:
   allowed_origins:
     - "https://app.example.com"
     - "https://admin.example.com"
+images:
+  max_body_size: 123456
 `)
 
 	cfg, err := Load(yaml)
@@ -167,6 +172,9 @@ cors:
 		if cfg.CORS.AllowedOrigins[1] != "https://admin.example.com" {
 			t.Errorf("CORS.AllowedOrigins[1] = %q", cfg.CORS.AllowedOrigins[1])
 		}
+	}
+	if cfg.Images.MaxBodySize != 123456 {
+		t.Errorf("Images.MaxBodySize = %d, want 123456", cfg.Images.MaxBodySize)
 	}
 }
 

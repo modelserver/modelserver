@@ -199,6 +199,15 @@ export interface LongContextCreditRate {
   output_multiplier: number;
 }
 
+export interface ImageCreditRate {
+  text_input_rate: number;
+  text_cached_input_rate: number;
+  text_output_rate: number;
+  image_input_rate: number;
+  image_cached_input_rate: number;
+  image_output_rate: number;
+}
+
 export interface ClassicRule {
   metric: "rpm" | "rpd" | "tpm" | "tpd";
   limit: number;
@@ -442,6 +451,7 @@ export interface Model {
   description?: string;
   aliases: string[];
   default_credit_rate?: CreditRate;
+  default_image_credit_rate?: ImageCreditRate;
   status: string;
   publisher: string;
   metadata: ModelMetadata;

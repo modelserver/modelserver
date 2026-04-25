@@ -71,13 +71,14 @@ func encodeLabels(pairs []labelPair) string {
 // Declared counters. Names follow spec §7.4 exactly so ops dashboards wire
 // against a stable contract.
 var (
-	extraUsageRequestsTotal      = newCounter("extra_usage_requests_total", "extra-usage guard decisions")
-	extraUsageDeductionsTotal    = newCounter("extra_usage_deductions_total", "extra-usage deduction outcomes")
-	extraUsageUnderdraftTotal    = newCounter("extra_usage_underdraft_total", "deduction attempts that failed due to race with zero balance")
-	extraUsageMissingRateTotal   = newCounter("extra_usage_missing_rate_total", "settle attempts aborted because model.DefaultCreditRate was nil")
+	extraUsageRequestsTotal         = newCounter("extra_usage_requests_total", "extra-usage guard decisions")
+	extraUsageDeductionsTotal       = newCounter("extra_usage_deductions_total", "extra-usage deduction outcomes")
+	extraUsageUnderdraftTotal       = newCounter("extra_usage_underdraft_total", "deduction attempts that failed due to race with zero balance")
+	extraUsageMissingRateTotal      = newCounter("extra_usage_missing_rate_total", "settle attempts aborted because model.DefaultCreditRate was nil")
 	extraUsageMissingPublisherTotal = newCounter("extra_usage_missing_publisher_total", "subscription eligibility saw model.publisher = ''")
-	extraUsageTopupsTotal        = newCounter("extra_usage_topups_total", "topup webhook deliveries")
-	extraUsageBalanceFen         = newCounter("extra_usage_balance_fen", "per-project extra-usage balance in fen")
+	extraUsageTopupsTotal           = newCounter("extra_usage_topups_total", "topup webhook deliveries")
+	extraUsageBalanceFen            = newCounter("extra_usage_balance_fen", "per-project extra-usage balance in fen")
+	imageStreamEventTooLargeTotal   = newCounter("image_stream_event_too_large_total", "image SSE events that exceeded parser buffer limit")
 
 	counters = []*counter{
 		extraUsageRequestsTotal,
@@ -87,6 +88,7 @@ var (
 		extraUsageMissingPublisherTotal,
 		extraUsageTopupsTotal,
 		extraUsageBalanceFen,
+		imageStreamEventTooLargeTotal,
 	}
 )
 
@@ -139,6 +141,12 @@ func IncExtraUsageTopup(channel string) {
 // paths so the gauge stays fresh.
 func SetExtraUsageBalance(projectID string, balanceFen int64) {
 	extraUsageBalanceFen.set(float64(balanceFen), labelPair{"project_id", quote(projectID)})
+}
+
+// IncImageStreamEventTooLarge records that an image SSE event exceeded the
+// parser buffer cap.
+func IncImageStreamEventTooLarge() {
+	imageStreamEventTooLargeTotal.inc(1)
 }
 
 func quote(s string) string {

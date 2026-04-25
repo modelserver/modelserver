@@ -105,6 +105,10 @@ extra_usage:
   # Timezone used for the monthly window boundary (shared with plans).
   monthly_window_tz: "Asia/Shanghai"
 
+images:
+  # Maximum accepted request body size for image edit uploads (default 200 MB).
+  max_body_size: 209715200
+
 http_log:
   # Enable HTTP request/response logging to S3-compatible storage.
   enabled: false

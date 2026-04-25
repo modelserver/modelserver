@@ -16,10 +16,10 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/modelserver/modelserver/internal/admin"
 	"github.com/modelserver/modelserver/internal/auth"
-	"github.com/modelserver/modelserver/internal/httplog"
 	"github.com/modelserver/modelserver/internal/collector"
 	"github.com/modelserver/modelserver/internal/config"
 	"github.com/modelserver/modelserver/internal/crypto"
+	"github.com/modelserver/modelserver/internal/httplog"
 	"github.com/modelserver/modelserver/internal/metrics"
 	"github.com/modelserver/modelserver/internal/modelcatalog"
 	"github.com/modelserver/modelserver/internal/proxy"
@@ -203,8 +203,8 @@ func main() {
 	// Initialize rate limiter.
 	rateLimiter := ratelimit.NewCompositeRateLimiter(st, logger)
 
-	executor := proxy.NewExecutor(router, st, coll, rateLimiter, catalog, logger, cfg.Server.MaxRequestBody, cfg.ExtraUsage, httpLogger, cfg.HttpLog)
-	proxyHandler := proxy.NewHandler(executor, router, st, coll, catalog, logger, cfg.Server.MaxRequestBody, httpLogger)
+	executor := proxy.NewExecutor(router, st, coll, rateLimiter, catalog, logger, cfg.Server.MaxRequestBody, cfg.Images.MaxBodySize, cfg.ExtraUsage, httpLogger, cfg.HttpLog)
+	proxyHandler := proxy.NewHandler(executor, router, st, coll, catalog, logger, cfg.Server.MaxRequestBody, cfg.Images.MaxBodySize, httpLogger)
 
 	// --- Proxy server ---
 	proxyRouter := chi.NewRouter()
@@ -234,7 +234,7 @@ func main() {
 	}
 
 	// Mount proxy routes.
-	proxy.MountRoutes(proxyRouter, st, proxyHandler, cfg.Trace, rateLimiter, catalog, cfg.ExtraUsage, cfg.Server.MaxRequestBody, encryptionKey, logger, proxyIntrospector)
+	proxy.MountRoutes(proxyRouter, st, proxyHandler, cfg.Trace, rateLimiter, catalog, cfg.ExtraUsage, cfg.Server.MaxRequestBody, cfg.Images.MaxBodySize, encryptionKey, logger, proxyIntrospector)
 
 	proxyServer := &http.Server{
 		Addr:    cfg.Server.ProxyAddr,

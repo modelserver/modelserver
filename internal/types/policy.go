@@ -96,6 +96,17 @@ type LongContextCreditRate struct {
 	OutputMultiplier     float64 `json:"output_multiplier"`
 }
 
+// ImageCreditRate defines per-token credit rates for image models whose
+// usage reports text/image token classes separately.
+type ImageCreditRate struct {
+	TextInputRate        float64 `json:"text_input_rate"`
+	TextCachedInputRate  float64 `json:"text_cached_input_rate"`
+	TextOutputRate       float64 `json:"text_output_rate"`
+	ImageInputRate       float64 `json:"image_input_rate"`
+	ImageCachedInputRate float64 `json:"image_cached_input_rate"`
+	ImageOutputRate      float64 `json:"image_output_rate"`
+}
+
 // ComputeCredits calculates credits using only the policy's own rate map.
 // Prefer ComputeCreditsWithDefault so the catalog-level default can act as a
 // fallback between the plan override and the plan's "_default".
