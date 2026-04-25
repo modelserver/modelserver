@@ -231,6 +231,12 @@ function CodexUtilizationBadge({ upstreamId }: { upstreamId: string }) {
     return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
   }
 
+  function usageLimitForWindow(seconds: number): number | null {
+    if (seconds === 18000) return MAX20X_5H;
+    if (seconds === 604800) return MAX20X_7D;
+    return null;
+  }
+
   function sumCredits(m?: Record<string, { credits_consumed: number }>): number | null {
     if (!m) return null;
     let total = 0;
@@ -238,15 +244,18 @@ function CodexUtilizationBadge({ upstreamId }: { upstreamId: string }) {
     return total;
   }
 
-  function formatCredits(c: number): string {
-    if (c >= 1000) return `${(c / 1000).toFixed(1)}kc`;
-    return `${c.toFixed(1)}c`;
+  function localUsagePct(windowSeconds: number, credits: number | null): number | null {
+    const limit = usageLimitForWindow(windowSeconds);
+    if (credits == null || limit == null || limit <= 0) return null;
+    return (credits / limit) * 100;
   }
 
   const primary = util.rate_limit?.primary_window;
   const secondary = util.rate_limit?.secondary_window;
   const localPrimary = sumCredits(util.rate_limit?.local_primary);
   const localSecondary = sumCredits(util.rate_limit?.local_secondary);
+  const localPrimaryPct = primary ? localUsagePct(primary.limit_window_seconds, localPrimary) : null;
+  const localSecondaryPct = secondary ? localUsagePct(secondary.limit_window_seconds, localSecondary) : null;
 
   if (!primary && !secondary) {
     return <span className="text-xs text-muted-foreground">{util.plan_type}</span>;
@@ -258,8 +267,8 @@ function CodexUtilizationBadge({ upstreamId }: { upstreamId: string }) {
         <span className="text-xs tabular-nums">
           {formatWindow(primary.limit_window_seconds)}:{" "}
           <span className={pctColor(primary.used_percent)}>{primary.used_percent}%</span>
-          {localPrimary != null && (
-            <span className="text-muted-foreground ml-1">local {formatCredits(localPrimary)}</span>
+          {localPrimaryPct != null && (
+            <span className="text-muted-foreground ml-1">local {localPrimaryPct.toFixed(1)}%</span>
           )}
           <span className="text-muted-foreground ml-1">({formatReset(primary.reset_after_seconds)})</span>
           <span className="text-muted-foreground ml-1">{util.plan_type}</span>
@@ -269,8 +278,8 @@ function CodexUtilizationBadge({ upstreamId }: { upstreamId: string }) {
         <span className="text-xs tabular-nums">
           {formatWindow(secondary.limit_window_seconds)}:{" "}
           <span className={pctColor(secondary.used_percent)}>{secondary.used_percent}%</span>
-          {localSecondary != null && (
-            <span className="text-muted-foreground ml-1">local {formatCredits(localSecondary)}</span>
+          {localSecondaryPct != null && (
+            <span className="text-muted-foreground ml-1">local {localSecondaryPct.toFixed(1)}%</span>
           )}
           <span className="text-muted-foreground ml-1">({formatReset(secondary.reset_after_seconds)})</span>
         </span>
@@ -599,7 +608,7 @@ export function UpstreamsPage() {
       className: "text-right",
     },
     {
-      header: "Credits (5h / 7d)",
+      header: "Usage (5h / 7d)",
       accessor: (u) => {
         if (u.provider === "claudecode") {
           return <UtilizationBadge upstreamId={u.id} />;
