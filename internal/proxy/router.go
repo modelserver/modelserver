@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/modelserver/modelserver/internal/config"
@@ -60,7 +61,9 @@ func MountRoutes(
 	})
 }
 
-// HandleListModels returns available models for the authenticated API key.
+// HandleListModels returns available models in OpenAI or Anthropic format
+// depending on the auth-header style the client used. Bearer or fallback →
+// OpenAI; x-api-key → Anthropic.
 func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 	apiKey := APIKeyFromContext(r.Context())
 	if apiKey == nil {
@@ -68,16 +71,99 @@ func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var models []string
+	var names []string
 	if len(apiKey.AllowedModels) > 0 {
-		models = apiKey.AllowedModels
+		names = apiKey.AllowedModels
 	} else {
-		models = h.router.ActiveModels()
+		names = h.router.ActiveModels()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"data": models,
-	})
+
+	if r.Header.Get("x-api-key") != "" {
+		writeAnthropicModelsList(w, h.catalog, names)
+		return
+	}
+	writeOpenAIModelsList(w, h.catalog, names)
+}
+
+type openaiModel struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	OwnedBy string `json:"owned_by"`
+}
+
+type openaiModelsList struct {
+	Object string        `json:"object"`
+	Data   []openaiModel `json:"data"`
+}
+
+func writeOpenAIModelsList(w http.ResponseWriter, catalog modelcatalog.Catalog, names []string) {
+	out := openaiModelsList{
+		Object: "list",
+		Data:   make([]openaiModel, 0, len(names)),
+	}
+	for _, name := range names {
+		m, _ := catalog.Get(name)
+		ownedBy := "system"
+		var createdAt time.Time
+		if m != nil {
+			if m.Publisher != "" {
+				ownedBy = m.Publisher
+			}
+			createdAt = m.CreatedAt
+		}
+		out.Data = append(out.Data, openaiModel{
+			ID:      name,
+			Object:  "model",
+			Created: createdAt.Unix(),
+			OwnedBy: ownedBy,
+		})
+	}
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+type anthropicModel struct {
+	Type        string `json:"type"`
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	CreatedAt   string `json:"created_at"`
+}
+
+type anthropicModelsList struct {
+	Data    []anthropicModel `json:"data"`
+	FirstID string           `json:"first_id"`
+	LastID  string           `json:"last_id"`
+	HasMore bool             `json:"has_more"`
+}
+
+func writeAnthropicModelsList(w http.ResponseWriter, catalog modelcatalog.Catalog, names []string) {
+	out := anthropicModelsList{
+		Data:    make([]anthropicModel, 0, len(names)),
+		HasMore: false,
+	}
+	for _, name := range names {
+		m, _ := catalog.Get(name)
+		displayName := name
+		var createdAt time.Time
+		if m != nil {
+			if m.DisplayName != "" {
+				displayName = m.DisplayName
+			}
+			createdAt = m.CreatedAt
+		}
+		out.Data = append(out.Data, anthropicModel{
+			Type:        "model",
+			ID:          name,
+			DisplayName: displayName,
+			CreatedAt:   createdAt.Format(time.RFC3339),
+		})
+	}
+	if len(out.Data) > 0 {
+		out.FirstID = out.Data[0].ID
+		out.LastID = out.Data[len(out.Data)-1].ID
+	}
+	_ = json.NewEncoder(w).Encode(out)
 }
