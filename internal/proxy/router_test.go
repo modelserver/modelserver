@@ -2,12 +2,16 @@ package proxy
 
 import (
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/modelserver/modelserver/internal/config"
 	"github.com/modelserver/modelserver/internal/modelcatalog"
 	"github.com/modelserver/modelserver/internal/types"
 )
@@ -143,5 +147,38 @@ func TestWriteAnthropicModelsList_FallbackDisplayName(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	if resp.Data[0].DisplayName != "raw-name" {
 		t.Errorf("display_name fallback = %q, want raw-name", resp.Data[0].DisplayName)
+	}
+}
+
+func TestMountRoutes_ImageEndpointsAreRegistered(t *testing.T) {
+	r := chi.NewRouter()
+	MountRoutes(
+		r,
+		nil,
+		&Handler{},
+		config.TraceConfig{},
+		nil,
+		nil,
+		config.ExtraUsageConfig{},
+		16<<20,
+		200<<20,
+		nil,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		nil,
+	)
+
+	for _, path := range []string{"/v1/images/generations", "/v1/images/edits"} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"gpt-image-2"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		r.ServeHTTP(w, req)
+
+		if w.Code == http.StatusNotFound {
+			t.Fatalf("%s was not registered; got %d body %q", path, w.Code, w.Body.String())
+		}
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("%s status = %d, want %d before auth", path, w.Code, http.StatusUnauthorized)
+		}
 	}
 }

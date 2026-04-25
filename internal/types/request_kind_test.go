@@ -18,8 +18,8 @@ func TestIsValidRequestKind_RejectsUnknown(t *testing.T) {
 	}
 }
 
-func TestAllRequestKinds_ContainsExactlyFive(t *testing.T) {
-	if got := len(AllRequestKinds); got != 5 {
-		t.Errorf("len(AllRequestKinds) = %d, want 5", got)
+func TestAllRequestKinds_ContainsExactlySeven(t *testing.T) {
+	if got := len(AllRequestKinds); got != 7 {
+		t.Errorf("len(AllRequestKinds) = %d, want 7", got)
 	}
 }

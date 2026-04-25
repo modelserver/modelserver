@@ -21,6 +21,7 @@ type Config struct {
 	Billing    BillingConfig    `yaml:"billing"    mapstructure:"billing"`
 	ExtraUsage ExtraUsageConfig `yaml:"extra_usage" mapstructure:"extra_usage"`
 	HttpLog    HttpLogConfig    `yaml:"http_log"    mapstructure:"http_log"`
+	Images     ImagesConfig     `yaml:"images"      mapstructure:"images"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -150,11 +151,16 @@ type HttpLogConfig struct {
 	Region          string `yaml:"region"             mapstructure:"region"`
 	Endpoint        string `yaml:"endpoint"           mapstructure:"endpoint"`
 	AccessKeyID     string `yaml:"access_key_id"      mapstructure:"access_key_id"`
-	SecretAccessKey  string `yaml:"secret_access_key"  mapstructure:"secret_access_key"`
+	SecretAccessKey string `yaml:"secret_access_key"  mapstructure:"secret_access_key"`
 	PathStyle       bool   `yaml:"path_style"         mapstructure:"path_style"`
 	MaxRequestBody  int64  `yaml:"max_request_body"   mapstructure:"max_request_body"`
 	MaxResponseBody int64  `yaml:"max_response_body"  mapstructure:"max_response_body"`
 	BufferSize      int    `yaml:"buffer_size"        mapstructure:"buffer_size"`
+}
+
+// ImagesConfig holds endpoint-specific limits for OpenAI image APIs.
+type ImagesConfig struct {
+	MaxBodySize int64 `yaml:"max_body_size" mapstructure:"max_body_size"`
 }
 
 // setDefaults registers all default values with the viper instance.
@@ -251,6 +257,9 @@ func setDefaults(v *viper.Viper) {
 	_ = v.BindEnv("http_log.endpoint")
 	_ = v.BindEnv("http_log.access_key_id")
 	_ = v.BindEnv("http_log.secret_access_key")
+
+	// Images.
+	v.SetDefault("images.max_body_size", int64(200<<20))
 }
 
 // newViper creates a pre-configured viper instance with defaults, env binding,

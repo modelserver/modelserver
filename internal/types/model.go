@@ -12,16 +12,17 @@ const (
 // flows through the proxy must be registered here. The canonical name is
 // the primary key; aliases resolve to the same row.
 type Model struct {
-	Name              string        `json:"name"`
-	DisplayName       string        `json:"display_name"`
-	Description       string        `json:"description,omitempty"`
-	Aliases           []string      `json:"aliases"`
-	DefaultCreditRate *CreditRate   `json:"default_credit_rate,omitempty"`
-	Status            string        `json:"status"`
-	Publisher         string        `json:"publisher"`
-	Metadata          ModelMetadata `json:"metadata"`
-	CreatedAt         time.Time     `json:"created_at"`
-	UpdatedAt         time.Time     `json:"updated_at"`
+	Name                   string           `json:"name"`
+	DisplayName            string           `json:"display_name"`
+	Description            string           `json:"description,omitempty"`
+	Aliases                []string         `json:"aliases"`
+	DefaultCreditRate      *CreditRate      `json:"default_credit_rate,omitempty"`
+	DefaultImageCreditRate *ImageCreditRate `json:"default_image_credit_rate,omitempty"`
+	Status                 string           `json:"status"`
+	Publisher              string           `json:"publisher"`
+	Metadata               ModelMetadata    `json:"metadata"`
+	CreatedAt              time.Time        `json:"created_at"`
+	UpdatedAt              time.Time        `json:"updated_at"`
 }
 
 // ModelMetadata carries optional, UI-oriented hints about a model.

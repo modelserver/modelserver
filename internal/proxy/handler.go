@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/url"
 	"path"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/modelserver/modelserver/internal/httplog"
 	"github.com/modelserver/modelserver/internal/collector"
+	"github.com/modelserver/modelserver/internal/httplog"
 	"github.com/modelserver/modelserver/internal/modelcatalog"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
@@ -21,27 +22,29 @@ import (
 
 // Handler handles proxied LLM API requests.
 type Handler struct {
-	executor    *Executor
-	router      *Router
-	store       *store.Store
-	collector   *collector.Collector
-	catalog     modelcatalog.Catalog
-	logger      *slog.Logger
-	maxBodySize int64
-	httpLogger  *httplog.Logger
+	executor          *Executor
+	router            *Router
+	store             *store.Store
+	collector         *collector.Collector
+	catalog           modelcatalog.Catalog
+	logger            *slog.Logger
+	maxBodySize       int64
+	imagesMaxBodySize int64
+	httpLogger        *httplog.Logger
 }
 
 // NewHandler creates a new proxy handler.
-func NewHandler(executor *Executor, router *Router, st *store.Store, coll *collector.Collector, catalog modelcatalog.Catalog, logger *slog.Logger, maxBodySize int64, bl *httplog.Logger) *Handler {
+func NewHandler(executor *Executor, router *Router, st *store.Store, coll *collector.Collector, catalog modelcatalog.Catalog, logger *slog.Logger, maxBodySize int64, imagesMaxBodySize int64, bl *httplog.Logger) *Handler {
 	return &Handler{
-		executor:    executor,
-		router:      router,
-		store:       st,
-		collector:   coll,
-		catalog:     catalog,
-		logger:      logger,
-		maxBodySize: maxBodySize,
-		httpLogger:  bl,
+		executor:          executor,
+		router:            router,
+		store:             st,
+		collector:         coll,
+		catalog:           catalog,
+		logger:            logger,
+		maxBodySize:       maxBodySize,
+		imagesMaxBodySize: imagesMaxBodySize,
+		httpLogger:        bl,
 	}
 }
 
@@ -82,6 +85,129 @@ func (h *Handler) HandleResponses(w http.ResponseWriter, r *http.Request) {
 // Routes are matched against KindOpenAIChatCompletions.
 func (h *Handler) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	h.handleProxyRequest(w, r, IngressOpenAI, types.KindOpenAIChatCompletions)
+}
+
+// HandleImagesGenerations proxies OpenAI /v1/images/generations requests.
+// Routes are matched against KindOpenAIImagesGenerations.
+func (h *Handler) HandleImagesGenerations(w http.ResponseWriter, r *http.Request) {
+	h.handleProxyRequest(w, r, IngressOpenAI, types.KindOpenAIImagesGenerations)
+}
+
+// HandleImagesEdits proxies OpenAI /v1/images/edits requests. JSON edit
+// bodies use the shared JSON proxy path; multipart uploads need a bespoke
+// path so the model field can be read and rewritten without JSON mutation.
+func (h *Handler) HandleImagesEdits(w http.ResponseWriter, r *http.Request) {
+	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	switch strings.ToLower(mediaType) {
+	case "multipart/form-data":
+		h.handleImagesEditsMultipart(w, r)
+	case "application/json", "":
+		h.handleProxyRequest(w, r, IngressOpenAI, types.KindOpenAIImagesEdits)
+	default:
+		writeProxyError(w, http.StatusUnsupportedMediaType, "unsupported content type")
+	}
+}
+
+func (h *Handler) handleImagesEditsMultipart(w http.ResponseWriter, r *http.Request) {
+	apiKey := APIKeyFromContext(r.Context())
+	project := ProjectFromContext(r.Context())
+	if apiKey == nil || project == nil {
+		writeProxyError(w, http.StatusInternalServerError, "missing auth context")
+		return
+	}
+
+	limit := h.imagesMaxBodySize
+	if limit <= 0 {
+		limit = h.maxBodySize
+	}
+	bodyBytes, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+	if err != nil {
+		writeProxyError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+	_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || params["boundary"] == "" {
+		writeProxyError(w, http.StatusBadRequest, "invalid multipart request")
+		return
+	}
+	boundary := params["boundary"]
+
+	model, isStream, err := peekMultipartFields(bodyBytes, boundary)
+	if err != nil {
+		writeProxyError(w, http.StatusBadRequest, "multipart parse failed")
+		return
+	}
+
+	canonical, ok := h.resolveModel(w, model, IngressOpenAI)
+	if !ok {
+		return
+	}
+
+	if len(apiKey.AllowedModels) > 0 && !modelInList(apiKey.AllowedModels, canonical) {
+		writeProxyError(w, http.StatusForbidden, "model not allowed for this API key")
+		return
+	}
+
+	if canonical != model {
+		bodyBytes, err = rewriteMultipartField(bodyBytes, boundary, "model", canonical)
+		if err != nil {
+			writeProxyError(w, http.StatusInternalServerError, "multipart rewrite failed")
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		r.ContentLength = int64(len(bodyBytes))
+		model = canonical
+	}
+
+	policy := PolicyFromContext(r.Context())
+	traceID := TraceIDFromContext(r.Context())
+	oauthGrantID := OAuthGrantIDFromContext(r.Context())
+
+	metadata := make(map[string]string)
+	if v := r.Header.Get("User-Agent"); v != "" {
+		metadata["user_agent"] = v
+	}
+
+	pendingReq := &types.Request{
+		ProjectID:    project.ID,
+		APIKeyID:     apiKey.ID,
+		OAuthGrantID: oauthGrantID,
+		CreatedBy:    apiKey.CreatedBy,
+		TraceID:      traceID,
+		RequestKind:  types.KindOpenAIImagesEdits,
+		Model:        model,
+		Streaming:    isStream,
+		Status:       types.RequestStatusProcessing,
+		ClientIP:     r.RemoteAddr,
+		Metadata:     metadata,
+	}
+	if err := h.store.CreateRequest(pendingReq); err != nil {
+		h.logger.Warn("failed to insert pending request", "error", err)
+		pendingReq.ID = ""
+	}
+
+	reqCtx := &RequestContext{
+		ProjectID:    project.ID,
+		APIKeyID:     apiKey.ID,
+		OAuthGrantID: oauthGrantID,
+		UserID:       apiKey.CreatedBy,
+		Model:        model,
+		ModelRef:     ModelFromContext(r.Context()),
+		IsStream:     isStream,
+		RequestKind:  types.KindOpenAIImagesEdits,
+		TraceID:      traceID,
+		TraceSource:  TraceSourceFromContext(r.Context()),
+		SessionID:    traceID,
+		ClientIP:     r.RemoteAddr,
+		Policy:       policy,
+		APIKey:       apiKey,
+		Project:      project,
+		RequestID:    pendingReq.ID,
+	}
+
+	h.executor.Execute(w, r, reqCtx)
 }
 
 // HandleGemini proxies Gemini API requests (generateContent / streamGenerateContent).
@@ -186,22 +312,22 @@ func (h *Handler) HandleGemini(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reqCtx := &RequestContext{
-		ProjectID:        project.ID,
-		APIKeyID:         apiKey.ID,
-		OAuthGrantID:     oauthGrantID,
-		UserID:           apiKey.CreatedBy,
-		Model:            model,
-		ModelRef:         ModelFromContext(r.Context()),
-		IsStream:         isStream,
-		RequestKind:      types.KindGoogleGenerateContent,
-		TraceID:          traceID,
-		TraceSource:      TraceSourceFromContext(r.Context()),
-		SessionID:        traceID,
-		ClientIP:         r.RemoteAddr,
-		Policy:           policy,
-		APIKey:           apiKey,
-		Project:          project,
-		RequestID:        pendingReq.ID,
+		ProjectID:    project.ID,
+		APIKeyID:     apiKey.ID,
+		OAuthGrantID: oauthGrantID,
+		UserID:       apiKey.CreatedBy,
+		Model:        model,
+		ModelRef:     ModelFromContext(r.Context()),
+		IsStream:     isStream,
+		RequestKind:  types.KindGoogleGenerateContent,
+		TraceID:      traceID,
+		TraceSource:  TraceSourceFromContext(r.Context()),
+		SessionID:    traceID,
+		ClientIP:     r.RemoteAddr,
+		Policy:       policy,
+		APIKey:       apiKey,
+		Project:      project,
+		RequestID:    pendingReq.ID,
 	}
 
 	h.executor.Execute(w, r, reqCtx)
@@ -309,22 +435,22 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, ing
 	}
 
 	reqCtx := &RequestContext{
-		ProjectID:        project.ID,
-		APIKeyID:         apiKey.ID,
-		OAuthGrantID:     oauthGrantID,
-		UserID:           apiKey.CreatedBy,
-		Model:            reqShape.Model,
-		ModelRef:         ModelFromContext(r.Context()),
-		IsStream:         reqShape.Stream,
-		RequestKind:      kind,
-		TraceID:          traceID,
-		TraceSource:      TraceSourceFromContext(r.Context()),
-		SessionID:        traceID, // Use trace ID for session stickiness
-		ClientIP:         r.RemoteAddr,
-		Policy:           policy,
-		APIKey:           apiKey,
-		Project:          project,
-		RequestID:        pendingReq.ID,
+		ProjectID:    project.ID,
+		APIKeyID:     apiKey.ID,
+		OAuthGrantID: oauthGrantID,
+		UserID:       apiKey.CreatedBy,
+		Model:        reqShape.Model,
+		ModelRef:     ModelFromContext(r.Context()),
+		IsStream:     reqShape.Stream,
+		RequestKind:  kind,
+		TraceID:      traceID,
+		TraceSource:  TraceSourceFromContext(r.Context()),
+		SessionID:    traceID, // Use trace ID for session stickiness
+		ClientIP:     r.RemoteAddr,
+		Policy:       policy,
+		APIKey:       apiKey,
+		Project:      project,
+		RequestID:    pendingReq.ID,
 	}
 
 	if h.httpLogger != nil {
@@ -462,4 +588,3 @@ func modelInList(list []string, model string) bool {
 	}
 	return false
 }
-

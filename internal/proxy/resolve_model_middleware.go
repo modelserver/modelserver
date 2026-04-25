@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"strings"
 
@@ -35,7 +37,7 @@ func ModelFromContext(ctx context.Context) *types.Model {
 // models fall through unchanged, because the handlers still need to render
 // the provider-specific error envelope the clients expect. A missing model
 // therefore means ModelFromContext returns nil.
-func ResolveModelMiddleware(catalog modelcatalog.Catalog, maxBodySize int64) func(http.Handler) http.Handler {
+func ResolveModelMiddleware(catalog modelcatalog.Catalog, maxBodySize int64, multipartMaxBodySize int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if catalog == nil {
@@ -43,7 +45,7 @@ func ResolveModelMiddleware(catalog modelcatalog.Catalog, maxBodySize int64) fun
 				return
 			}
 
-			raw := extractModelFromRequest(r, maxBodySize)
+			raw := extractModelFromRequest(r, maxBodySize, multipartMaxBodySize)
 			if raw == "" {
 				next.ServeHTTP(w, r)
 				return
@@ -62,7 +64,7 @@ func ResolveModelMiddleware(catalog modelcatalog.Catalog, maxBodySize int64) fun
 // extractModelFromRequest inspects the URL path (Gemini) or JSON body (every
 // other endpoint) to read the client-supplied model string. The body is
 // restored so downstream handlers can re-read it.
-func extractModelFromRequest(r *http.Request, maxBodySize int64) string {
+func extractModelFromRequest(r *http.Request, maxBodySize int64, multipartMaxBodySize int64) string {
 	// Gemini: /v1beta/models/{model}:{method} — extract from the wildcard.
 	if strings.HasPrefix(r.URL.Path, "/v1beta/models/") {
 		wildcard := chi.URLParam(r, "*")
@@ -76,6 +78,11 @@ func extractModelFromRequest(r *http.Request, maxBodySize int64) string {
 			return wildcard[:i]
 		}
 		return ""
+	}
+
+	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if strings.EqualFold(mediaType, "multipart/form-data") {
+		return extractModelFromMultipart(r, multipartMaxBodySize)
 	}
 
 	// Body-based endpoints: read, peek JSON, restore.
@@ -99,6 +106,40 @@ func extractModelFromRequest(r *http.Request, maxBodySize int64) string {
 	}
 	_ = json.Unmarshal(body, &shape)
 	return shape.Model
+}
+
+func extractModelFromMultipart(r *http.Request, maxBodySize int64) string {
+	if r.Body == nil {
+		return ""
+	}
+	limit := maxBodySize
+	if limit <= 0 {
+		limit = 200 << 20
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+	if err != nil {
+		return ""
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if int64(len(body)) > limit {
+		return ""
+	}
+	_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || params["boundary"] == "" {
+		return ""
+	}
+	mr := multipart.NewReader(bytes.NewReader(body), params["boundary"])
+	for {
+		part, err := mr.NextPart()
+		if err != nil {
+			return ""
+		}
+		if part.FormName() != "model" {
+			continue
+		}
+		val, _ := io.ReadAll(io.LimitReader(part, 256))
+		return strings.TrimSpace(string(val))
+	}
 }
 
 // RewriteRequestBodyModel rewrites the `model` JSON field in the request body
