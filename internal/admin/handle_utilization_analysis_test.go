@@ -6,9 +6,10 @@ import (
 	"time"
 
 	"github.com/modelserver/modelserver/internal/store"
+	"github.com/modelserver/modelserver/internal/types"
 )
 
-func TestInferLimitFromTotalCredits(t *testing.T) {
+func TestSuggestRatesForFixedLimit(t *testing.T) {
 	reset := time.Unix(1_700_000_000, 0)
 	snaps := []store.UtilizationSnapshot{
 		{OfficialPct: 10, TotalCredits: 1_100_000, ResetsAt: &reset},
@@ -16,24 +17,57 @@ func TestInferLimitFromTotalCredits(t *testing.T) {
 		{OfficialPct: 50, TotalCredits: 5_500_000, ResetsAt: &reset},
 	}
 
-	got := inferLimitFromTotalCredits(snaps)
+	got := suggestRatesForFixedLimit(snaps, "5h", utilizationAnalysisBaseRates)
 	if got == nil {
-		t.Fatal("inferLimitFromTotalCredits returned nil")
+		t.Fatal("suggestRatesForFixedLimit returned nil")
 	}
-	if math.Abs(got.InferredLimit-11_000_000) > 0.5 {
-		t.Fatalf("InferredLimit = %v, want 11000000", got.InferredLimit)
+	if math.Abs(got.KnownLimit-11_000_000) > 0.5 {
+		t.Fatalf("KnownLimit = %v, want 11000000", got.KnownLimit)
+	}
+	if math.Abs(got.SuggestedRateMultiplier-1) > 0.000001 {
+		t.Fatalf("SuggestedRateMultiplier = %v, want 1", got.SuggestedRateMultiplier)
+	}
+	if math.Abs(got.TargetCredits-9_350_000) > 0.5 {
+		t.Fatalf("TargetCredits = %v, want 9350000", got.TargetCredits)
 	}
 	if got.RMSEPct != 0 {
 		t.Fatalf("RMSEPct = %v, want 0", got.RMSEPct)
 	}
 }
 
-func TestInferLimitFromTotalCreditsNoUsableCredits(t *testing.T) {
-	got := inferLimitFromTotalCredits([]store.UtilizationSnapshot{
+func TestSuggestRatesForFixedLimitScalesKnownRates(t *testing.T) {
+	got := suggestRatesForFixedLimit([]store.UtilizationSnapshot{
+		{
+			OfficialPct:  6,
+			TotalCredits: 10_097_386.538,
+			ModelBreakdown: map[string]*store.UpstreamTokenBreakdown{
+				"gpt-5.5": {},
+			},
+		},
+	}, "5h", map[string]types.CreditRate{
+		"gpt-5.5": {InputRate: 0.667, OutputRate: 4, CacheCreationRate: 0, CacheReadRate: 0.067},
+	})
+	if got == nil {
+		t.Fatal("suggestRatesForFixedLimit returned nil")
+	}
+	if math.Abs(got.SuggestedRateMultiplier-0.065363) > 0.000001 {
+		t.Fatalf("SuggestedRateMultiplier = %v, want 0.065363", got.SuggestedRateMultiplier)
+	}
+	rate := got.SuggestedRates["gpt-5.5"]
+	if math.Abs(rate.InputRate-0.043596) > 0.000001 {
+		t.Fatalf("InputRate = %v, want 0.043596", rate.InputRate)
+	}
+	if math.Abs(rate.OutputRate-0.261454) > 0.000001 {
+		t.Fatalf("OutputRate = %v, want 0.261454", rate.OutputRate)
+	}
+}
+
+func TestSuggestRatesForFixedLimitNoUsableCredits(t *testing.T) {
+	got := suggestRatesForFixedLimit([]store.UtilizationSnapshot{
 		{OfficialPct: 10, TotalCredits: 0},
 		{OfficialPct: 20, TotalCredits: -1},
-	})
+	}, "5h", utilizationAnalysisBaseRates)
 	if got != nil {
-		t.Fatalf("inferLimitFromTotalCredits = %+v, want nil", got)
+		t.Fatalf("suggestRatesForFixedLimit = %+v, want nil", got)
 	}
 }

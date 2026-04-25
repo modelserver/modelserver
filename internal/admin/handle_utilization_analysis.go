@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/modelserver/modelserver/internal/store"
+	"github.com/modelserver/modelserver/internal/types"
 )
 
 func handleListUtilizationSnapshots(st *store.Store) http.HandlerFunc {
@@ -36,6 +37,26 @@ func handleListUtilizationSnapshots(st *store.Store) http.HandlerFunc {
 // tokenType names used as feature columns in OLS.
 var tokenTypes = [4]string{"input", "output", "cache_creation", "cache_read"}
 
+var knownUtilizationLimits = map[string]float64{
+	"5h": 11_000_000,
+	"7d": 83_333_300,
+}
+
+var utilizationAnalysisBaseRates = map[string]types.CreditRate{
+	"claude-opus-4-7":           {InputRate: 0.667, OutputRate: 3.333, CacheCreationRate: 0.667, CacheReadRate: 0},
+	"claude-opus-4-6":           {InputRate: 0.667, OutputRate: 3.333, CacheCreationRate: 0.667, CacheReadRate: 0},
+	"claude-sonnet-4-6":         {InputRate: 0.4, OutputRate: 2.0, CacheCreationRate: 0.4, CacheReadRate: 0},
+	"claude-haiku-4-5":          {InputRate: 0.133, OutputRate: 0.667, CacheCreationRate: 0.133, CacheReadRate: 0},
+	"claude-haiku-4-5-20251001": {InputRate: 0.133, OutputRate: 0.667, CacheCreationRate: 0.133, CacheReadRate: 0},
+	"gpt-5.5":                   {InputRate: 0.044, OutputRate: 0.261, CacheCreationRate: 0, CacheReadRate: 0.0044},
+	"gpt-5.4":                   {InputRate: 0.333, OutputRate: 2.0, CacheCreationRate: 0, CacheReadRate: 0.033},
+	"gpt-5.3-codex":             {InputRate: 0.233, OutputRate: 1.867, CacheCreationRate: 0, CacheReadRate: 0.023},
+	"gpt-5.2-codex":             {InputRate: 0.233, OutputRate: 1.867, CacheCreationRate: 0, CacheReadRate: 0.023},
+	"gpt-5.2":                   {InputRate: 0.233, OutputRate: 1.867, CacheCreationRate: 0, CacheReadRate: 0.023},
+	"gpt-5.1-codex-max":         {InputRate: 0.167, OutputRate: 1.333, CacheCreationRate: 0, CacheReadRate: 0.017},
+	"gpt-5.1-codex-mini":        {InputRate: 0.033, OutputRate: 0.267, CacheCreationRate: 0, CacheReadRate: 0.003},
+}
+
 // featureKey is "model:token_type".
 type featureKey struct {
 	Model     string
@@ -56,10 +77,14 @@ func handleUtilizationAnalysis(st *store.Store) http.HandlerFunc {
 			return
 		}
 		if len(snaps) < 3 {
+			creditRateSuggestion := suggestRatesForFixedLimit(snaps, windowType, utilizationAnalysisBaseRates)
 			writeJSON(w, http.StatusOK, map[string]interface{}{
-				"error":       "insufficient data points",
-				"data_points": len(snaps),
-				"min_needed":  3,
+				"error":                  "insufficient data points for OLS",
+				"data_points":            len(snaps),
+				"min_needed":             3,
+				"window_type":            windowType,
+				"credit_regression":      creditRateSuggestion,
+				"credit_rate_suggestion": creditRateSuggestion,
 			})
 			return
 		}
@@ -208,27 +233,12 @@ func handleUtilizationAnalysis(st *store.Store) http.HandlerFunc {
 		if ssTot > 0 {
 			rSquared = 1 - ssRes/ssTot
 		}
-		creditRegression := inferLimitFromTotalCredits(snaps)
+		creditRateSuggestion := suggestRatesForFixedLimit(snaps, windowType, utilizationAnalysisBaseRates)
 
 		// Anchored configurations.
-		// Known base input rates per model (from API pricing / 7.5).
-		knownInputRates := map[string]float64{
-			"claude-opus-4-7":           0.667,
-			"claude-opus-4-6":           0.667,
-			"claude-sonnet-4-6":         0.4,
-			"claude-haiku-4-5":          0.133,
-			"claude-haiku-4-5-20251001": 0.133,
-			"gpt-5.5":                   0.667,
-			"gpt-5.4":                   0.333,
-			"gpt-5.3-codex":             0.233,
-			"gpt-5.2-codex":             0.233,
-			"gpt-5.2":                   0.233,
-			"gpt-5.1-codex-max":         0.167,
-			"gpt-5.1-codex-mini":        0.033,
-		}
-		knownLimits := map[string]float64{
-			"5h": 11_000_000,
-			"7d": 83_333_300,
+		knownInputRates := make(map[string]float64, len(utilizationAnalysisBaseRates))
+		for model, rate := range utilizationAnalysisBaseRates {
+			knownInputRates[model] = rate.InputRate
 		}
 
 		type inferredRates struct {
@@ -269,7 +279,7 @@ func handleUtilizationAnalysis(st *store.Store) http.HandlerFunc {
 		}
 
 		// Anchor B: assume known limit.
-		if knownLimit, ok := knownLimits[windowType]; ok {
+		if knownLimit, ok := knownUtilizationLimits[windowType]; ok {
 			rates := make(map[string]*inferredRates)
 			for m, e := range effMap {
 				rates[m] = &inferredRates{
@@ -310,7 +320,7 @@ func handleUtilizationAnalysis(st *store.Store) http.HandlerFunc {
 		for _, hc := range hypoConfigs {
 			limit := hc.limitOverride
 			if limit == 0 {
-				limit = knownLimits[windowType]
+				limit = knownUtilizationLimits[windowType]
 			}
 			if limit == 0 {
 				continue
@@ -348,82 +358,124 @@ func handleUtilizationAnalysis(st *store.Store) http.HandlerFunc {
 		}
 
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"data_points":         n,
-			"window_type":         windowType,
-			"features":            nFeatures,
-			"ols_effective_rates": effMap,
-			"rate_ratios":         ratioMap,
-			"ols_rmse_pct":        math.Round(rmsePct*1000) / 1000,
-			"ols_r_squared":       math.Round(rSquared*10000) / 10000,
-			"credit_regression":   creditRegression,
-			"anchored_configs":    anchored,
-			"hypotheses":          hypotheses,
+			"data_points":            n,
+			"window_type":            windowType,
+			"features":               nFeatures,
+			"ols_effective_rates":    effMap,
+			"rate_ratios":            ratioMap,
+			"ols_rmse_pct":           math.Round(rmsePct*1000) / 1000,
+			"ols_r_squared":          math.Round(rSquared*10000) / 10000,
+			"credit_regression":      creditRateSuggestion,
+			"credit_rate_suggestion": creditRateSuggestion,
+			"anchored_configs":       anchored,
+			"hypotheses":             hypotheses,
 		})
 	}
 }
 
 // --- OLS linear algebra helpers (pure Go, no external dependencies) ---
 
-type creditLimitRegression struct {
-	DataPoints       int     `json:"data_points"`
-	InferredLimit    float64 `json:"inferred_limit"`
-	CreditsPerPct    float64 `json:"credits_per_pct"`
-	RMSEPct          float64 `json:"rmse_pct"`
-	MeanErrorPct     float64 `json:"mean_error_pct"`
-	RSquared         float64 `json:"r_squared"`
-	TotalCreditsMean float64 `json:"total_credits_mean"`
+type creditRateSuggestion struct {
+	DataPoints              int                         `json:"data_points"`
+	WindowType              string                      `json:"window_type"`
+	KnownLimit              float64                     `json:"known_limit"`
+	SuggestedRateMultiplier float64                     `json:"suggested_rate_multiplier"`
+	CurrentCredits          float64                     `json:"current_credits"`
+	TargetCredits           float64                     `json:"target_credits"`
+	CurrentCreditsMean      float64                     `json:"current_credits_mean"`
+	TargetCreditsMean       float64                     `json:"target_credits_mean"`
+	RMSEPct                 float64                     `json:"rmse_pct"`
+	MeanErrorPct            float64                     `json:"mean_error_pct"`
+	RSquared                float64                     `json:"r_squared"`
+	SuggestedRates          map[string]types.CreditRate `json:"suggested_rates,omitempty"`
 }
 
-func inferLimitFromTotalCredits(snaps []store.UtilizationSnapshot) *creditLimitRegression {
-	var sumXY, sumXX float64
+func suggestRatesForFixedLimit(snaps []store.UtilizationSnapshot, windowType string, baseRates map[string]types.CreditRate) *creditRateSuggestion {
+	knownLimit, ok := knownUtilizationLimits[windowType]
+	if !ok || knownLimit <= 0 {
+		return nil
+	}
+
+	var sumCurrent, sumTarget float64
 	var usable int
+	modelSet := make(map[string]struct{})
 	for _, s := range snaps {
-		x := s.TotalCredits
-		y := s.OfficialPct / 100.0
-		if x <= 0 || y < 0 {
+		if s.TotalCredits <= 0 || s.OfficialPct < 0 {
 			continue
 		}
-		sumXY += x * y
-		sumXX += x * x
+		sumCurrent += s.TotalCredits
+		sumTarget += knownLimit * s.OfficialPct / 100.0
 		usable++
+		for model := range s.ModelBreakdown {
+			modelSet[model] = struct{}{}
+		}
 	}
-	if usable == 0 || sumXY <= 0 || sumXX <= 0 {
+	if usable == 0 || sumCurrent <= 0 || sumTarget <= 0 {
 		return nil
 	}
 
-	slope := sumXY / sumXX
-	if slope <= 0 {
-		return nil
-	}
-	inferredLimit := 1 / slope
+	multiplier := sumTarget / sumCurrent
 
-	var ssRes, ssTot, sumPct, sumErrPct, sumCredits float64
+	var ssRes, ssTot, sumPct, sumErrPct float64
 	for _, s := range snaps {
+		if s.TotalCredits <= 0 || s.OfficialPct < 0 {
+			continue
+		}
 		sumPct += s.OfficialPct
 	}
-	meanPct := sumPct / float64(len(snaps))
+	meanPct := sumPct / float64(usable)
 	for _, s := range snaps {
-		predPct := s.TotalCredits / inferredLimit * 100
+		if s.TotalCredits <= 0 || s.OfficialPct < 0 {
+			continue
+		}
+		predPct := s.TotalCredits * multiplier / knownLimit * 100
 		residual := predPct - s.OfficialPct
 		sumErrPct += residual
 		ssRes += residual * residual
 		ssTot += (s.OfficialPct - meanPct) * (s.OfficialPct - meanPct)
-		sumCredits += s.TotalCredits
 	}
 	rSquared := 0.0
 	if ssTot > 0 {
 		rSquared = 1 - ssRes/ssTot
 	}
 
-	return &creditLimitRegression{
-		DataPoints:       len(snaps),
-		InferredLimit:    math.Round(inferredLimit),
-		CreditsPerPct:    math.Round(inferredLimit/100*1000) / 1000,
-		RMSEPct:          math.Round(math.Sqrt(ssRes/float64(len(snaps)))*1000) / 1000,
-		MeanErrorPct:     math.Round(sumErrPct/float64(len(snaps))*1000) / 1000,
-		RSquared:         math.Round(rSquared*10000) / 10000,
-		TotalCreditsMean: math.Round(sumCredits/float64(len(snaps))*1000) / 1000,
+	suggestedRates := make(map[string]types.CreditRate)
+	for model := range modelSet {
+		rate, ok := baseRates[model]
+		if !ok {
+			continue
+		}
+		suggestedRates[model] = scaleCreditRate(rate, multiplier)
 	}
+
+	return &creditRateSuggestion{
+		DataPoints:              usable,
+		WindowType:              windowType,
+		KnownLimit:              knownLimit,
+		SuggestedRateMultiplier: roundFloat(multiplier, 6),
+		CurrentCredits:          roundFloat(sumCurrent, 3),
+		TargetCredits:           roundFloat(sumTarget, 3),
+		CurrentCreditsMean:      roundFloat(sumCurrent/float64(usable), 3),
+		TargetCreditsMean:       roundFloat(sumTarget/float64(usable), 3),
+		RMSEPct:                 roundFloat(math.Sqrt(ssRes/float64(usable)), 3),
+		MeanErrorPct:            roundFloat(sumErrPct/float64(usable), 3),
+		RSquared:                roundFloat(rSquared, 4),
+		SuggestedRates:          suggestedRates,
+	}
+}
+
+func scaleCreditRate(rate types.CreditRate, multiplier float64) types.CreditRate {
+	return types.CreditRate{
+		InputRate:         roundFloat(rate.InputRate*multiplier, 6),
+		OutputRate:        roundFloat(rate.OutputRate*multiplier, 6),
+		CacheCreationRate: roundFloat(rate.CacheCreationRate*multiplier, 6),
+		CacheReadRate:     roundFloat(rate.CacheReadRate*multiplier, 6),
+	}
+}
+
+func roundFloat(v float64, places int) float64 {
+	scale := math.Pow10(places)
+	return math.Round(v*scale) / scale
 }
 
 func dot(a, b []float64) float64 {

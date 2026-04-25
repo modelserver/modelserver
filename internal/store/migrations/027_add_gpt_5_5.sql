@@ -1,15 +1,15 @@
 -- 027_add_gpt_5_5.sql
 --
 -- Register gpt-5.5 in the model catalog and seed its credit rate into every
--- existing plan's model_credit_rates map. OpenAI pricing (per MTok):
---   input          $5.00
---   cached input   $0.50
---   output         $30.00
--- Subscription formula rate = API_price / 7.5:
---   input_rate          0.667
---   output_rate         4.0
+-- existing plan's model_credit_rates map. The subscription rates are calibrated
+-- against Codex utilization percentages with fixed Max 20x capacities:
+--   5h = 11,000,000 credits
+--   7d = 83,333,300 credits
+-- Current calibrated gpt-5.5 rate:
+--   input_rate          0.044
+--   output_rate         0.261
 --   cache_creation_rate 0      (OpenAI has no separate cache-creation charge)
---   cache_read_rate     0.067
+--   cache_read_rate     0.0044
 --
 -- The model is registered as 'active' with publisher 'openai'. Admins still
 -- need to add it to an upstream's supported_models before traffic can hit it
@@ -22,7 +22,7 @@ VALUES (
     'GPT-5.5',
     'A new class of intelligence for coding and professional work.',
     '{}',
-    '{"input_rate":0.667,"output_rate":4.0,"cache_creation_rate":0,"cache_read_rate":0.067}'::jsonb,
+    '{"input_rate":0.044,"output_rate":0.261,"cache_creation_rate":0,"cache_read_rate":0.0044}'::jsonb,
     'active',
     'openai',
     '{}'::jsonb
@@ -36,7 +36,7 @@ UPDATE plans
 SET model_credit_rates = jsonb_set(
         model_credit_rates,
         '{gpt-5.5}',
-        '{"input_rate":0.667,"output_rate":4.0,"cache_creation_rate":0,"cache_read_rate":0.067}'::jsonb,
+        '{"input_rate":0.044,"output_rate":0.261,"cache_creation_rate":0,"cache_read_rate":0.0044}'::jsonb,
         true
     ),
     updated_at = NOW()
