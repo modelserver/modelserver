@@ -9,6 +9,7 @@ import { useMembers } from "@/api/members";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { StatusBadge } from "@/components/shared/StatusBadge";
+import { UserCell } from "@/components/shared/UserCell";
 import { ValidationBadge } from "@/components/shared/ValidationBadge";
 import { DateRangePicker } from "@/components/shared/DateRangePicker";
 import { Input } from "@/components/ui/input";
@@ -92,6 +93,16 @@ export function RequestsPage() {
   }
 
   const columns: Column<Request>[] = [
+    {
+      header: "User",
+      accessor: (r) => (
+        <UserCell
+          nickname={r.created_by_nickname}
+          picture={r.created_by_picture}
+          userId={r.created_by}
+        />
+      ),
+    },
     {
       header: "Msg ID",
       accessor: (r) => r.msg_id ? (
