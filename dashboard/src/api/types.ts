@@ -163,6 +163,9 @@ export interface Request {
   ttft_ms: number;
   error_message?: string;
   client_ip?: string;
+  created_by?: string;
+  created_by_nickname?: string;
+  created_by_picture?: string;
   metadata?: Record<string, string>;
   http_log_path?: string;
   created_at: string;
