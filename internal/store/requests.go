@@ -123,12 +123,12 @@ func (s *Store) ListRequests(projectID string, p types.PaginationParams, filters
 			COALESCE(og.client_name, '') as oauth_grant_client_name,
 			r.metadata,
 			COALESCE(r.http_log_path, ''),
-			COALESCE(r.created_by::text, ''),
+			COALESCE(r.created_by, ''),
 			COALESCE(u.nickname, ''),
 			COALESCE(u.picture, '')
 		FROM requests r
 		LEFT JOIN oauth_grants og ON og.id = r.oauth_grant_id
-		LEFT JOIN users u ON u.id = r.created_by
+		LEFT JOIN users u ON u.id::text = r.created_by
 		%s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
 		where, sanitizeSort(p.Sort, "r.created_at"), sanitizeOrder(p.Order), argN, argN+1),
 		args...,
@@ -228,12 +228,12 @@ func (s *Store) ListAllRequests(p types.PaginationParams, filters RequestFilters
 			COALESCE(og.client_name, '') as oauth_grant_client_name,
 			r.metadata,
 			COALESCE(r.http_log_path, ''),
-			COALESCE(r.created_by::text, ''),
+			COALESCE(r.created_by, ''),
 			COALESCE(u.nickname, ''),
 			COALESCE(u.picture, '')
 		FROM requests r
 		LEFT JOIN oauth_grants og ON og.id = r.oauth_grant_id
-		LEFT JOIN users u ON u.id = r.created_by
+		LEFT JOIN users u ON u.id::text = r.created_by
 		%s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
 		where, sanitizeSort(p.Sort, "r.created_at"), sanitizeOrder(p.Order), argN, argN+1),
 		args...,
@@ -317,12 +317,12 @@ func (s *Store) ListRequestsByTraceID(traceID string) ([]types.Request, error) {
 			COALESCE(og.client_name, '') as oauth_grant_client_name,
 			r.metadata,
 			COALESCE(r.http_log_path, ''),
-			COALESCE(r.created_by::text, ''),
+			COALESCE(r.created_by, ''),
 			COALESCE(u.nickname, ''),
 			COALESCE(u.picture, '')
 		FROM requests r
 		LEFT JOIN oauth_grants og ON og.id = r.oauth_grant_id
-		LEFT JOIN users u ON u.id = r.created_by
+		LEFT JOIN users u ON u.id::text = r.created_by
 		WHERE r.trace_id = $1 ORDER BY r.created_at ASC`, traceID)
 	if err != nil {
 		return nil, err
@@ -381,12 +381,12 @@ func (s *Store) GetRequest(id string) (*types.Request, error) {
 			COALESCE(og.client_name, '') as oauth_grant_client_name,
 			r.metadata,
 			COALESCE(r.http_log_path, ''),
-			COALESCE(r.created_by::text, ''),
+			COALESCE(r.created_by, ''),
 			COALESCE(u.nickname, ''),
 			COALESCE(u.picture, '')
 		FROM requests r
 		LEFT JOIN oauth_grants og ON og.id = r.oauth_grant_id
-		LEFT JOIN users u ON u.id = r.created_by
+		LEFT JOIN users u ON u.id::text = r.created_by
 		WHERE r.id = $1`, id,
 	).Scan(&r.ID, &r.ProjectID, &r.APIKeyID, &r.OAuthGrantID, &r.UpstreamID, &r.TraceID, &r.MsgID,
 		&r.Provider, &r.RequestKind, &r.Model, &r.Streaming, &r.Status,
