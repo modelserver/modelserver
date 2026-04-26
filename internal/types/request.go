@@ -45,6 +45,8 @@ type Request struct {
 	ClientIP            string    `json:"client_ip,omitempty"`
 	ErrorMessage        string    `json:"error_message,omitempty"`
 	CreatedBy           string    `json:"created_by,omitempty"`
+	CreatedByNickname   string    `json:"created_by_nickname,omitempty"`
+	CreatedByPicture    string    `json:"created_by_picture,omitempty"`
 	// Routing observability fields (populated by the new routing pipeline).
 	UpstreamID  string  `json:"upstream_id,omitempty"`
 	RouteID     string  `json:"route_id,omitempty"`
