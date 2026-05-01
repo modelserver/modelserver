@@ -77,6 +77,10 @@ func handleCreateUpstream(st *store.Store, encKey []byte, catalog modelcatalog.C
 			writeError(w, http.StatusBadRequest, "bad_request", "name, provider, and api_key are required")
 			return
 		}
+		if !types.IsValidProvider(body.Provider) {
+			writeError(w, http.StatusBadRequest, "bad_request", "unknown provider: "+body.Provider)
+			return
+		}
 
 		supported, err := catalog.NormalizeNames(body.SupportedModels)
 		if err != nil {
@@ -154,6 +158,17 @@ func handleUpdateUpstream(st *store.Store, encKey []byte, catalog modelcatalog.C
 				continue
 			}
 			switch field {
+			case "provider":
+				s, ok := v.(string)
+				if !ok {
+					writeError(w, http.StatusBadRequest, "bad_request", "provider must be a string")
+					return
+				}
+				if !types.IsValidProvider(s) {
+					writeError(w, http.StatusBadRequest, "bad_request", "unknown provider: "+s)
+					return
+				}
+				// v stays the validated string; falls through to updates[field] = v at the bottom of the loop
 			case "supported_models":
 				names, ok := toStringSlice(v)
 				if !ok {

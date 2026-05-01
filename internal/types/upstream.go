@@ -16,6 +16,35 @@ const (
 	ProviderCodex            = "codex"
 )
 
+// AllProviders enumerates every Provider* constant. Used for input validation
+// (admin handlers reject unknown values to prevent silently broken upstreams
+// from clients that have a stale provider list).
+var AllProviders = []string{
+	ProviderAnthropic,
+	ProviderOpenAI,
+	ProviderGemini,
+	ProviderBedrockAnthropic,
+	ProviderBedrockOpenAI,
+	ProviderClaudeCode,
+	ProviderVertexAnthropic,
+	ProviderVertexGoogle,
+	ProviderVertexOpenAI,
+	ProviderCodex,
+}
+
+// IsValidProvider reports whether s is a recognized upstream provider.
+// Use this to reject unknown values at API boundaries — internal code that
+// has already loaded an upstream from the database may assume the value is
+// valid and switch on it without falling through to a generic default.
+func IsValidProvider(s string) bool {
+	for _, p := range AllProviders {
+		if p == s {
+			return true
+		}
+	}
+	return false
+}
+
 // Upstream status constants.
 const (
 	UpstreamStatusActive   = "active"
