@@ -291,7 +291,7 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			// Start with original body. If the model was remapped and this is
 			// not Bedrock (which strips the model field), rewrite it in the body.
 			bodyForTransform := originalBody
-			if !isImagesEditMultipart && actualModel != reqCtx.Model && upstream.Provider != types.ProviderBedrock && upstream.Provider != types.ProviderVertexAnthropic && upstream.Provider != types.ProviderGemini && upstream.Provider != types.ProviderVertexGoogle {
+			if !isImagesEditMultipart && actualModel != reqCtx.Model && upstream.Provider != types.ProviderBedrockAnthropic && upstream.Provider != types.ProviderVertexAnthropic && upstream.Provider != types.ProviderGemini && upstream.Provider != types.ProviderVertexGoogle {
 				bodyForTransform, _ = sjson.SetBytes(append([]byte{}, originalBody...), "model", actualModel)
 			}
 
@@ -354,7 +354,7 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 
 		// For Bedrock, inject the resolved model and streaming flag into the
 		// request context so SetUpstream can construct the correct URL path.
-		if upstream.Provider == types.ProviderBedrock {
+		if upstream.Provider == types.ProviderBedrockAnthropic {
 			outReq = withBedrockParams(outReq, actualModel, reqCtx.IsStream)
 		}
 
@@ -865,7 +865,7 @@ func (e *Executor) commitStreamingResponse(
 	// For Bedrock streaming, set the correct Content-Type header since the
 	// upstream returns application/vnd.amazon.eventstream but our adapter
 	// converts it to SSE.
-	if candidate.Upstream.Provider == types.ProviderBedrock {
+	if candidate.Upstream.Provider == types.ProviderBedrockAnthropic {
 		w.Header().Set("Content-Type", "text/event-stream")
 	}
 

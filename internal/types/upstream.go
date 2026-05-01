@@ -4,15 +4,16 @@ import "time"
 
 // Provider constants identify supported AI provider backends.
 const (
-	ProviderAnthropic       = "anthropic"
-	ProviderOpenAI          = "openai"
-	ProviderGemini          = "gemini"
-	ProviderBedrock         = "bedrock"
-	ProviderClaudeCode      = "claudecode"
-	ProviderVertexAnthropic = "vertex-anthropic"
-	ProviderVertexGoogle    = "vertex-google"
-	ProviderVertexOpenAI    = "vertex-openai"
-	ProviderCodex           = "codex"
+	ProviderAnthropic        = "anthropic"
+	ProviderOpenAI           = "openai"
+	ProviderGemini           = "gemini"
+	ProviderBedrockAnthropic = "bedrock-anthropic"
+	ProviderBedrockOpenAI    = "bedrock-openai"
+	ProviderClaudeCode       = "claudecode"
+	ProviderVertexAnthropic  = "vertex-anthropic"
+	ProviderVertexGoogle     = "vertex-google"
+	ProviderVertexOpenAI     = "vertex-openai"
+	ProviderCodex            = "codex"
 )
 
 // Upstream status constants.

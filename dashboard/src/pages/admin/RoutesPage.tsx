@@ -105,7 +105,7 @@ export function RoutesPage() {
     let inferred: string[] = [];
     if (subsetOf(["anthropic", "claudecode"])) {
       inferred = ["anthropic_messages", "anthropic_count_tokens"];
-    } else if (subsetOf(["anthropic", "claudecode", "bedrock", "vertex-anthropic"])) {
+    } else if (subsetOf(["anthropic", "claudecode", "bedrock-anthropic", "vertex-anthropic"])) {
       inferred = ["anthropic_messages"];
     } else if (providers.size === 1 && providers.has("openai")) {
       inferred = ["openai_responses"];

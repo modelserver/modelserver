@@ -376,7 +376,7 @@ export interface ClaudeCodeUtilization {
 // --- Upstream (new routing system) ---
 export interface Upstream {
   id: string;
-  provider: "anthropic" | "openai" | "gemini" | "bedrock" | "claudecode" | "codex" | "vertex-anthropic" | "vertex-google" | "vertex-openai";
+  provider: "anthropic" | "openai" | "gemini" | "bedrock-anthropic" | "bedrock-openai" | "claudecode" | "codex" | "vertex-anthropic" | "vertex-google" | "vertex-openai";
   name: string;
   base_url: string;
   supported_models: string[];

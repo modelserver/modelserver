@@ -256,7 +256,7 @@ func (hc *HealthChecker) buildProbeRequest(entry *healthEntry) (*http.Request, e
 		return hc.buildGeminiProbe(entry)
 	case "claudecode":
 		return hc.buildClaudeCodeProbe(entry)
-	case "bedrock":
+	case "bedrock-anthropic":
 		return hc.buildBedrockProbe(entry)
 	case "vertex-anthropic":
 		return hc.buildVertexProbe(entry)

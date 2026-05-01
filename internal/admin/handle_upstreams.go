@@ -281,7 +281,7 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 				"max_output_tokens": 16,
 				"input":            "Hi",
 			})
-		case types.ProviderBedrock:
+		case types.ProviderBedrockAnthropic:
 			endpoint = baseURL + "/model/" + upstreamTestModel + "/invoke"
 			reqBody, _ = json.Marshal(map[string]interface{}{
 				"anthropic_version": "bedrock-2023-05-31",
@@ -411,7 +411,7 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 		switch u.Provider {
 		case types.ProviderOpenAI:
 			req.Header.Set("Authorization", "Bearer "+string(apiKey))
-		case types.ProviderBedrock:
+		case types.ProviderBedrockAnthropic:
 			req.Header.Set("Authorization", "Bearer "+string(apiKey))
 		case types.ProviderGemini:
 			req.Header.Set("x-goog-api-key", string(apiKey))

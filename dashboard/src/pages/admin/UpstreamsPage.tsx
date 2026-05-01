@@ -791,7 +791,7 @@ export function UpstreamsPage() {
                   <SelectItem value="anthropic">Anthropic</SelectItem>
                   <SelectItem value="openai">OpenAI</SelectItem>
                   <SelectItem value="gemini">Gemini</SelectItem>
-                  <SelectItem value="bedrock">AWS Bedrock</SelectItem>
+                  <SelectItem value="bedrock-anthropic">AWS Bedrock (Anthropic)</SelectItem>
                   <SelectItem value="claudecode">Claude Code</SelectItem>
                   <SelectItem value="codex">Codex (ChatGPT)</SelectItem>
                   <SelectItem value="vertex-anthropic">Google Vertex AI (Anthropic)</SelectItem>
