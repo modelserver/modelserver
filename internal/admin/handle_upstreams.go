@@ -288,6 +288,17 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 				"max_tokens":        10,
 				"messages":          []map[string]string{{"role": "user", "content": "Hi"}},
 			})
+		case types.ProviderBedrockOpenAI:
+			base := baseURL
+			if len(base) > 0 && base[len(base)-1] == '/' {
+				base = base[:len(base)-1]
+			}
+			endpoint = base + "/openai/v1/chat/completions"
+			reqBody, _ = json.Marshal(map[string]interface{}{
+				"model":      upstreamTestModel,
+				"max_tokens": 10,
+				"messages":   []map[string]string{{"role": "user", "content": "Hi"}},
+			})
 		case types.ProviderClaudeCode:
 			endpoint = baseURL + "/v1/messages?beta=true"
 			reqBody, _ = json.Marshal(map[string]interface{}{
@@ -412,6 +423,8 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 		case types.ProviderOpenAI:
 			req.Header.Set("Authorization", "Bearer "+string(apiKey))
 		case types.ProviderBedrockAnthropic:
+			req.Header.Set("Authorization", "Bearer "+string(apiKey))
+		case types.ProviderBedrockOpenAI:
 			req.Header.Set("Authorization", "Bearer "+string(apiKey))
 		case types.ProviderGemini:
 			req.Header.Set("x-goog-api-key", string(apiKey))
