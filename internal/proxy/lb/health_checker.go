@@ -258,6 +258,8 @@ func (hc *HealthChecker) buildProbeRequest(entry *healthEntry) (*http.Request, e
 		return hc.buildClaudeCodeProbe(entry)
 	case "bedrock-anthropic":
 		return hc.buildBedrockProbe(entry)
+	case "bedrock-openai":
+		return hc.buildBedrockOpenAIProbe(entry)
 	case "vertex-anthropic":
 		return hc.buildVertexProbe(entry)
 	case "vertex-google":
@@ -498,6 +500,31 @@ func (hc *HealthChecker) buildVertexOpenAIProbe(entry *healthEntry) (*http.Reque
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
+	return req, nil
+}
+
+func (hc *HealthChecker) buildBedrockOpenAIProbe(entry *healthEntry) (*http.Request, error) {
+	body := map[string]interface{}{
+		"model":      entry.testModel,
+		"max_tokens": 1,
+		"messages": []map[string]string{
+			{"role": "user", "content": "hi"},
+		},
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal probe body: %w", err)
+	}
+
+	base := strings.TrimRight(entry.baseURL, "/")
+	url := base + "/openai/v1/chat/completions"
+
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+entry.apiKey)
 	return req, nil
 }
 

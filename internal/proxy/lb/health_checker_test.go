@@ -1,6 +1,8 @@
 package lb
 
 import (
+	"encoding/json"
+	"io"
 	"log/slog"
 	"os"
 	"testing"
@@ -379,4 +381,56 @@ func TestOnProbeResultNilMetrics(t *testing.T) {
 	// These should not panic
 	hc.OnProbeResult("u1", HealthOK)
 	hc.OnProbeResult("u1", HealthDown)
+}
+
+func TestBuildBedrockOpenAIProbe(t *testing.T) {
+	hc := &HealthChecker{}
+	entry := &healthEntry{
+		upstreamID: "u-1",
+		baseURL:    "https://bedrock-runtime.us-west-2.amazonaws.com",
+		apiKey:     "tok",
+		testModel:  "openai.gpt-oss-20b-1:0",
+	}
+
+	req, err := hc.buildBedrockOpenAIProbe(entry)
+	if err != nil {
+		t.Fatalf("buildBedrockOpenAIProbe: %v", err)
+	}
+
+	wantURL := "https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1/chat/completions"
+	if req.URL.String() != wantURL {
+		t.Errorf("URL = %s, want %s", req.URL.String(), wantURL)
+	}
+	if got := req.Header.Get("Authorization"); got != "Bearer tok" {
+		t.Errorf("Authorization = %s, want Bearer tok", got)
+	}
+	if got := req.Header.Get("Content-Type"); got != "application/json" {
+		t.Errorf("Content-Type = %s, want application/json", got)
+	}
+
+	bodyBytes, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &got); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if got["model"] != "openai.gpt-oss-20b-1:0" {
+		t.Errorf("body.model = %v, want openai.gpt-oss-20b-1:0", got["model"])
+	}
+	if got["max_tokens"] != float64(1) {
+		t.Errorf("body.max_tokens = %v, want 1", got["max_tokens"])
+	}
+	msgs, ok := got["messages"].([]interface{})
+	if !ok || len(msgs) != 1 {
+		t.Fatalf("body.messages = %v, want one-element array", got["messages"])
+	}
+	msg, ok := msgs[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("messages[0] = %v, want object", msgs[0])
+	}
+	if msg["role"] != "user" || msg["content"] != "hi" {
+		t.Errorf("messages[0] = %+v, want {role:user content:hi}", msg)
+	}
 }
