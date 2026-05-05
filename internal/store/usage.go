@@ -420,7 +420,7 @@ func (s *Store) GetUsageOverview(projectID string, since, until time.Time) (map[
 	err := s.pool.QueryRow(context.Background(), `
 		SELECT COUNT(*), COALESCE(SUM(input_tokens + output_tokens), 0),
 			COALESCE(ROUND(SUM(credits_consumed) / 1000), 0)::BIGINT
-		FROM requests WHERE project_id = $1 AND created_at >= $2 AND created_at <= $3`,
+		FROM requests WHERE project_id = $1 AND created_at >= $2 AND created_at < $3`,
 		projectID, since, until,
 	).Scan(&requestCount, &totalTokens, &totalCreditsK)
 	if err != nil {

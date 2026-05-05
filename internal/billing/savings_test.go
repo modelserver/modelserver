@@ -173,6 +173,26 @@ func TestComputeCostBreakdown_SavedZeroAtExactBreakeven(t *testing.T) {
 	}
 }
 
+func TestComputeCostBreakdown_NegativeRateClampedToZero(t *testing.T) {
+	// A misconfigured negative rate must not push APIStandardFen negative.
+	cat := modelcatalog.New([]types.Model{
+		{Name: "buggy-model", Status: types.ModelStatusActive,
+			DefaultCreditRate: &types.CreditRate{InputRate: -5, OutputRate: -1}},
+		{Name: "good-model", Status: types.ModelStatusActive,
+			DefaultCreditRate: &types.CreditRate{InputRate: 1}},
+	})
+	sums := []store.PerModelTokenSums{
+		{Model: "buggy-model", InputTokens: 1_000_000, OutputTokens: 1_000_000},
+		// good-model: 1M input * 1 = 1e6 credits → ceil(1e6 * 5438 / 1e6) = 5438
+		{Model: "good-model", InputTokens: 1_000_000},
+	}
+	got := ComputeCostBreakdown(sums, 0, cat, 5438, nil, nil, time.Time{}, time.Time{})
+	if got.APIStandardFen != 5438 {
+		t.Errorf("APIStandardFen = %d, want 5438 (buggy-model clamped, good-model = 5438)",
+			got.APIStandardFen)
+	}
+}
+
 func TestComputeCostBreakdown_ExtraUsageOnlyCountedThroughExtraField(t *testing.T) {
 	cat := newTestCatalog()
 	sub := &types.Subscription{Status: types.SubscriptionStatusActive,

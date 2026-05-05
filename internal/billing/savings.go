@@ -48,7 +48,10 @@ func ComputeCostBreakdown(
 	for _, s := range sums {
 		m, ok := catalog.Lookup(s.Model)
 		if !ok || m.DefaultCreditRate == nil {
-			slog.Warn("savings: missing default credit rate, skipping model",
+			// Debug, not Warn: this fires once per Overview load × per
+			// missing-rate model. Operators have catalog-mismatch metrics
+			// for actionable visibility.
+			slog.Debug("savings: missing default credit rate, skipping model",
 				"model", s.Model, "rows", s.RequestCount)
 			continue
 		}
@@ -57,6 +60,11 @@ func ComputeCostBreakdown(
 			r.OutputRate*float64(s.OutputTokens) +
 			r.CacheCreationRate*float64(s.CacheCreationTokens) +
 			r.CacheReadRate*float64(s.CacheReadTokens)
+		// Defensive clamp: a misconfigured negative rate must not produce
+		// a negative APIStandardFen (which would render as "↓ -N% off").
+		if credits < 0 {
+			credits = 0
+		}
 		// Per-model ceil so rounding never under-states the API standard cost.
 		apiFen += int64(math.Ceil(credits * float64(creditPriceFen) / 1_000_000))
 	}
