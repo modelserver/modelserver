@@ -477,3 +477,19 @@ func (s *Store) GetPerModelTokenSums(projectID string, since, until time.Time) (
 	}
 	return out, rows.Err()
 }
+
+// GetExtraUsageSpendInWindow returns the sum of extra_usage_cost_fen for
+// is_extra_usage=true requests of the given project in [since, until).
+func (s *Store) GetExtraUsageSpendInWindow(projectID string, since, until time.Time) (int64, error) {
+	var total int64
+	err := s.pool.QueryRow(context.Background(), `
+		SELECT COALESCE(SUM(extra_usage_cost_fen), 0)
+		FROM requests
+		WHERE project_id = $1 AND created_at >= $2 AND created_at < $3
+		  AND is_extra_usage = TRUE`,
+		projectID, since, until).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("extra usage spend: %w", err)
+	}
+	return total, nil
+}

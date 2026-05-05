@@ -61,3 +61,35 @@ func TestGetPerModelTokenSums(t *testing.T) {
 		t.Errorf("claude row missing")
 	}
 }
+
+func TestGetExtraUsageSpendInWindow(t *testing.T) {
+	st := openTestStore(t)
+	_, projectID := seedUserAndProject(t, st)
+
+	ctx := context.Background()
+	now := time.Now()
+	insertEU := func(isExtra bool, costFen int64, at time.Time) {
+		t.Helper()
+		_, err := st.pool.Exec(ctx, `
+			INSERT INTO requests (project_id, model, status, input_tokens, output_tokens,
+				cache_creation_tokens, cache_read_tokens, credits_consumed,
+				is_extra_usage, extra_usage_cost_fen, created_at)
+			VALUES ($1, 'claude-sonnet-4-6', 'success', 0, 0, 0, 0, 0, $2, $3, $4)`,
+			projectID, isExtra, costFen, at)
+		if err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+	insertEU(true, 1234, now.Add(-1*time.Hour))
+	insertEU(true, 5000, now.Add(-2*time.Hour))
+	insertEU(false, 9999, now.Add(-3*time.Hour))         // not extra usage
+	insertEU(true, 7777, now.Add(-72*time.Hour))         // outside window
+
+	got, err := st.GetExtraUsageSpendInWindow(projectID, now.Add(-24*time.Hour), now)
+	if err != nil {
+		t.Fatalf("GetExtraUsageSpendInWindow: %v", err)
+	}
+	if want := int64(6234); got != want {
+		t.Errorf("got %d, want %d", got, want)
+	}
+}
