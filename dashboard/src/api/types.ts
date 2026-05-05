@@ -302,6 +302,11 @@ export interface UsageOverview {
   total_credits_k: number;
   since: string;
   until: string;
+  // What the [since, until] window represents:
+  //   "user"         — caller passed since/until on the query string
+  //   "subscription" — auto-aligned to the active subscription period
+  //   "default_30d"  — fallback (no caller window, no active sub+plan)
+  period_source?: "user" | "subscription" | "default_30d";
   cost_breakdown?: CostBreakdown;
 }
 

@@ -149,7 +149,15 @@ func handleGetUsage(st *store.Store, catalog modelcatalog.Catalog, creditPriceFe
 			//    default 30-day window (HasActiveSub=false will agree with it).
 			var sub *types.Subscription
 			var plan *types.Plan
-			if !userProvidedWindow {
+			// period_source signals to API consumers (and the dashboard) what
+			// time window the totals reflect:
+			//   "user"         — caller passed since/until verbatim
+			//   "subscription" — auto-aligned to the active subscription period
+			//   "default_30d"  — fallback (no caller window, no active sub+plan)
+			periodSource := "default_30d"
+			if userProvidedWindow {
+				periodSource = "user"
+			} else {
 				s, err := st.GetActiveSubscription(projectID)
 				if err != nil {
 					writeError(w, http.StatusInternalServerError, "internal", "failed to get usage")
@@ -165,6 +173,7 @@ func handleGetUsage(st *store.Store, catalog modelcatalog.Catalog, creditPriceFe
 						sub = s
 						plan = p
 						since, until = s.StartsAt, s.ExpiresAt
+						periodSource = "subscription"
 					}
 				}
 			}
@@ -174,6 +183,7 @@ func handleGetUsage(st *store.Store, catalog modelcatalog.Catalog, creditPriceFe
 				writeError(w, http.StatusInternalServerError, "internal", "failed to get usage")
 				return
 			}
+			overview["period_source"] = periodSource
 
 			if !userProvidedWindow {
 				sums, err := st.GetPerModelTokenSums(projectID, since, until)
