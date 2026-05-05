@@ -10,7 +10,7 @@ import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Request } from "@/api/types";
 import { useAuth } from "@/hooks/useAuth";
-import { Activity, Zap, Clock, Coins } from "lucide-react";
+import { Activity, Zap, Clock, Coins, Receipt, Wallet, PiggyBank } from "lucide-react";
 import {
   LineChart,
   Line,
@@ -26,6 +26,16 @@ function formatNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
+}
+
+function formatYuan(fen: number): string {
+  const yuan = fen / 100;
+  return `¥${yuan.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function formatPeriod(startISO: string, endISO: string): string {
+  const fmt = (s: string) => new Date(s).toLocaleDateString("zh-CN");
+  return `${fmt(startISO)} – ${fmt(endISO)}`;
 }
 
 const recentColumns: Column<Request>[] = [
@@ -104,6 +114,51 @@ export function OverviewPage() {
           icon={<Clock className="h-4 w-4" />}
         />
       </div>
+
+      {overview?.cost_breakdown && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <StatCard
+            title="API 标准价"
+            value={formatYuan(overview.cost_breakdown.api_standard_fen)}
+            description={`按官方定价折算 · ${formatPeriod(
+              overview.cost_breakdown.period_start,
+              overview.cost_breakdown.period_end,
+            )}`}
+            icon={<Receipt className="h-4 w-4" />}
+          />
+          <StatCard
+            title="本周期实付"
+            value={formatYuan(overview.cost_breakdown.actual_paid_fen)}
+            description={
+              overview.cost_breakdown.has_active_subscription
+                ? `订阅 ${formatYuan(overview.cost_breakdown.subscription_fen)} + 加油包 ${formatYuan(overview.cost_breakdown.extra_usage_fen)}`
+                : `加油包 ${formatYuan(overview.cost_breakdown.extra_usage_fen)}`
+            }
+            icon={<Wallet className="h-4 w-4" />}
+          />
+          {overview.cost_breakdown.saved_fen > 0 ? (
+            <StatCard
+              title="套餐已为您节省"
+              value={formatYuan(overview.cost_breakdown.saved_fen)}
+              description={
+                overview.cost_breakdown.api_standard_fen > 0
+                  ? `↓ ${Math.round(
+                      (overview.cost_breakdown.saved_fen / overview.cost_breakdown.api_standard_fen) * 100,
+                    )}% off`
+                  : ""
+              }
+              icon={<PiggyBank className="h-4 w-4" />}
+            />
+          ) : (
+            <StatCard
+              title="套餐已为您节省"
+              value="—"
+              description="本周期用量较低，套餐尚未回本"
+              icon={<PiggyBank className="h-4 w-4" />}
+            />
+          )}
+        </div>
+      )}
 
       {myQuota && myQuota.credit_quota_percent !== null && (
         <Card>
