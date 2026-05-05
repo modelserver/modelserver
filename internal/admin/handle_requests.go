@@ -141,23 +141,12 @@ func handleGetUsage(st *store.Store, catalog modelcatalog.Catalog, creditPriceFe
 			}
 			writeData(w, http.StatusOK, data)
 		default:
-			// Determine the period for cost_breakdown:
-			//  - If caller passed an explicit window, do NOT compute breakdown
-			//    (subscription_fen would not align with the window).
-			//  - Otherwise use the active subscription's period when both sub
-			//    AND plan resolve; if either is missing, fall back to the
-			//    default 30-day window (HasActiveSub=false will agree with it).
-			var sub *types.Subscription
-			var plan *types.Plan
-			// period_source signals to API consumers (and the dashboard) what
-			// time window the totals reflect:
-			//   "user"         — caller passed since/until verbatim
-			//   "subscription" — auto-aligned to the active subscription period
-			//   "default_30d"  — fallback (no caller window, no active sub+plan)
-			periodSource := "default_30d"
-			if userProvidedWindow {
-				periodSource = "user"
-			} else {
+			// Look up the active subscription + plan only when the caller
+			// did not impose a window of their own. resolveOverviewPeriod
+			// then picks the final window and provenance.
+			var activeSub *types.Subscription
+			var activeSubPlan *types.Plan
+			if !userProvidedWindow {
 				s, err := st.GetActiveSubscription(projectID)
 				if err != nil {
 					writeError(w, http.StatusInternalServerError, "internal", "failed to get usage")
@@ -170,13 +159,17 @@ func handleGetUsage(st *store.Store, catalog modelcatalog.Catalog, creditPriceFe
 						return
 					}
 					if p != nil {
-						sub = s
-						plan = p
-						since, until = s.StartsAt, s.ExpiresAt
-						periodSource = "subscription"
+						activeSub = s
+						activeSubPlan = p
 					}
 				}
 			}
+
+			var periodSource string
+			var sub *types.Subscription
+			var plan *types.Plan
+			since, until, periodSource, sub, plan = resolveOverviewPeriod(
+				userProvidedWindow, since, until, activeSub, activeSubPlan)
 
 			overview, err := st.GetUsageOverview(projectID, since, until)
 			if err != nil {
