@@ -8,6 +8,11 @@ import { StatCard } from "@/components/shared/StatCard";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Tooltip as InfoTooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { Request } from "@/api/types";
 import { useAuth } from "@/hooks/useAuth";
 import { Activity, Zap, Clock, Coins, Receipt, Wallet, PiggyBank } from "lucide-react";
@@ -118,46 +123,87 @@ export function OverviewPage() {
 
       {overview?.cost_breakdown && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <StatCard
-            title="API Standard Price"
-            value={formatYuan(overview.cost_breakdown.api_standard_fen)}
-            description={`At official API pricing · ${formatPeriod(
-              overview.cost_breakdown.period_start,
-              overview.cost_breakdown.period_end,
-            )}`}
-            icon={<Receipt className="h-4 w-4" />}
-          />
-          <StatCard
-            title="Period Paid"
-            value={formatYuan(overview.cost_breakdown.actual_paid_fen)}
-            description={
-              overview.cost_breakdown.has_active_subscription
-                ? `Subscription ${formatYuan(overview.cost_breakdown.subscription_fen)} + Extra ${formatYuan(overview.cost_breakdown.extra_usage_fen)}`
-                : `Extra usage ${formatYuan(overview.cost_breakdown.extra_usage_fen)}`
-            }
-            icon={<Wallet className="h-4 w-4" />}
-          />
-          {overview.cost_breakdown.saved_fen > 0 ? (
-            <StatCard
-              title="Saved by Plan"
-              value={formatYuan(overview.cost_breakdown.saved_fen)}
-              description={
-                overview.cost_breakdown.api_standard_fen > 0
-                  ? `↓ ${Math.round(
-                      (overview.cost_breakdown.saved_fen / overview.cost_breakdown.api_standard_fen) * 100,
-                    )}% off`
-                  : ""
-              }
-              icon={<PiggyBank className="h-4 w-4" />}
-            />
-          ) : (
-            <StatCard
-              title="Saved by Plan"
-              value="—"
-              description="Low usage this period — plan hasn't paid off yet"
-              icon={<PiggyBank className="h-4 w-4" />}
-            />
-          )}
+          <InfoTooltip>
+            <TooltipTrigger render={<div className="cursor-help" />}>
+              <StatCard
+                title="API Standard Price"
+                value={formatYuan(overview.cost_breakdown.api_standard_fen)}
+                description={`At official API pricing · ${formatPeriod(
+                  overview.cost_breakdown.period_start,
+                  overview.cost_breakdown.period_end,
+                )}`}
+                icon={<Receipt className="h-4 w-4" />}
+              />
+            </TooltipTrigger>
+            <TooltipContent>
+              <div className="space-y-0.5 text-xs">
+                <div>Sum over the period of (tokens × catalog default rate).</div>
+                <div>Period: {formatPeriod(
+                  overview.cost_breakdown.period_start,
+                  overview.cost_breakdown.period_end,
+                )}</div>
+              </div>
+            </TooltipContent>
+          </InfoTooltip>
+
+          <InfoTooltip>
+            <TooltipTrigger render={<div className="cursor-help" />}>
+              <StatCard
+                title="Period Paid"
+                value={formatYuan(overview.cost_breakdown.actual_paid_fen)}
+                description={
+                  overview.cost_breakdown.has_active_subscription
+                    ? `Subscription ${formatYuan(overview.cost_breakdown.subscription_fen)} + Extra ${formatYuan(overview.cost_breakdown.extra_usage_fen)}`
+                    : `Extra usage ${formatYuan(overview.cost_breakdown.extra_usage_fen)}`
+                }
+                icon={<Wallet className="h-4 w-4" />}
+              />
+            </TooltipTrigger>
+            <TooltipContent>
+              <div className="space-y-0.5 text-xs">
+                <div>actual_paid = subscription_price + extra_usage_spend</div>
+                <div>
+                  = {formatYuan(overview.cost_breakdown.subscription_fen)} +{" "}
+                  {formatYuan(overview.cost_breakdown.extra_usage_fen)}
+                </div>
+              </div>
+            </TooltipContent>
+          </InfoTooltip>
+
+          <InfoTooltip>
+            <TooltipTrigger render={<div className="cursor-help" />}>
+              {overview.cost_breakdown.saved_fen > 0 ? (
+                <StatCard
+                  title="Saved by Plan"
+                  value={formatYuan(overview.cost_breakdown.saved_fen)}
+                  description={
+                    overview.cost_breakdown.api_standard_fen > 0
+                      ? `↓ ${Math.round(
+                          (overview.cost_breakdown.saved_fen / overview.cost_breakdown.api_standard_fen) * 100,
+                        )}% off`
+                      : ""
+                  }
+                  icon={<PiggyBank className="h-4 w-4" />}
+                />
+              ) : (
+                <StatCard
+                  title="Saved by Plan"
+                  value="—"
+                  description="Low usage this period — plan hasn't paid off yet"
+                  icon={<PiggyBank className="h-4 w-4" />}
+                />
+              )}
+            </TooltipTrigger>
+            <TooltipContent>
+              <div className="space-y-0.5 text-xs">
+                <div>saved = max(0, api_standard − actual_paid)</div>
+                <div>
+                  = max(0, {formatYuan(overview.cost_breakdown.api_standard_fen)} −{" "}
+                  {formatYuan(overview.cost_breakdown.actual_paid_fen)})
+                </div>
+              </div>
+            </TooltipContent>
+          </InfoTooltip>
         </div>
       )}
 
