@@ -216,7 +216,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 					// Requests & Usage.
 					r.Get("/requests", handleListRequests(st))
 					r.Get("/requests/{requestID}/http-log", handleGetHttpLog(st, httpLogger))
-					r.Get("/usage", handleGetUsage(st))
+					r.Get("/usage", handleGetUsage(st, catalog, cfg.ExtraUsage.CreditPriceFen))
 
 					// Traces.
 					r.Get("/traces", handleListTraces(st))
