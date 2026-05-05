@@ -285,12 +285,24 @@ export interface Order {
 }
 
 // --- Usage ---
+export interface CostBreakdown {
+  api_standard_fen: number;
+  subscription_fen: number;
+  extra_usage_fen: number;
+  actual_paid_fen: number;
+  saved_fen: number;
+  period_start: string;
+  period_end: string;
+  has_active_subscription: boolean;
+}
+
 export interface UsageOverview {
   request_count: number;
   total_tokens: number;
   total_credits_k: number;
   since: string;
   until: string;
+  cost_breakdown?: CostBreakdown;
 }
 
 export interface UsageSummary {

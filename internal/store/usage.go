@@ -435,3 +435,61 @@ func (s *Store) GetUsageOverview(projectID string, since, until time.Time) (map[
 		"until":           until.Format(time.RFC3339),
 	}, nil
 }
+
+// PerModelTokenSums is one row of GetPerModelTokenSums output.
+type PerModelTokenSums struct {
+	Model               string `json:"model"`
+	RequestCount        int64  `json:"request_count"`
+	InputTokens         int64  `json:"input_tokens"`
+	OutputTokens        int64  `json:"output_tokens"`
+	CacheCreationTokens int64  `json:"cache_creation_tokens"`
+	CacheReadTokens     int64  `json:"cache_read_tokens"`
+}
+
+// GetPerModelTokenSums returns per-model token totals for a project in
+// [since, until). Used by the savings-stat path to fold per-model API
+// standard pricing in Go without joining the in-memory model catalog.
+func (s *Store) GetPerModelTokenSums(projectID string, since, until time.Time) ([]PerModelTokenSums, error) {
+	rows, err := s.pool.Query(context.Background(), `
+		SELECT model,
+			COUNT(*),
+			COALESCE(SUM(input_tokens),          0),
+			COALESCE(SUM(output_tokens),         0),
+			COALESCE(SUM(cache_creation_tokens), 0),
+			COALESCE(SUM(cache_read_tokens),     0)
+		FROM requests
+		WHERE project_id = $1 AND created_at >= $2 AND created_at < $3
+		GROUP BY model`,
+		projectID, since, until)
+	if err != nil {
+		return nil, fmt.Errorf("per-model token sums: %w", err)
+	}
+	defer rows.Close()
+
+	var out []PerModelTokenSums
+	for rows.Next() {
+		var s PerModelTokenSums
+		if err := rows.Scan(&s.Model, &s.RequestCount, &s.InputTokens,
+			&s.OutputTokens, &s.CacheCreationTokens, &s.CacheReadTokens); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// GetExtraUsageSpendInWindow returns the sum of extra_usage_cost_fen for
+// is_extra_usage=true requests of the given project in [since, until).
+func (s *Store) GetExtraUsageSpendInWindow(projectID string, since, until time.Time) (int64, error) {
+	var total int64
+	err := s.pool.QueryRow(context.Background(), `
+		SELECT COALESCE(SUM(extra_usage_cost_fen), 0)
+		FROM requests
+		WHERE project_id = $1 AND created_at >= $2 AND created_at < $3
+		  AND is_extra_usage = TRUE`,
+		projectID, since, until).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("extra usage spend: %w", err)
+	}
+	return total, nil
+}

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/modelserver/modelserver/internal/billing"
+	"github.com/modelserver/modelserver/internal/modelcatalog"
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
@@ -92,21 +94,24 @@ func handleListAllRequests(st *store.Store) http.HandlerFunc {
 	}
 }
 
-func handleGetUsage(st *store.Store) http.HandlerFunc {
+func handleGetUsage(st *store.Store, catalog modelcatalog.Catalog, creditPriceFen int64) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "projectID")
 		q := r.URL.Query()
 
 		since := time.Now().AddDate(0, 0, -30) // Default: last 30 days.
 		until := time.Now()
+		userProvidedWindow := false
 		if v := q.Get("since"); v != "" {
 			if t, err := time.Parse(time.RFC3339, v); err == nil {
 				since = t
+				userProvidedWindow = true
 			}
 		}
 		if v := q.Get("until"); v != "" {
 			if t, err := time.Parse(time.RFC3339, v); err == nil {
 				until = t
+				userProvidedWindow = true
 			}
 		}
 
@@ -136,11 +141,56 @@ func handleGetUsage(st *store.Store) http.HandlerFunc {
 			}
 			writeData(w, http.StatusOK, data)
 		default:
+			// Determine the period for cost_breakdown:
+			//  - If caller passed an explicit window, do NOT compute breakdown
+			//    (subscription_fen would not align with the window).
+			//  - Otherwise use the active subscription's period when both sub
+			//    AND plan resolve; if either is missing, fall back to the
+			//    default 30-day window (HasActiveSub=false will agree with it).
+			var sub *types.Subscription
+			var plan *types.Plan
+			if !userProvidedWindow {
+				s, err := st.GetActiveSubscription(projectID)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "internal", "failed to get usage")
+					return
+				}
+				if s != nil && s.PlanID != "" {
+					p, err := st.GetPlanByID(s.PlanID)
+					if err != nil {
+						writeError(w, http.StatusInternalServerError, "internal", "failed to get usage")
+						return
+					}
+					if p != nil {
+						sub = s
+						plan = p
+						since, until = s.StartsAt, s.ExpiresAt
+					}
+				}
+			}
+
 			overview, err := st.GetUsageOverview(projectID, since, until)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "internal", "failed to get usage")
 				return
 			}
+
+			if !userProvidedWindow {
+				sums, err := st.GetPerModelTokenSums(projectID, since, until)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "internal", "failed to get usage")
+					return
+				}
+				extraFen, err := st.GetExtraUsageSpendInWindow(projectID, since, until)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "internal", "failed to get usage")
+					return
+				}
+				cb := billing.ComputeCostBreakdown(sums, extraFen, catalog, creditPriceFen,
+					sub, plan, since, until)
+				overview["cost_breakdown"] = cb
+			}
+
 			writeData(w, http.StatusOK, overview)
 		}
 	}
