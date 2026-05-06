@@ -92,6 +92,16 @@ func TestDirectorSetCodexUpstream_NonV1PathPassesThrough(t *testing.T) {
 	}
 }
 
+func TestDirectorSetCodexUpstream_ResponsesCompactPath(t *testing.T) {
+	// /v1/responses/compact must arrive at the codex backend as
+	// /backend-api/codex/responses/compact (no /v1, single /responses).
+	r := httptest.NewRequest(http.MethodPost, "http://proxy.local/v1/responses/compact", nil)
+	directorSetCodexUpstream(r, "", "tok", "", "up-1")
+	if r.URL.Path != "/backend-api/codex/responses/compact" {
+		t.Errorf("Path = %q, want /backend-api/codex/responses/compact", r.URL.Path)
+	}
+}
+
 func TestRandomCodexSessionID_Format(t *testing.T) {
 	got := randomCodexSessionID()
 	// 36 chars, 4 hyphens at positions 8, 13, 18, 23
