@@ -318,6 +318,7 @@ export interface UsageSummary {
   total_cache_creation_tokens: number;
   total_cache_read_tokens: number;
   avg_latency_ms: number;
+  total_credits_k: number;
 }
 
 export interface DailyUsage {

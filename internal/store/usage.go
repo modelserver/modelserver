@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-// UsageSummary holds aggregated usage data.
+// UsageSummary holds aggregated usage data. Credits are exposed only as
+// integer thousands (total_credits_k); raw credits never leave the SQL layer.
 type UsageSummary struct {
 	Model              string  `json:"model"`
 	RequestCount       int64   `json:"request_count"`
@@ -15,6 +16,7 @@ type UsageSummary struct {
 	TotalCacheCreation int64   `json:"total_cache_creation_tokens"`
 	TotalCacheRead     int64   `json:"total_cache_read_tokens"`
 	AvgLatencyMs       float64 `json:"avg_latency_ms"`
+	TotalCreditsK      int64   `json:"total_credits_k"`
 }
 
 // DailyUsage holds usage data for a single day.
@@ -96,16 +98,19 @@ func (s *Store) GetCreditsByUpstreamSince(since time.Time) (map[string]float64, 
 	return m, rows.Err()
 }
 
-// GetUsageByModel returns usage aggregated by model for a project.
+// GetUsageByModel returns usage aggregated by model for a project, sorted by
+// credits descending so the pie chart's largest slice is first.
 func (s *Store) GetUsageByModel(projectID string, since, until time.Time) ([]UsageSummary, error) {
 	rows, err := s.pool.Query(context.Background(), `
 		SELECT model, COUNT(*) as request_count,
 			COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
 			COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0),
-			COALESCE(AVG(latency_ms), 0)
+			COALESCE(AVG(latency_ms), 0),
+			COALESCE(ROUND(SUM(credits_consumed) / 1000), 0)::BIGINT as total_credits_k,
+			COALESCE(SUM(credits_consumed), 0) as total_credits
 		FROM requests
 		WHERE project_id = $1 AND created_at >= $2 AND created_at <= $3
-		GROUP BY model ORDER BY request_count DESC`,
+		GROUP BY model ORDER BY total_credits DESC, request_count DESC`,
 		projectID, since, until)
 	if err != nil {
 		return nil, err
@@ -115,10 +120,11 @@ func (s *Store) GetUsageByModel(projectID string, since, until time.Time) ([]Usa
 	var summaries []UsageSummary
 	for rows.Next() {
 		var u UsageSummary
+		var totalCredits float64 // raw — for ORDER BY only, discarded
 		if err := rows.Scan(&u.Model, &u.RequestCount,
 			&u.TotalInputTokens, &u.TotalOutputTokens,
 			&u.TotalCacheCreation, &u.TotalCacheRead,
-			&u.AvgLatencyMs); err != nil {
+			&u.AvgLatencyMs, &u.TotalCreditsK, &totalCredits); err != nil {
 			return nil, err
 		}
 		summaries = append(summaries, u)

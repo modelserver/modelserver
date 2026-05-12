@@ -14,8 +14,9 @@ import type { UsageSummary, UsageByMember } from "@/api/types";
 import {
   LineChart,
   Line,
-  BarChart,
-  Bar,
+  PieChart,
+  Pie,
+  Cell,
   XAxis,
   YAxis,
   Tooltip,
@@ -23,6 +24,20 @@ import {
   CartesianGrid,
   Legend,
 } from "recharts";
+
+// Palette for the by-model pie. Cycled if the project uses more models than
+// the palette has slots — the rarer models get repeated colors which is fine
+// since they are sorted to the tail and rendered as smaller slices.
+const MODEL_PIE_COLORS = [
+  "oklch(0.488 0.243 264.376)", // blue
+  "oklch(0.696 0.17 162.48)",   // green
+  "oklch(0.769 0.188 70.08)",   // orange
+  "oklch(0.627 0.265 303.9)",   // purple
+  "oklch(0.645 0.246 16.439)",  // red
+  "oklch(0.6 0.118 184.704)",   // teal
+  "oklch(0.828 0.189 84.429)",  // yellow
+  "oklch(0.55 0.027 264.364)",  // gray
+];
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -90,11 +105,21 @@ export function UsagePage() {
 
   const modelColumns: Column<UsageSummary>[] = [
     { header: "Model", accessor: "model" },
+    {
+      header: "Credits",
+      accessor: (r) => `${(r.total_credits_k ?? 0).toLocaleString()}K`,
+      className: "text-right",
+    },
     { header: "Requests", accessor: (r) => formatNumber(r.request_count), className: "text-right" },
     { header: "Input Tokens", accessor: (r) => formatNumber(r.total_input_tokens), className: "text-right" },
     { header: "Output Tokens", accessor: (r) => formatNumber(r.total_output_tokens), className: "text-right" },
     { header: "Avg Latency", accessor: (r) => `${Math.round(r.avg_latency_ms)}ms`, className: "text-right" },
   ];
+
+  // Backend already returns rows sorted by credits desc. For the pie we drop
+  // any models with zero credits in the period (no slice would render).
+  const pieData = modelData.filter((r) => r.total_credits_k > 0);
+  const totalCreditsK = pieData.reduce((s, r) => s + r.total_credits_k, 0);
 
   // Backend sorts by total credits consumed within the active subscription
   // period (DESC, stable tiebreaker on user_id), so the row's position in the
@@ -214,23 +239,66 @@ export function UsagePage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Usage by Model</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Share of credits consumed per model in the selected window.
+          </p>
         </CardHeader>
         <CardContent>
           {modelData.length > 0 ? (
             <>
-              <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={modelData}>
-                  <XAxis dataKey="model" fontSize={12} stroke="currentColor" opacity={0.5} />
-                  <YAxis fontSize={12} stroke="currentColor" opacity={0.5} />
-                  <Tooltip contentStyle={tooltipStyle} />
-                  <Bar
-                    dataKey="request_count"
-                    fill="oklch(0.488 0.243 264.376)"
-                    radius={[4, 4, 0, 0]}
-                    name="Requests"
-                  />
-                </BarChart>
-              </ResponsiveContainer>
+              {pieData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={280}>
+                  <PieChart>
+                    <Pie
+                      data={pieData}
+                      dataKey="total_credits_k"
+                      nameKey="model"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={55}
+                      outerRadius={100}
+                      paddingAngle={1}
+                      label={(entry) => {
+                        const pct = totalCreditsK > 0
+                          ? ((entry.total_credits_k / totalCreditsK) * 100)
+                          : 0;
+                        return pct >= 5 ? `${pct.toFixed(0)}%` : "";
+                      }}
+                      labelLine={false}
+                    >
+                      {pieData.map((_, i) => (
+                        <Cell
+                          key={i}
+                          fill={MODEL_PIE_COLORS[i % MODEL_PIE_COLORS.length]}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={tooltipStyle}
+                      formatter={(value: number, _name, item) => {
+                        const pct = totalCreditsK > 0
+                          ? ((value / totalCreditsK) * 100).toFixed(1)
+                          : "0";
+                        return [
+                          `${value.toLocaleString()}K credits · ${pct}%`,
+                          item?.payload?.model ?? "",
+                        ];
+                      }}
+                    />
+                    <Legend
+                      verticalAlign="middle"
+                      align="right"
+                      layout="vertical"
+                      iconType="circle"
+                      wrapperStyle={{ fontSize: 12, paddingLeft: 16 }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <p className="py-8 text-center text-muted-foreground">
+                  No credits consumed in the selected window.
+                </p>
+              )}
               <div className="mt-4">
                 <DataTable
                   columns={modelColumns}
