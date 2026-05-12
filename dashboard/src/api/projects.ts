@@ -17,6 +17,8 @@ export interface ProjectSubscriptionOverview {
   display_name?: string;
   windows: CreditWindowStatus[];
   owner?: ProjectOwnerSnapshot;
+  /** Credits consumed since the active subscription's StartsAt, in integer K. Absent when there is no active subscription. */
+  period_credits_k?: number;
 }
 
 export function useAdminProjectsSubscriptionsOverview(projectIds: string[]) {

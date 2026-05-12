@@ -414,6 +414,47 @@ func (s *Store) SumCreditsInWindowByProjects(projectIDs []string, windowStart ti
 	return out, rows.Err()
 }
 
+// SumCreditsSinceByProjects returns total credits consumed per project since
+// each project's own "since" timestamp (typically the active subscription's
+// StartsAt). Uses unnest to pair IDs with sinces in a single round-trip;
+// projects with no requests in their window are absent from the result.
+func (s *Store) SumCreditsSinceByProjects(starts map[string]time.Time) (map[string]float64, error) {
+	if len(starts) == 0 {
+		return map[string]float64{}, nil
+	}
+	ids := make([]string, 0, len(starts))
+	sinces := make([]time.Time, 0, len(starts))
+	for id, t := range starts {
+		ids = append(ids, id)
+		sinces = append(sinces, t)
+	}
+	rows, err := s.pool.Query(context.Background(), `
+		WITH params AS (
+			SELECT unnest($1::uuid[]) AS project_id, unnest($2::timestamptz[]) AS since
+		)
+		SELECT r.project_id, COALESCE(SUM(r.credits_consumed), 0)
+		FROM requests r
+		JOIN params p ON p.project_id = r.project_id AND r.created_at >= p.since
+		GROUP BY r.project_id`,
+		ids, sinces,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string]float64, len(starts))
+	for rows.Next() {
+		var pid string
+		var total float64
+		if err := rows.Scan(&pid, &total); err != nil {
+			return nil, err
+		}
+		out[pid] = total
+	}
+	return out, rows.Err()
+}
+
 // CountRequestsInWindowByProject returns the number of requests by all keys in a project within a time window.
 func (s *Store) CountRequestsInWindowByProject(projectID string, windowStart time.Time) (int64, error) {
 	var count int64

@@ -63,6 +63,7 @@ export function AdminProjectsPage() {
   const projectPlanMap = new Map<string, string>();
   const projectUsageMap = new Map<string, CreditWindowStatus[]>();
   const ownerMap = new Map<string, ProjectOwnerSnapshot>();
+  const periodCreditsKMap = new Map<string, number>();
   for (const row of overviewData?.data ?? []) {
     if (row.display_name || row.plan_name) {
       projectPlanMap.set(row.project_id, row.display_name || row.plan_name || "");
@@ -72,6 +73,9 @@ export function AdminProjectsPage() {
     }
     if (row.owner) {
       ownerMap.set(row.project_id, row.owner);
+    }
+    if (row.period_credits_k != null) {
+      periodCreditsKMap.set(row.project_id, row.period_credits_k);
     }
   }
 
@@ -129,6 +133,15 @@ export function AdminProjectsPage() {
         if (!s) return <span className="text-muted-foreground">—</span>;
         return <UsageBar percentage={s.percentage} />;
       },
+    },
+    {
+      header: "Credits",
+      accessor: (p) => {
+        const k = periodCreditsKMap.get(p.id);
+        if (k == null) return <span className="text-muted-foreground">—</span>;
+        return <span className="tabular-nums">{k.toLocaleString()}K</span>;
+      },
+      className: "text-right",
     },
     {
       header: "Status",

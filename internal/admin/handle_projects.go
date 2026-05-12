@@ -52,12 +52,16 @@ type projectOwnerSnapshot struct {
 // projectSubscriptionOverview is the per-project payload returned by the
 // admin subscriptions-overview endpoint.
 type projectSubscriptionOverview struct {
-	ProjectID   string                         `json:"project_id"`
-	PlanID      string                         `json:"plan_id,omitempty"`
-	PlanName    string                         `json:"plan_name,omitempty"`
-	DisplayName string                         `json:"display_name,omitempty"`
-	Windows     []ratelimit.CreditWindowStatus `json:"windows"`
-	Owner       *projectOwnerSnapshot          `json:"owner,omitempty"`
+	ProjectID     string                         `json:"project_id"`
+	PlanID        string                         `json:"plan_id,omitempty"`
+	PlanName      string                         `json:"plan_name,omitempty"`
+	DisplayName   string                         `json:"display_name,omitempty"`
+	Windows       []ratelimit.CreditWindowStatus `json:"windows"`
+	Owner         *projectOwnerSnapshot          `json:"owner,omitempty"`
+	// PeriodCreditsK is credits consumed since the active subscription's
+	// StartsAt, rounded to integer thousands. Absent when there is no
+	// active subscription.
+	PeriodCreditsK *int64 `json:"period_credits_k,omitempty"`
 }
 
 // handleAdminProjectsSubscriptionsOverview returns active subscription + credit
@@ -94,6 +98,20 @@ func handleAdminProjectsSubscriptionsOverview(st *store.Store) http.HandlerFunc 
 		owners, err := st.GetProjectOwnersByProjectIDs(projectIDs)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to load project owners")
+			return
+		}
+
+		// Per-project credits since the active subscription's StartsAt.
+		// Projects without an active subscription are simply omitted.
+		periodStarts := make(map[string]time.Time, len(activeSubs))
+		for pid, sub := range activeSubs {
+			if sub != nil {
+				periodStarts[pid] = sub.StartsAt
+			}
+		}
+		periodCredits, err := st.SumCreditsSinceByProjects(periodStarts)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to load period credits")
 			return
 		}
 
@@ -187,6 +205,12 @@ func handleAdminProjectsSubscriptionsOverview(st *store.Store) http.HandlerFunc 
 					Nickname: owner.Nickname,
 					Picture:  owner.Picture,
 				}
+			}
+			if sub != nil {
+				// Round to integer thousands at the API boundary; the
+				// dashboard only ever displays credits in K.
+				k := int64(math.Round(periodCredits[pid] / 1000))
+				row.PeriodCreditsK = &k
 			}
 			for _, rr := range rulesByProject[pid] {
 				used := usedByRule[usageKey{pid, rr.windowStart}]
