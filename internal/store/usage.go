@@ -243,13 +243,18 @@ func (s *Store) GetDailyUsage(projectID string, since, until time.Time) ([]Daily
 	return daily, nil
 }
 
-// SumCreditsInWindow returns total credits consumed by an API key within a time window.
+// SumCreditsInWindow returns total credits consumed by an API key within a
+// time window. Excludes is_extra_usage=true rows so the plan window reflects
+// plan-budget consumption only — extra-usage requests are billed separately
+// against the project's CNY balance and must not double-count against the
+// plan's credit caps.
 func (s *Store) SumCreditsInWindow(apiKeyID string, windowStart time.Time) (float64, error) {
 	var total float64
 	err := s.pool.QueryRow(context.Background(), `
 		SELECT COALESCE(SUM(credits_consumed), 0)
 		FROM requests
-		WHERE api_key_id = $1 AND created_at >= $2`,
+		WHERE api_key_id = $1 AND created_at >= $2
+		  AND is_extra_usage = FALSE`,
 		apiKeyID, windowStart,
 	).Scan(&total)
 	return total, err
@@ -375,21 +380,25 @@ func (s *Store) GetTokenBreakdownByUpstreamSince(upstreamID string, since time.T
 
 // --- Project-level credit queries (for shared/project-scope rate limiting) ---
 
-// SumCreditsInWindowByProject returns total credits consumed by all keys in a project within a time window.
+// SumCreditsInWindowByProject returns total credits consumed by all keys in a
+// project within a time window. Excludes is_extra_usage=true rows — see the
+// note on SumCreditsInWindow for why.
 func (s *Store) SumCreditsInWindowByProject(projectID string, windowStart time.Time) (float64, error) {
 	var total float64
 	err := s.pool.QueryRow(context.Background(), `
 		SELECT COALESCE(SUM(credits_consumed), 0)
 		FROM requests
-		WHERE project_id = $1 AND created_at >= $2`,
+		WHERE project_id = $1 AND created_at >= $2
+		  AND is_extra_usage = FALSE`,
 		projectID, windowStart,
 	).Scan(&total)
 	return total, err
 }
 
 // SumCreditsInWindowByProjects returns total credits consumed per project for
-// the given project IDs since windowStart. Projects with no requests in the
-// window are absent from the returned map.
+// the given project IDs since windowStart. Excludes is_extra_usage=true rows
+// for the same reason as SumCreditsInWindow. Projects with no plan-billed
+// requests in the window are absent from the returned map.
 func (s *Store) SumCreditsInWindowByProjects(projectIDs []string, windowStart time.Time) (map[string]float64, error) {
 	if len(projectIDs) == 0 {
 		return map[string]float64{}, nil
@@ -398,6 +407,7 @@ func (s *Store) SumCreditsInWindowByProjects(projectIDs []string, windowStart ti
 		SELECT project_id, COALESCE(SUM(credits_consumed), 0)
 		FROM requests
 		WHERE project_id = ANY($1::uuid[]) AND created_at >= $2
+		  AND is_extra_usage = FALSE
 		GROUP BY project_id`,
 		projectIDs, windowStart,
 	)
@@ -472,12 +482,15 @@ func (s *Store) CountRequestsInWindowByProject(projectID string, windowStart tim
 
 // SumCreditsInWindowByUser sums credits consumed by a user within a project
 // during a time window. Uses the denormalized created_by column on requests.
+// Excludes is_extra_usage=true rows so per-member quotas reflect plan-budget
+// consumption only.
 func (s *Store) SumCreditsInWindowByUser(projectID, userID string, windowStart time.Time) (float64, error) {
 	var total float64
 	err := s.pool.QueryRow(context.Background(), `
 		SELECT COALESCE(SUM(credits_consumed), 0)
 		FROM requests
-		WHERE project_id = $1 AND created_by = $2 AND created_at >= $3`,
+		WHERE project_id = $1 AND created_by = $2 AND created_at >= $3
+		  AND is_extra_usage = FALSE`,
 		projectID, userID, windowStart,
 	).Scan(&total)
 	return total, err
