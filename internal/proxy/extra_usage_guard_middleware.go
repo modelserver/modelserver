@@ -145,6 +145,46 @@ func ExtraUsageGuardMiddleware(cfg config.ExtraUsageConfig, st extraUsageStore, 
 				}
 			}
 
+			// Priceability pre-check: settle silently no-ops if we can't
+			// compute a fen cost (catalog model missing, no DefaultCreditRate,
+			// or creditPriceFen unset). Without this gate the request would
+			// proceed to the upstream, return 200, get recorded as
+			// is_extra_usage=true, and never debit the balance — a free ride.
+			// Reject up front so the user sees the configuration gap.
+			//
+			// Skipped when bypass is on: bypass is an admin debugging flag
+			// that explicitly opts out of billing enforcement, so refusing
+			// requests for missing pricing data would defeat its purpose.
+			if !bypass {
+				if cfg.CreditPriceFen <= 0 {
+					logger.Error("extra_usage_pricing_unavailable",
+						"reason", "credit_price_unset", "project_id", project.ID)
+					writeExtraUsageRejected(w, http.StatusTooManyRequests, intent.Reason, guardStateRejected{
+						Enabled:    true,
+						BalanceFen: settings.BalanceFen,
+						Message:    rejectedMessage(intent.Reason, "model_unpriced"),
+					})
+					recordExtraUsageResult(intent.Reason, "rejected")
+					return
+				}
+				if m := ModelFromContext(r.Context()); m == nil || m.DefaultCreditRate == nil {
+					modelName := ""
+					if m != nil {
+						modelName = m.Name
+					}
+					logger.Error("extra_usage_pricing_unavailable",
+						"reason", "model_missing_default_rate",
+						"project_id", project.ID, "model", modelName)
+					writeExtraUsageRejected(w, http.StatusTooManyRequests, intent.Reason, guardStateRejected{
+						Enabled:    true,
+						BalanceFen: settings.BalanceFen,
+						Message:    rejectedMessage(intent.Reason, "model_unpriced"),
+					})
+					recordExtraUsageResult(intent.Reason, "rejected")
+					return
+				}
+			}
+
 			// Monthly-limit check: runs for both bypass and normal paths.
 			// When bypass is on, settings != nil (bypass requires a row).
 			var monthlySpent int64
@@ -233,7 +273,12 @@ func rejectedMessage(reason, subReason string) string {
 			return "rate limit reached; extra usage balance depleted"
 		case "monthly_limit":
 			return "rate limit reached; extra usage monthly limit reached"
+		case "model_unpriced":
+			return "rate limit reached; extra usage cannot price this model (missing default rate or platform credit price)"
 		}
+	}
+	if subReason == "model_unpriced" {
+		return "extra usage cannot price this model (missing default rate or platform credit price)"
 	}
 	return fmt.Sprintf("extra usage unavailable: %s", subReason)
 }

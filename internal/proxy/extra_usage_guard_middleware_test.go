@@ -202,3 +202,78 @@ func TestExtraUsageGuard_NoBypass_BalanceZero_Rejected(t *testing.T) {
 		t.Errorf("expected 429, got %d", rr.Code)
 	}
 }
+
+// runGuardWithModel mirrors runGuardWithIntent but also attaches a *types.Model
+// to the context, simulating ResolveModelMiddleware's effect.
+func runGuardWithModel(t *testing.T, cfg config.ExtraUsageConfig, st extraUsageStore, proj *types.Project, m *types.Model) (*httptest.ResponseRecorder, *bool) {
+	t.Helper()
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true })
+	h := ExtraUsageGuardMiddleware(cfg, st, slog.Default())(inner)
+
+	r := httptest.NewRequest("POST", "/v1/messages", nil)
+	ctx := context.WithValue(r.Context(), ctxExtraUsageIntent, ExtraUsageIntent{Reason: "rate_limited"})
+	ctx = context.WithValue(ctx, ctxProject, proj)
+	if m != nil {
+		ctx = context.WithValue(ctx, ctxModel, m)
+	}
+	r = r.WithContext(ctx)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, r)
+	return rr, &called
+}
+
+func TestExtraUsageGuard_NoBypass_ModelMissingDefaultRate_Rejected(t *testing.T) {
+	st := &fakeExtraUsageStore{
+		settings: &types.ExtraUsageSettings{
+			ProjectID:  "p1",
+			Enabled:    true,
+			BalanceFen: 100000,
+		},
+	}
+	// Model has no DefaultCreditRate — settle would silently no-op without
+	// the guard pre-check. With the pre-check, the request is rejected
+	// before it reaches the upstream so no free ride happens.
+	m := &types.Model{Name: "uncalibrated-model"}
+	rr, called := runGuardWithModel(t, dummyCfg(true), st, &types.Project{ID: "p1"}, m)
+	if *called {
+		t.Error("inner must not be called for unpriced model")
+	}
+	if rr.Code != http.StatusTooManyRequests {
+		t.Errorf("expected 429, got %d", rr.Code)
+	}
+}
+
+func TestExtraUsageGuard_NoBypass_CreditPriceUnset_Rejected(t *testing.T) {
+	st := &fakeExtraUsageStore{
+		settings: &types.ExtraUsageSettings{
+			ProjectID:  "p1",
+			Enabled:    true,
+			BalanceFen: 100000,
+		},
+	}
+	cfg := config.ExtraUsageConfig{Enabled: true, CreditPriceFen: 0}
+	m := &types.Model{Name: "any", DefaultCreditRate: &types.CreditRate{InputRate: 1}}
+	rr, called := runGuardWithModel(t, cfg, st, &types.Project{ID: "p1"}, m)
+	if *called {
+		t.Error("inner must not be called when credit price is unset")
+	}
+	if rr.Code != http.StatusTooManyRequests {
+		t.Errorf("expected 429, got %d", rr.Code)
+	}
+}
+
+func TestExtraUsageGuard_NoBypass_PriceableModel_Allowed(t *testing.T) {
+	st := &fakeExtraUsageStore{
+		settings: &types.ExtraUsageSettings{
+			ProjectID:  "p1",
+			Enabled:    true,
+			BalanceFen: 100000,
+		},
+	}
+	m := &types.Model{Name: "priced", DefaultCreditRate: &types.CreditRate{InputRate: 3, OutputRate: 15}}
+	rr, called := runGuardWithModel(t, dummyCfg(true), st, &types.Project{ID: "p1"}, m)
+	if !*called {
+		t.Errorf("inner handler not called; body=%q", rr.Body.String())
+	}
+}
