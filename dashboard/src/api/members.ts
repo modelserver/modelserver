@@ -48,7 +48,10 @@ export function useAddMember(projectId: string) {
   return useMutation({
     mutationFn: (body: { email: string; role: string; credit_quota_percent?: number }) =>
       api.post(`/api/v1/projects/${projectId}/members`, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["members", projectId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["members", projectId] });
+      qc.invalidateQueries({ queryKey: ["members-compact", projectId] });
+    },
   });
 }
 
@@ -71,7 +74,10 @@ export function useUpdateMember(projectId: string) {
         credit_quota_percent,
         clear_quota,
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["members", projectId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["members", projectId] });
+      qc.invalidateQueries({ queryKey: ["members-compact", projectId] });
+    },
   });
 }
 
@@ -80,7 +86,10 @@ export function useRemoveMember(projectId: string) {
   return useMutation({
     mutationFn: (userId: string) =>
       api.delete(`/api/v1/projects/${projectId}/members/${userId}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["members", projectId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["members", projectId] });
+      qc.invalidateQueries({ queryKey: ["members-compact", projectId] });
+    },
   });
 }
 

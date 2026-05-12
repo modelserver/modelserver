@@ -37,6 +37,9 @@ export function useUpdateUser() {
       is_superadmin?: boolean;
       max_projects?: number;
     }) => api.put<DataResponse<User>>(`/api/v1/users/${userId}`, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "users"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "users"] });
+      qc.invalidateQueries({ queryKey: ["admin", "users-compact"] });
+    },
   });
 }
