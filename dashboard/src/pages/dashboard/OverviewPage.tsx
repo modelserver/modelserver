@@ -3,6 +3,7 @@ import { useProject } from "@/api/projects";
 import { useUsageOverview, useDailyUsage } from "@/api/usage";
 import { useRequests } from "@/api/requests";
 import { useMyQuota } from "@/api/members";
+import { useSubscriptionUsage } from "@/api/subscriptions";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatCard } from "@/components/shared/StatCard";
 import { DataTable, type Column } from "@/components/shared/DataTable";
@@ -44,6 +45,20 @@ function formatPeriod(startISO: string, endISO: string): string {
   return `${fmt(startISO)} – ${fmt(endISO)}`;
 }
 
+// formatResetIn returns a short "in 2d 3h" / "in 14m" string for a future
+// timestamp. Returns empty for past timestamps so we don't show "in 0m".
+function formatResetIn(iso: string): string {
+  const diffMs = new Date(iso).getTime() - Date.now();
+  if (diffMs <= 0) return "";
+  const totalMin = Math.floor(diffMs / 60_000);
+  const days = Math.floor(totalMin / (60 * 24));
+  const hours = Math.floor((totalMin % (60 * 24)) / 60);
+  const minutes = totalMin % 60;
+  if (days > 0) return hours > 0 ? `in ${days}d ${hours}h` : `in ${days}d`;
+  if (hours > 0) return minutes > 0 ? `in ${hours}h ${minutes}m` : `in ${hours}h`;
+  return `in ${Math.max(1, minutes)}m`;
+}
+
 const recentColumns: Column<Request>[] = [
   { header: "Model", accessor: "model" },
   {
@@ -73,12 +88,14 @@ export function OverviewPage() {
   const { data: daily } = useDailyUsage(projectId);
   const { data: recentData } = useRequests(projectId, { per_page: 5 });
   const { data: myQuotaData } = useMyQuota(projectId);
+  const { data: subUsageData } = useSubscriptionUsage(projectId);
   const { user } = useAuth();
 
   const overview = usage?.data;
   const dailyData = daily?.data ?? [];
   const recentRequests = recentData?.data ?? [];
   const myQuota = myQuotaData?.data;
+  const planWindows = subUsageData?.data ?? [];
 
   // The handler may align the window to the active subscription period
   // instead of the historical 30-day default. Drive the existing cards'
@@ -248,26 +265,79 @@ export function OverviewPage() {
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
-            {myQuota.windows.map((w) => (
-              <div key={w.window} className="space-y-1">
-                <div className="flex justify-between text-sm">
-                  <span className="capitalize">{w.window}</span>
-                  <span className="text-muted-foreground">
-                    {user?.is_superadmin
-                      ? `${Math.round(w.used ?? 0).toLocaleString()} / ${(w.limit ?? 0).toLocaleString()}`
-                      : `${w.percentage.toFixed(2)}%`}
-                  </span>
+            {myQuota.windows.map((w) => {
+              const resetIn = w.resets_at ? formatResetIn(w.resets_at) : "";
+              return (
+                <div key={w.window} className="space-y-1">
+                  <div className="flex justify-between text-sm">
+                    <span className="capitalize">{w.window}</span>
+                    <span className="flex items-center gap-2 text-muted-foreground">
+                      <span>
+                        {user?.is_superadmin
+                          ? `${Math.round(w.used ?? 0).toLocaleString()} / ${(w.limit ?? 0).toLocaleString()}`
+                          : `${w.percentage.toFixed(2)}%`}
+                      </span>
+                      {resetIn && (
+                        <span
+                          className="text-xs"
+                          title={w.resets_at ? new Date(w.resets_at).toLocaleString() : undefined}
+                        >
+                          · resets {resetIn}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full bg-primary transition-all"
+                      style={{
+                        width: `${Math.min(w.percentage, 100)}%`,
+                      }}
+                    />
+                  </div>
                 </div>
-                <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                  <div
-                    className="h-full bg-primary transition-all"
-                    style={{
-                      width: `${Math.min(w.percentage, 100)}%`,
-                    }}
-                  />
+              );
+            })}
+          </CardContent>
+        </Card>
+      )}
+
+      {planWindows.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Plan Usage</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Project-wide credit windows from the active subscription.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {planWindows.map((w) => {
+              const resetIn = w.resets_at ? formatResetIn(w.resets_at) : "";
+              return (
+                <div key={w.window} className="space-y-1">
+                  <div className="flex justify-between text-sm">
+                    <span className="capitalize">{w.window}</span>
+                    <span className="flex items-center gap-2 text-muted-foreground">
+                      <span>{w.percentage.toFixed(2)}%</span>
+                      {resetIn && (
+                        <span
+                          className="text-xs"
+                          title={w.resets_at ? new Date(w.resets_at).toLocaleString() : undefined}
+                        >
+                          · resets {resetIn}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full bg-primary transition-all"
+                      style={{ width: `${Math.min(w.percentage, 100)}%` }}
+                    />
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </CardContent>
         </Card>
       )}
