@@ -93,10 +93,11 @@ export function UsagePage() {
     { header: "Avg Latency", accessor: (r) => `${Math.round(r.avg_latency_ms)}ms`, className: "text-right" },
   ];
 
-  // Backend sorts by total_tokens DESC with a stable tiebreaker, so the row's
-  // position within the full sorted list is (page-1)*perPage + localIndex.
-  // That global rank is what decides the 🥇🥈🥉 medals — only rows on page 1
-  // that fall into the top three overall receive them.
+  // Backend sorts by total credits consumed within the active subscription
+  // period (DESC, stable tiebreaker on user_id), so the row's position in the
+  // sorted list is (page-1)*perPage + localIndex. That global rank is what
+  // decides the 🥇🥈🥉 medals — only rows on page 1 that fall into the top
+  // three overall receive them.
   const pageOffset = (memberPage - 1) * MEMBER_PER_PAGE;
   const rankByUserId = new Map<string, number>(
     memberData.map((r, i) => [r.user_id, pageOffset + i]),
@@ -126,6 +127,11 @@ export function UsagePage() {
     { header: "Email", accessor: (r) => r.email || "—" },
     { header: "Requests", accessor: (r) => formatNumber(r.request_count), className: "text-right" },
     { header: "Tokens", accessor: (r) => formatNumber(r.total_tokens), className: "text-right" },
+    {
+      header: "Credits",
+      accessor: (r) => `${(r.total_credits_k ?? 0).toLocaleString()}K`,
+      className: "text-right",
+    },
   ];
 
   return (
@@ -240,6 +246,9 @@ export function UsagePage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Usage by Member</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Ranked by credits consumed in the current subscription period.
+          </p>
         </CardHeader>
         <CardContent className="p-0">
           <DataTable

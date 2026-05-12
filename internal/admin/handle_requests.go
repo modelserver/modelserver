@@ -127,7 +127,17 @@ func handleGetUsage(st *store.Store, catalog modelcatalog.Catalog, creditPriceFe
 			writeData(w, http.StatusOK, data)
 		case "member":
 			p := parsePagination(r)
-			data, total, err := st.GetUsageByMember(projectID, since, until, p.Limit(), p.Offset())
+			// Member ranking is always scoped to the active subscription
+			// period (StartsAt → now), so the table reflects "who has burned
+			// the most credits this billing cycle" regardless of any
+			// since/until query params. Falls back to the user-supplied
+			// window when there is no active subscription.
+			memberSince, memberUntil := since, until
+			if sub, err := st.GetActiveSubscription(projectID); err == nil && sub != nil {
+				memberSince = sub.StartsAt
+				memberUntil = time.Now()
+			}
+			data, total, err := st.GetUsageByMember(projectID, memberSince, memberUntil, p.Limit(), p.Offset())
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "internal", "failed to get usage")
 				return

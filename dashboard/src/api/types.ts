@@ -334,6 +334,7 @@ export interface UsageByMember {
   email: string;
   request_count: number;
   total_tokens: number;
+  total_credits_k: number;
 }
 
 // --- Traces ---
