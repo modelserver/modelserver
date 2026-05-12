@@ -125,7 +125,9 @@ function PricingInfo() {
           <span className="font-medium text-foreground">"对齐"</span> 指当用户全部使用某一类型的模型时，可用的配额上限与官方保持一致。由于上游平台不一定公开准确的配额限制，平台将通过线性回归等手段对官方配额进行合理推测，ETOChat 提供给用户的套餐配额也会相应进行动态调整。
         </p>
         <p>
-          当用户的 5h / 7d 配额超过限制时，如果用户开通了 Extra Usage，可以继续调用，超出部分以官方 API 价格扣减 Extra Usage 余额。
+          当 5h / 7d 配额已用尽后，若用户已开通 Extra Usage 且余额为正，后续请求会被放行；
+          这些请求<span className="font-medium text-foreground">全额</span>按官方 API 价格从 Extra Usage 余额扣减
+          （并非仅扣除超出部分），余额耗尽后请求将被限流拒绝。
         </p>
       </CardContent>
     </Card>
