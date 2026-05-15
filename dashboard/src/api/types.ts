@@ -403,16 +403,9 @@ export interface Upstream {
   max_concurrent: number;
   read_timeout?: number;
   test_model?: string;
-  health_check?: HealthCheckConfig;
   status: "active" | "draining" | "disabled";
   created_at: string;
   updated_at: string;
-}
-
-export interface HealthCheckConfig {
-  enabled: boolean;
-  interval?: string;
-  timeout?: string;
 }
 
 // --- Upstream Group ---
@@ -502,28 +495,3 @@ export interface RoutingRoute {
   updated_at: string;
 }
 
-// --- Routing Health ---
-export interface RoutingHealthResponse {
-  upstreams: UpstreamHealth[];
-  groups: GroupHealth[];
-}
-
-export interface UpstreamHealth {
-  id: string;
-  name: string;
-  provider: string;
-  circuit_state: "closed" | "open" | "half_open";
-  health_status: "unknown" | "ok" | "degraded" | "down";
-  active_connections: number;
-  recent_errors: number;
-  last_check_at?: string;
-  last_error_at?: string;
-}
-
-export interface GroupHealth {
-  id: string;
-  name: string;
-  lb_policy: string;
-  healthy_members: number;
-  total_members: number;
-}

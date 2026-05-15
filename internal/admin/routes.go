@@ -17,7 +17,7 @@ import (
 // is the in-memory model catalog; admin mutations to /models refresh it in
 // place, and write paths to /upstreams, /routing/routes, /keys, /plans,
 // /policies use it to reject unknown model names.
-func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byte, jwtMgr *auth.JWTManager, catalog modelcatalog.Catalog, httpLogger *httplog.Logger, hp HealthProvider) {
+func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byte, jwtMgr *auth.JWTManager, catalog modelcatalog.Catalog, httpLogger *httplog.Logger) {
 	// Construct payment client if configured.
 	var payClient billing.PaymentClient
 	if cfg.Billing.PaymentAPIURL != "" {
@@ -292,9 +292,6 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 				r.Put("/routes/{routeID}", handleUpdateRoutingRoute(st, catalog))
 				r.Delete("/routes/{routeID}", handleDeleteRoutingRoute(st))
 				r.Get("/request-kinds", handleListRequestKinds())
-				if hp != nil {
-					r.Get("/health", handleRoutingHealth(hp))
-				}
 			})
 		})
 	})

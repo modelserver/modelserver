@@ -187,7 +187,6 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 				"upstream_id", uid,
 				"upstream_name", m.upstream.Name,
 				"status", m.upstream.Status,
-				"health", e.router.healthChecker.Status(uid).String(),
 				"circuit_open", !e.router.circuitBreaker.CanPass(uid),
 				"concurrent", e.router.connTracker.Count(uid),
 				"max_concurrent", m.upstream.MaxConcurrent)

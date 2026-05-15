@@ -66,7 +66,6 @@ func handleCreateUpstream(st *store.Store, encKey []byte, catalog modelcatalog.C
 			Weight          int                       `json:"weight"`
 			MaxConcurrent   int                       `json:"max_concurrent"`
 			TestModel       string                    `json:"test_model"`
-			HealthCheck     *types.HealthCheckConfig   `json:"health_check"`
 			ReadTimeout     time.Duration             `json:"read_timeout"`
 		}
 		if err := decodeBody(r, &body); err != nil {
@@ -114,7 +113,6 @@ func handleCreateUpstream(st *store.Store, encKey []byte, catalog modelcatalog.C
 			Weight:          weight,
 			MaxConcurrent:   body.MaxConcurrent,
 			TestModel:       body.TestModel,
-			HealthCheck:     body.HealthCheck,
 			ReadTimeout:     body.ReadTimeout,
 			Status:          types.UpstreamStatusActive,
 		}
@@ -150,7 +148,7 @@ func handleUpdateUpstream(st *store.Store, encKey []byte, catalog modelcatalog.C
 		updates := make(map[string]interface{})
 		for _, field := range []string{
 			"name", "base_url", "provider", "supported_models", "model_map",
-			"weight", "max_concurrent", "test_model", "health_check",
+			"weight", "max_concurrent", "test_model",
 			"read_timeout", "status",
 		} {
 			v, ok := body[field]

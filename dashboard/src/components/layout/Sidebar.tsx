@@ -19,7 +19,6 @@ import {
   Route,
   Server,
   Network,
-  Activity,
   Lock,
   KeyRound,
   Sparkles,
@@ -163,9 +162,6 @@ export function Sidebar() {
             </SidebarLink>
             <SidebarLink to="/admin/upstream-groups" icon={Network}>
               Groups
-            </SidebarLink>
-            <SidebarLink to="/admin/routing-health" icon={Activity}>
-              Health
             </SidebarLink>
             <SidebarLink to="/admin/oauth-clients" icon={KeyRound}>
               OAuth Clients

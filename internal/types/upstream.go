@@ -67,17 +67,9 @@ type Upstream struct {
 	MaxConcurrent int                `json:"max_concurrent"`         // 0 = unlimited
 	ReadTimeout   time.Duration      `json:"read_timeout,omitempty"` // Per-upstream response timeout (default: 300s for streaming)
 	TestModel     string             `json:"test_model,omitempty"`
-	HealthCheck   *HealthCheckConfig `json:"health_check,omitempty"` // Per-upstream health check config
 	Status        string             `json:"status"`                 // active / draining / disabled
 	CreatedAt     time.Time          `json:"created_at"`
 	UpdatedAt     time.Time          `json:"updated_at"`
-}
-
-// HealthCheckConfig configures active health probes for this upstream.
-type HealthCheckConfig struct {
-	Enabled  bool          `json:"enabled"`            // Default: true
-	Interval time.Duration `json:"interval,omitempty"` // Default: 30s
-	Timeout  time.Duration `json:"timeout,omitempty"`  // Default: 5s
 }
 
 // ResolveModel returns the upstream model name for the given request model.

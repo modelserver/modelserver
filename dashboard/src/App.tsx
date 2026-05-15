@@ -65,7 +65,6 @@ import { AdminRequestsPage } from "@/pages/admin/RequestsPage";
 // Admin Upstreams & Routing
 import { UpstreamsPage } from "@/pages/admin/UpstreamsPage";
 import { UpstreamGroupsPage } from "@/pages/admin/UpstreamGroupsPage";
-import { RoutingHealthPage } from "@/pages/admin/RoutingHealthPage";
 
 // Admin OAuth Clients
 import { OAuthClientsPage } from "@/pages/admin/OAuthClientsPage";
@@ -117,7 +116,6 @@ export function App() {
                 <Route path="admin/routes" element={<RoutesPage />} />
                 <Route path="admin/upstreams" element={<UpstreamsPage />} />
                 <Route path="admin/upstream-groups" element={<UpstreamGroupsPage />} />
-                <Route path="admin/routing-health" element={<RoutingHealthPage />} />
                 <Route path="admin/oauth-clients" element={<OAuthClientsPage />} />
               </Route>
             </Routes>

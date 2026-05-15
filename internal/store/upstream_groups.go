@@ -195,7 +195,7 @@ func (s *Store) ListUpstreamGroupsWithMembersPaginated(p types.PaginationParams)
 		SELECT m.upstream_group_id, m.upstream_id, m.weight, m.is_backup,
 			u.id, u.provider, u.name, u.base_url, u.api_key_encrypted, u.supported_models,
 			u.model_map, u.weight, u.status, u.max_concurrent, u.test_model,
-			u.health_check, u.read_timeout, u.created_at, u.updated_at
+			u.read_timeout, u.created_at, u.updated_at
 		FROM upstream_group_members m
 		JOIN upstreams u ON u.id = m.upstream_id
 		WHERE m.upstream_group_id = ANY($1)
@@ -209,18 +209,17 @@ func (s *Store) ListUpstreamGroupsWithMembersPaginated(p types.PaginationParams)
 	for rows.Next() {
 		var m types.UpstreamGroupMember
 		u := &types.Upstream{}
-		var modelMapRaw, healthCheckRaw []byte
+		var modelMapRaw []byte
 		var readTimeout *time.Duration
 		if err := rows.Scan(
 			&m.UpstreamGroupID, &m.UpstreamID, &m.Weight, &m.IsBackup,
 			&u.ID, &u.Provider, &u.Name, &u.BaseURL, &u.APIKeyEncrypted, &u.SupportedModels,
 			&modelMapRaw, &u.Weight, &u.Status, &u.MaxConcurrent, &u.TestModel,
-			&healthCheckRaw, &readTimeout, &u.CreatedAt, &u.UpdatedAt,
+			&readTimeout, &u.CreatedAt, &u.UpdatedAt,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan member with upstream: %w", err)
 		}
 		u.ModelMap = unmarshalModelMap(modelMapRaw)
-		u.HealthCheck = unmarshalHealthCheck(healthCheckRaw)
 		if readTimeout != nil {
 			u.ReadTimeout = *readTimeout
 		}
@@ -259,7 +258,7 @@ func (s *Store) ListUpstreamGroupsWithMembers() ([]UpstreamGroupWithMembers, err
 		SELECT m.upstream_group_id, m.upstream_id, m.weight, m.is_backup,
 			u.id, u.provider, u.name, u.base_url, u.api_key_encrypted, u.supported_models,
 			u.model_map, u.weight, u.status, u.max_concurrent, u.test_model,
-			u.health_check, u.read_timeout, u.created_at, u.updated_at
+			u.read_timeout, u.created_at, u.updated_at
 		FROM upstream_group_members m
 		JOIN upstreams u ON u.id = m.upstream_id
 		ORDER BY m.upstream_group_id, u.name`)
@@ -273,18 +272,17 @@ func (s *Store) ListUpstreamGroupsWithMembers() ([]UpstreamGroupWithMembers, err
 	for rows.Next() {
 		var m types.UpstreamGroupMember
 		u := &types.Upstream{}
-		var modelMapRaw, healthCheckRaw []byte
+		var modelMapRaw []byte
 		var readTimeout *time.Duration
 		if err := rows.Scan(
 			&m.UpstreamGroupID, &m.UpstreamID, &m.Weight, &m.IsBackup,
 			&u.ID, &u.Provider, &u.Name, &u.BaseURL, &u.APIKeyEncrypted, &u.SupportedModels,
 			&modelMapRaw, &u.Weight, &u.Status, &u.MaxConcurrent, &u.TestModel,
-			&healthCheckRaw, &readTimeout, &u.CreatedAt, &u.UpdatedAt,
+			&readTimeout, &u.CreatedAt, &u.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan member with upstream: %w", err)
 		}
 		u.ModelMap = unmarshalModelMap(modelMapRaw)
-		u.HealthCheck = unmarshalHealthCheck(healthCheckRaw)
 		if readTimeout != nil {
 			u.ReadTimeout = *readTimeout
 		}

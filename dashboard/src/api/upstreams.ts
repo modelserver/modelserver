@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
-import type { ListResponse, DataResponse, Upstream, UpstreamGroupWithMembers, RoutingRoute, RoutingHealthResponse, UpstreamTestResult, UpstreamUsageSummary, ClaudeCodeUtilization } from "./types";
+import type { ListResponse, DataResponse, Upstream, UpstreamGroupWithMembers, RoutingRoute, UpstreamTestResult, UpstreamUsageSummary, ClaudeCodeUtilization } from "./types";
 
 // --- Upstreams ---
 export function useUpstreams(page = 1, perPage = 20) {
@@ -315,11 +315,3 @@ export function useRequestKinds() {
   });
 }
 
-// --- Routing Health ---
-export function useRoutingHealth() {
-  return useQuery({
-    queryKey: ["admin", "routing-health"],
-    queryFn: () => api.get<DataResponse<RoutingHealthResponse>>("/api/v1/routing/health"),
-    refetchInterval: 10_000, // Poll every 10s
-  });
-}

@@ -154,8 +154,6 @@ func main() {
 	codexOAuthMgr := proxy.NewCodexOAuthTokenManager(st, encryptionKey, logger)
 	router := proxy.NewRouter(upstreams, groups, routingRoutes, encryptionKey, logger, cfg.Trace.SessionTTL, oauthMgr, codexOAuthMgr, catalog)
 	router.StartSessionCleanup(10 * time.Minute)
-	// Start health checker.
-	router.HealthChecker().Start(context.Background())
 
 	// Periodically reload routing configuration and the catalog together.
 	// Both surfaces are independent atomic swaps — no cross-component lock.
@@ -276,7 +274,7 @@ func main() {
 	jwtMgr := auth.NewJWTManager(cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL)
 
 	// Mount admin API routes.
-	admin.MountRoutes(adminRouter, st, cfg, encryptionKey, jwtMgr, catalog, httpLogger, newRoutingHealthProvider(st, router))
+	admin.MountRoutes(adminRouter, st, cfg, encryptionKey, jwtMgr, catalog, httpLogger)
 
 	adminServer := &http.Server{
 		Addr:    cfg.Server.AdminAddr,
@@ -289,7 +287,6 @@ func main() {
 		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 		sig := <-sigCh
 		logger.Info("received signal, shutting down", "signal", sig.String())
-		router.HealthChecker().Stop()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		proxyServer.Shutdown(ctx)

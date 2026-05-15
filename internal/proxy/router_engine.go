@@ -41,7 +41,6 @@ type Router struct {
 
 	balancers      map[string]*lb.Balancer      // groupID -> balancer
 	circuitBreaker *lb.CircuitBreaker
-	healthChecker  *lb.HealthChecker
 	connTracker    *lb.ConnectionTracker
 	metrics        *lb.UpstreamMetrics
 
@@ -111,7 +110,6 @@ func NewRouter(
 	r.connTracker = lb.NewConnectionTracker()
 	r.metrics = lb.NewUpstreamMetrics()
 	r.circuitBreaker = lb.NewCircuitBreaker(5, 2, 30*time.Second)
-	r.healthChecker = lb.NewHealthChecker(r.circuitBreaker, r.metrics, logger, r.vertexTokenManager.GetToken)
 
 	// Build all maps from the configuration.
 	r.buildMaps(upstreams, groups, routes, encKey)
@@ -197,25 +195,6 @@ func (r *Router) buildMaps(
 		return sortedRoutes[i].MatchPriority > sortedRoutes[j].MatchPriority
 	})
 
-	// 5. Register all upstreams with TestModel set for health checking.
-	for _, u := range upstreams {
-		if u.TestModel == "" {
-			continue
-		}
-		interval := 30 * time.Second
-		timeout := 5 * time.Second
-		if u.HealthCheck != nil {
-			if u.HealthCheck.Interval > 0 {
-				interval = u.HealthCheck.Interval
-			}
-			if u.HealthCheck.Timeout > 0 {
-				timeout = u.HealthCheck.Timeout
-			}
-		}
-		apiKey := keys[u.ID]
-		r.healthChecker.Register(u.ID, u.Provider, u.BaseURL, u.TestModel, apiKey, interval, timeout)
-	}
-
 	// Assign to Router fields.
 	r.upstreams = um
 	r.groups = gm
@@ -274,9 +253,8 @@ func (r *Router) Match(projectID, model, kind string) (*resolvedGroup, error) {
 
 // SelectWithRetry returns an ordered list of upstreams to try for the given group.
 // The first element is the primary pick; subsequent elements are retry fallbacks.
-// Filtering applies: open circuits, HealthDown, MaxConcurrent at capacity, and
-// draining upstreams are excluded. HealthDegraded upstreams have their effective
-// weight reduced to 25% (minimum 1).
+// Filtering applies: open circuits, MaxConcurrent at capacity, and
+// draining upstreams are excluded.
 func (r *Router) SelectWithRetry(ctx context.Context, group *resolvedGroup, sessionID, model string) []*SelectedUpstream {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -309,11 +287,6 @@ func (r *Router) SelectWithRetry(ctx context.Context, group *resolvedGroup, sess
 			continue
 		}
 
-		// Skip upstreams that are HealthDown.
-		if r.healthChecker.Status(uid) == lb.HealthDown {
-			continue
-		}
-
 		// Skip upstreams at MaxConcurrent capacity.
 		if m.upstream.MaxConcurrent > 0 {
 			if r.connTracker.Count(uid) >= int64(m.upstream.MaxConcurrent) {
@@ -321,18 +294,9 @@ func (r *Router) SelectWithRetry(ctx context.Context, group *resolvedGroup, sess
 			}
 		}
 
-		// Compute effective weight: downweight HealthDegraded (25%, minimum 1).
-		effectiveWeight := m.weight
-		if r.healthChecker.Status(uid) == lb.HealthDegraded {
-			effectiveWeight = effectiveWeight / 4
-			if effectiveWeight < 1 {
-				effectiveWeight = 1
-			}
-		}
-
 		ci := lb.CandidateInfo{
 			Upstream:    m.upstream,
-			Weight:      effectiveWeight,
+			Weight:      m.weight,
 			IsBackup:    m.isBackup,
 			ActiveConns: r.connTracker.Count(uid),
 		}
@@ -584,11 +548,6 @@ func (r *Router) Metrics() *lb.UpstreamMetrics {
 // CircuitBreaker returns the shared circuit breaker.
 func (r *Router) CircuitBreaker() *lb.CircuitBreaker {
 	return r.circuitBreaker
-}
-
-// HealthChecker returns the shared health checker.
-func (r *Router) HealthChecker() *lb.HealthChecker {
-	return r.healthChecker
 }
 
 // ActiveModels returns canonical names that are actually routable — i.e.
