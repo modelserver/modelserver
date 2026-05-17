@@ -55,6 +55,7 @@ var utilizationAnalysisBaseRates = map[string]types.CreditRate{
 	}},
 	"gpt-5.4":            {InputRate: 0.333, OutputRate: 2.0, CacheCreationRate: 0, CacheReadRate: 0.033},
 	"gpt-5.3-codex":      {InputRate: 0.233, OutputRate: 1.867, CacheCreationRate: 0, CacheReadRate: 0.023},
+	"codex-auto-review":  {InputRate: 0.233, OutputRate: 1.867, CacheCreationRate: 0, CacheReadRate: 0.023},
 	"gpt-5.2-codex":      {InputRate: 0.233, OutputRate: 1.867, CacheCreationRate: 0, CacheReadRate: 0.023},
 	"gpt-5.2":            {InputRate: 0.233, OutputRate: 1.867, CacheCreationRate: 0, CacheReadRate: 0.023},
 	"gpt-5.1-codex-max":  {InputRate: 0.167, OutputRate: 1.333, CacheCreationRate: 0, CacheReadRate: 0.017},
