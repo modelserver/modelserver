@@ -249,6 +249,11 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 	// to avoid infinite loops.
 	claudeCodeOAuthRetried := false
 	codexOAuthRetried := false
+	// Track whether we've already stripped reasoning.encrypted_content and
+	// replayed once. Bound to the request, not the upstream — a second 400
+	// with the same code after stripping means the backend rejected for a
+	// different reason and must reach the client unmodified.
+	encryptedRetried := false
 
 	// 6. Retry loop: try each candidate in order.
 	for attempt, candidate := range candidates {
@@ -620,6 +625,70 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 			cancelFn = retryCancelFn
 
 			// Fall through to the normal commit path with the retry result.
+		}
+
+		// 6h4. Responses-API encrypted_content recovery: when the upstream
+		//       rejects the request with invalid_encrypted_content, the prior
+		//       turn's reasoning blob in the body was signed by a different
+		//       account/server than the one this request is hitting. Strip
+		//       every account-bound blob and retry once on the SAME upstream.
+		//
+		//       Mirrors the OAuth-401 retry pattern above (single-shot,
+		//       request-scoped flag). Covers every cause of upstream drift
+		//       that session affinity can't fix on its own: ops drained or
+		//       removed the prior upstream, the affinity TTL expired,
+		//       multi-replica deploys without shared binding storage, or a
+		//       proxy restart wiped the in-memory sessionMap.
+		if !encryptedRetried && resp != nil && resp.StatusCode == http.StatusBadRequest &&
+			(reqCtx.RequestKind == types.KindOpenAIResponses || reqCtx.RequestKind == types.KindOpenAIResponsesCompact) {
+			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			if isInvalidEncryptedContentError(errBody) {
+				encryptedRetried = true
+				stripped, didStrip := stripEncryptedReasoningContent(transformedBody)
+				if didStrip {
+					e.router.ConnTracker().Release(upstream.ID)
+					if cancelFn != nil {
+						cancelFn()
+					}
+					transformedBody = stripped
+					logger.Info("retrying after stripping encrypted reasoning content",
+						"upstream_id", upstream.ID,
+						"body_len", len(transformedBody))
+
+					retryReq, _ := http.NewRequestWithContext(r.Context(), r.Method, outReq.URL.String(), io.NopCloser(bytes.NewReader(transformedBody)))
+					retryReq.ContentLength = int64(len(transformedBody))
+					retryReq.Host = outReq.Host
+					retryReq.Header = outReq.Header.Clone()
+
+					e.router.ConnTracker().Acquire(upstream.ID)
+
+					retryCtx := retryReq.Context()
+					var retryCancelFn context.CancelFunc
+					if timeout := upstreamTimeout(upstream, reqCtx.IsStream); timeout > 0 {
+						retryCtx, retryCancelFn = context.WithTimeout(retryCtx, timeout)
+					}
+					retryReq = retryReq.WithContext(retryCtx)
+
+					resp, doErr = e.httpClient.Do(retryReq)
+					if retryCancelFn != nil && doErr != nil {
+						retryCancelFn()
+					}
+					cancelFn = retryCancelFn
+				} else {
+					// Backend reported invalid_encrypted_content but nothing
+					// matched the strip heuristic. Surface the original error
+					// so the operator can extend stripEncryptedReasoningContent
+					// to cover the new field shape.
+					logger.Warn("invalid_encrypted_content returned but no encrypted fields found in request",
+						"upstream_id", upstream.ID)
+					resp.Body = io.NopCloser(bytes.NewReader(errBody))
+				}
+			} else {
+				// Different 400 — restore the body so commitErrorResponse can
+				// forward it to the client.
+				resp.Body = io.NopCloser(bytes.NewReader(errBody))
+			}
 		}
 
 		// 6i. Commit: this is the final response (success or non-retryable error).
