@@ -456,7 +456,7 @@ func handleCodexUtilization(st *store.Store, encKey []byte) http.HandlerFunc {
 		req.Header.Set("Authorization", "Bearer "+accessToken)
 		req.Header.Set("User-Agent", proxy.CodexUserAgent)
 		req.Header.Set("Originator", "codex_cli_rs")
-		req.Header.Set("Version", proxy.CodexVersion)
+		// Upstream codex 0.135.0 no longer emits a "Version" header.
 		if creds.ChatGPTAccountID != "" {
 			req.Header.Set("ChatGPT-Account-ID", creds.ChatGPTAccountID)
 		}

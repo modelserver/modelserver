@@ -58,10 +58,19 @@ func TestDeriveClientKind_OpenClawViaUserAgent(t *testing.T) {
 }
 
 func TestDeriveClientKind_CodexViaSessionHeader(t *testing.T) {
+	// Modern codex CLI (≥0.135.0) sends hyphenated session-id.
 	r := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-	r.Header.Set("Session_id", "codex-1234")
+	r.Header.Set("Session-Id", "codex-1234")
 	if got := deriveClientKind(r, config.TraceConfig{}); got != types.ClientKindCodex {
-		t.Errorf("Session_id header → %q, want %q", got, types.ClientKindCodex)
+		t.Errorf("Session-Id header → %q, want %q", got, types.ClientKindCodex)
+	}
+
+	// Legacy codex CLI (≤0.124.x) sent underscored session_id; we still
+	// recognize it so older clients keep getting trace correlation.
+	r = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	r.Header.Set("Session_id", "codex-legacy")
+	if got := deriveClientKind(r, config.TraceConfig{}); got != types.ClientKindCodex {
+		t.Errorf("legacy Session_id header → %q, want %q", got, types.ClientKindCodex)
 	}
 }
 

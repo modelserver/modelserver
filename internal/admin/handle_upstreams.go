@@ -2,6 +2,7 @@ package admin
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -471,14 +472,18 @@ func handleTestUpstream(st *store.Store, encKey []byte) http.HandlerFunc {
 				req.Header.Set("ChatGPT-Account-ID", codexCreds.ChatGPTAccountID)
 			}
 			req.Header.Set("User-Agent", proxy.CodexUserAgent)
-			req.Header.Set("Version", proxy.CodexVersion)
 			req.Header.Set("Originator", "codex_cli_rs")
-			req.Header.Set("session_id", fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-				time.Now().UnixNano()&0xffffffff,
-				time.Now().UnixNano()&0xffff,
-				time.Now().UnixNano()&0xffff,
-				time.Now().UnixNano()&0xffff,
-				time.Now().UnixNano()%(1<<48)))
+			// The test request below uses `stream: true`, so advertise SSE
+			// acceptance to match codex CLI 0.135.0
+			// (codex-rs/codex-api/src/endpoint/responses.rs).
+			req.Header.Set("Accept", "text/event-stream")
+			// Upstream codex 0.135.0 only sends the hyphenated `session-id`
+			// / `thread-id` (PR openai/codex#22193 dropped the underscored
+			// aliases) and no longer emits a standalone "Version" header.
+			// build_session_headers always emits both ids together, and
+			// codex uses distinct UUIDs for each.
+			req.Header.Set("session-id", testCodexUUID())
+			req.Header.Set("thread-id", testCodexUUID())
 		case types.ProviderVertexAnthropic, types.ProviderVertexGoogle, types.ProviderVertexOpenAI:
 			creds, err := google.CredentialsFromJSON(r.Context(), apiKey, "https://www.googleapis.com/auth/cloud-platform")
 			if err != nil {
@@ -572,4 +577,17 @@ func handleUpstreamUsage(st *store.Store) http.HandlerFunc {
 		}
 		writeData(w, http.StatusOK, result)
 	}
+}
+
+// testCodexUUID returns a hyphenated UUID-shaped string used as a fresh
+// session-id / thread-id for the upstream connectivity test. Quality bar is
+// "opaque, non-colliding within a process", not cryptographic — collisions
+// would only cause the same trace row to be reused, which is harmless here.
+func testCodexUUID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40 // v4
+	b[8] = (b[8] & 0x3f) | 0x80 // RFC 4122 variant
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }

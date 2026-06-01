@@ -1776,11 +1776,26 @@ func sanitizeOutboundHeaders(h http.Header) http.Header {
 			canon == "X-Claude-Remote-Session-Id",
 			// Gemini API key header.
 			canon == "X-Goog-Api-Key",
-			// Codex (ChatGPT subscription) headers.
+			// Codex (ChatGPT subscription) headers. Upstream codex 0.135.0
+			// no longer emits "Version" and only sends the hyphenated
+			// "session-id" / "thread-id" (PR openai/codex#22193), so the
+			// underscored aliases are no longer allowlisted.
+			// `Accept` is allowed so codex CLI's `Accept: text/event-stream`
+			// on /responses passes through, and our director can fill it as
+			// a fallback for streaming requests.
+			//
+			// NOTE: `Content-Encoding` is intentionally NOT allowlisted.
+			// codex 0.135.0 zstd-compresses request bodies by default
+			// (Feature::EnableRequestCompression). modelserver always reads
+			// + transforms the request body as JSON, so it cannot forward a
+			// pre-compressed payload faithfully. codex CLI users routing
+			// through this proxy must disable that feature, or we must add
+			// transparent decompression before TransformBody.
+			canon == "Accept",
 			canon == "Chatgpt-Account-Id",
 			canon == "Originator",
-			canon == "Version",
-			canon == "Session_id":
+			canon == "Session-Id",
+			canon == "Thread-Id":
 			allowed[canon] = vals
 		default:
 			if strings.HasPrefix(canon, "X-Stainless-") || strings.HasPrefix(canon, "X-Codex-") {

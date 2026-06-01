@@ -9,15 +9,17 @@ import (
 	"strings"
 )
 
-// codex outbound constants. Pinned to codex CLI 0.124.0; bumping is a
+// codex outbound constants. Pinned to codex CLI 0.135.0; bumping is a
 // deliberate maintenance task.
 const (
 	codexDefaultBaseURL = "https://chatgpt.com/backend-api/codex"
 	// CodexVersion and CodexUserAgent are exported so internal/admin can reuse
 	// them for token-refresh and utilization requests without duplicating the
-	// literals.
-	CodexVersion   = "0.124.0"
-	CodexUserAgent = "codex_cli_rs/0.124.0 (Linux; x64) Codex"
+	// literals. CodexVersion is no longer sent as a standalone "Version"
+	// header (upstream stopped emitting it; PR openai/codex#22193 era) but
+	// remains the source of truth for the version embedded in CodexUserAgent.
+	CodexVersion   = "0.135.0"
+	CodexUserAgent = "codex_cli_rs/0.135.0 (Linux; x64) Codex"
 	// codexOriginator is sent as both part of the User-Agent and as a
 	// standalone "Originator" header on every outbound request. This matches
 	// codex CLI's default_headers() which inserts it via reqwest's
@@ -61,17 +63,64 @@ func directorSetCodexUpstream(req *http.Request, baseURL, accessToken, accountID
 	}
 
 	// Codex fingerprint headers always overwrite — the backend gates
-	// access on these.
+	// access on these. The "Version" header used by older codex CLIs
+	// (≤0.124.x) is intentionally NOT sent here: upstream removed it on
+	// its way to 0.135.0 and the ChatGPT backend no longer relies on it.
+	// "Connection: keep-alive" is also omitted to stay byte-identical with
+	// codex CLI, which lets reqwest manage connection reuse itself.
 	req.Header.Set("User-Agent", CodexUserAgent)
 	req.Header.Set("Originator", codexOriginator)
-	req.Header.Set("Version", CodexVersion)
-	req.Header.Set("Connection", "keep-alive")
 
-	// session_id: preserve whatever the client provided; otherwise fill
-	// a fresh random UUID-style value.  Header NAME is lowercase with an
-	// underscore (matches codex CLI's build_conversation_headers).
-	if req.Header.Get("session_id") == "" {
-		req.Header.Set("session_id", randomCodexSessionID())
+	// session-id / thread-id: preserve whatever the client provided;
+	// otherwise fill fresh random UUID-style values. Codex 0.135.0 emits
+	// BOTH on every /responses request via build_session_headers
+	// (codex-rs/codex-api/src/requests/headers.rs) and only in the
+	// hyphenated form (openai/codex#22193 dropped the underscored aliases
+	// because some proxies reject "_" in header names).
+	//
+	// Legacy codex CLIs (≤0.124.x) sent the underscored `session_id` /
+	// `thread_id` form. If we see those, migrate them to the hyphenated
+	// form (and drop the originals) so the upstream allowlist passes them
+	// through — otherwise sanitizeOutboundHeaders would strip them and we'd
+	// lose the client's correlation id at the proxy → backend hop.
+	migrateCodexLegacySessionHeader(req, "session_id", "session-id")
+	migrateCodexLegacySessionHeader(req, "thread_id", "thread-id")
+	if req.Header.Get("session-id") == "" {
+		req.Header.Set("session-id", randomCodexSessionID())
+	}
+	if req.Header.Get("thread-id") == "" {
+		req.Header.Set("thread-id", randomCodexSessionID())
+	}
+
+	// For SSE streaming requests, codex CLI explicitly sets
+	// `Accept: text/event-stream` (codex-rs/codex-api/src/endpoint/responses.rs).
+	// The Responses API will negotiate SSE from `stream: true` in the body
+	// regardless, but matching the CLI's wire shape avoids surprises if the
+	// backend ever starts gating on Accept.
+	if isCodexStreamingPath(req.URL.Path) && req.Header.Get("Accept") == "" {
+		req.Header.Set("Accept", "text/event-stream")
+	}
+}
+
+// isCodexStreamingPath reports whether the rewritten request targets a codex
+// endpoint that emits Server-Sent Events. Today only `/responses` (the unary
+// `/responses/compact` path is JSON, not SSE).
+func isCodexStreamingPath(p string) bool {
+	return strings.HasSuffix(p, "/responses")
+}
+
+// migrateCodexLegacySessionHeader rewrites a legacy underscored header name
+// (`session_id` / `thread_id`) to its modern hyphenated equivalent so the
+// outbound allowlist forwards it. If the hyphenated form is already set the
+// legacy one is just dropped — modern wins.
+func migrateCodexLegacySessionHeader(req *http.Request, legacy, modern string) {
+	val := req.Header.Get(legacy)
+	if val == "" {
+		return
+	}
+	req.Header.Del(legacy)
+	if req.Header.Get(modern) == "" {
+		req.Header.Set(modern, val)
 	}
 }
 

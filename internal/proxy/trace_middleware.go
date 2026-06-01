@@ -22,8 +22,22 @@ const (
 	ctxClientKind  contextKey = "client_kind"
 
 	openCodeTraceHeader = "X-Opencode-Session"
-	codexTraceHeader    = "Session_id"
+	// codexTraceHeader is the hyphenated form emitted by codex CLI ≥0.135.0
+	// (openai/codex#22193 dropped the underscored alias). codexTraceHeaderLegacy
+	// is kept so requests from older codex CLIs (≤0.124.x) and from clients
+	// that still piggyback on the legacy spelling continue to correlate.
+	codexTraceHeader       = "Session-Id"
+	codexTraceHeaderLegacy = "Session_id"
 )
+
+// codexSessionIDFromRequest returns the codex CLI session id from whichever
+// spelling the client used, preferring the modern hyphenated form.
+func codexSessionIDFromRequest(r *http.Request) string {
+	if id := strings.TrimSpace(r.Header.Get(codexTraceHeader)); id != "" {
+		return id
+	}
+	return strings.TrimSpace(r.Header.Get(codexTraceHeaderLegacy))
+}
 
 // claudeUserIDLegacyPattern matches the legacy Claude Code user_id string format:
 // user_<64 hex chars>_account_<uuid>_session_<uuid>
@@ -131,7 +145,7 @@ func deriveClientKind(r *http.Request, cfg config.TraceConfig) string {
 	if isOpenClawRequest(r) {
 		return types.ClientKindOpenClaw
 	}
-	if strings.TrimSpace(r.Header.Get(codexTraceHeader)) != "" {
+	if codexSessionIDFromRequest(r) != "" {
 		return types.ClientKindCodex
 	}
 	return types.ClientKindUnknown
@@ -164,13 +178,14 @@ func extractTraceID(r *http.Request, cfg config.TraceConfig) (string, string) {
 		return id, types.TraceSourceOpenCode
 	}
 
-	// 5. Codex/OpenCode extraction from Session_id header.
-	// OpenCode's codex plugin also sends Session_id, but includes "opencode/"
-	// in the User-Agent. When requests pass through the OpenCode console proxy,
-	// X-Opencode-Session is stripped while Session_id survives, so we
-	// disambiguate here.
+	// 5. Codex/OpenCode extraction from the codex session-id header (both the
+	// modern hyphenated form sent by codex ≥0.135.0 and the underscored
+	// legacy alias). OpenCode's codex plugin also sends this header but
+	// includes "opencode/" in the User-Agent — when requests pass through
+	// the OpenCode console proxy, X-Opencode-Session is stripped while the
+	// codex session-id header survives, so we disambiguate here.
 	if cfg.CodexTraceEnabled {
-		if id := strings.TrimSpace(r.Header.Get(codexTraceHeader)); id != "" {
+		if id := codexSessionIDFromRequest(r); id != "" {
 			if strings.Contains(strings.ToLower(r.Header.Get("User-Agent")), "opencode/") {
 				return id, types.TraceSourceOpenCode
 			}
