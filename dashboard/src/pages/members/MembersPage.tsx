@@ -232,8 +232,8 @@ export function MembersPage() {
             />
             <TooltipContent>
               <div className="space-y-0.5 text-left">
-                {lines.map((m) => (
-                  <div key={m} className="font-mono text-[11px]">{m}</div>
+                {lines.map((name) => (
+                  <div key={name} className="font-mono text-[11px]">{name}</div>
                 ))}
                 {overflow > 0 && (
                   <div className="text-[11px] opacity-70">… +{overflow} more</div>
