@@ -19,15 +19,62 @@ import (
 // Uses -1 as sentinel for "no quota set" since 0 is a valid quota value.
 var quotaCache = ratelimit.NewCreditCache(10 * time.Second)
 
+// deniedModelsCache caches per-user denylist lookups (10s TTL). Stored
+// as a slice of strings keyed by "<projectID>:<userID>". A cached entry
+// whose `models` is nil means "loaded once, no denylist found" — distinct
+// from a cache miss.
+var (
+	deniedModelsCacheMu sync.RWMutex
+	deniedModelsCache   = make(map[string]deniedModelsCacheEntry)
+)
+
+type deniedModelsCacheEntry struct {
+	models    []string // empty/nil slice means "no model denied"
+	expiresAt time.Time
+}
+
+const deniedModelsCacheTTL = 10 * time.Second
+
+func deniedModelsCacheGet(key string) ([]string, bool) {
+	deniedModelsCacheMu.RLock()
+	defer deniedModelsCacheMu.RUnlock()
+	entry, ok := deniedModelsCache[key]
+	if !ok || time.Now().After(entry.expiresAt) {
+		return nil, false
+	}
+	return entry.models, true
+}
+
+func deniedModelsCacheSet(key string, models []string) {
+	deniedModelsCacheMu.Lock()
+	defer deniedModelsCacheMu.Unlock()
+	deniedModelsCache[key] = deniedModelsCacheEntry{
+		models:    models,
+		expiresAt: time.Now().Add(deniedModelsCacheTTL),
+	}
+}
+
+// InvalidateDeniedModelsCache drops any cached denylist for the given
+// project/user pair. The admin PATCH endpoint calls this after writing
+// a new denylist so subsequent requests see the change immediately
+// rather than waiting up to deniedModelsCacheTTL for natural expiry.
+func InvalidateDeniedModelsCache(projectID, userID string) {
+	key := projectID + ":" + userID
+	deniedModelsCacheMu.Lock()
+	defer deniedModelsCacheMu.Unlock()
+	delete(deniedModelsCache, key)
+}
+
 type contextKey string
 
 const (
-	ctxAPIKey       contextKey = "apikey"
-	ctxProject      contextKey = "project"
-	ctxPolicy       contextKey = "policy"
-	ctxSubscription contextKey = "subscription"
-	ctxUserQuotaPct contextKey = "user_quota_pct"
-	ctxOAuthGrantID contextKey = "oauth_grant_id"
+	ctxAPIKey           contextKey = "apikey"
+	ctxProject          contextKey = "project"
+	ctxPolicy           contextKey = "policy"
+	ctxSubscription     contextKey = "subscription"
+	ctxUserQuotaPct     contextKey = "user_quota_pct"
+	ctxUserDeniedModels contextKey = "user_denied_models"
+	ctxOAuthGrantID     contextKey = "oauth_grant_id"
 )
 
 // TokenIntrospectResult holds the result of a token introspection call.
@@ -122,6 +169,16 @@ func SubscriptionFromContext(ctx context.Context) *types.Subscription {
 func UserQuotaPctFromContext(ctx context.Context) *float64 {
 	if p, ok := ctx.Value(ctxUserQuotaPct).(*float64); ok {
 		return p
+	}
+	return nil
+}
+
+// UserDeniedModelsFromContext returns the caller's per-member denylist.
+// Returns nil if no denylist applies (no member row, empty slice, or
+// the context value was never set).
+func UserDeniedModelsFromContext(ctx context.Context) []string {
+	if v, ok := ctx.Value(ctxUserDeniedModels).([]string); ok && len(v) > 0 {
+		return v
 	}
 	return nil
 }
@@ -245,23 +302,50 @@ func AuthMiddleware(st *store.Store, encKey []byte, introspector TokenIntrospect
 				policy = nil
 			}
 
-			// Load per-user credit quota (cached 10s).
+			// Load per-user credit quota + denylist (cached 10s each).
+			// Both share the same project_members row, so a miss on either
+			// triggers a single GetProjectMember call that hydrates both.
 			var userQuotaPct *float64
-			quotaCacheKey := project.ID + ":" + apiKey.CreatedBy
-			if cached, ok := quotaCache.Get(quotaCacheKey); ok {
-				if cached >= 0 { // -1 sentinel = no quota
-					v := cached
-					userQuotaPct = &v
-				}
-			} else {
+			var userDeniedModels []string
+
+			memberCacheKey := project.ID + ":" + apiKey.CreatedBy
+			quotaCached, quotaHit := quotaCache.Get(memberCacheKey)
+			deniedCached, deniedHit := deniedModelsCacheGet(memberCacheKey)
+
+			if quotaHit && quotaCached >= 0 {
+				v := quotaCached
+				userQuotaPct = &v
+			}
+			if deniedHit {
+				userDeniedModels = deniedCached
+			}
+
+			if !quotaHit || !deniedHit {
 				member, memberErr := st.GetProjectMember(project.ID, apiKey.CreatedBy)
 				if memberErr != nil {
-					// Fail open: proceed without quota enforcement.
-				} else if member != nil && member.CreditQuotaPct != nil {
-					userQuotaPct = member.CreditQuotaPct
-					quotaCache.Set(quotaCacheKey, *member.CreditQuotaPct)
+					// Fail open for BOTH quota and denylist on transient
+					// DB errors — never lock everyone out of every model.
+				} else if member != nil {
+					if !quotaHit {
+						if member.CreditQuotaPct != nil {
+							userQuotaPct = member.CreditQuotaPct
+							quotaCache.Set(memberCacheKey, *member.CreditQuotaPct)
+						} else {
+							quotaCache.Set(memberCacheKey, -1) // sentinel: no quota
+						}
+					}
+					if !deniedHit {
+						userDeniedModels = member.DeniedModels
+						deniedModelsCacheSet(memberCacheKey, member.DeniedModels)
+					}
 				} else {
-					quotaCache.Set(quotaCacheKey, -1) // sentinel: no quota
+					// member == nil (API key outlived membership).
+					if !quotaHit {
+						quotaCache.Set(memberCacheKey, -1)
+					}
+					if !deniedHit {
+						deniedModelsCacheSet(memberCacheKey, nil)
+					}
 				}
 			}
 
@@ -277,6 +361,9 @@ func AuthMiddleware(st *store.Store, encKey []byte, introspector TokenIntrospect
 			}
 			if userQuotaPct != nil {
 				ctx = context.WithValue(ctx, ctxUserQuotaPct, userQuotaPct)
+			}
+			if len(userDeniedModels) > 0 {
+				ctx = context.WithValue(ctx, ctxUserDeniedModels, userDeniedModels)
 			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -356,24 +443,47 @@ func handleTokenIntrospectionAuth(w http.ResponseWriter, r *http.Request, next h
 		policy = nil
 	}
 
-	// Load per-user credit quota (cached 10s).
+	// Load per-user credit quota + denylist (cached 10s each), shared
+	// with the API-key path. fail-open semantics identical.
 	var userQuotaPct *float64
+	var userDeniedModels []string
 	if userID != "" {
-		quotaCacheKey := project.ID + ":" + userID
-		if cached, ok := quotaCache.Get(quotaCacheKey); ok {
-			if cached >= 0 {
-				v := cached
-				userQuotaPct = &v
-			}
-		} else {
+		memberCacheKey := project.ID + ":" + userID
+		quotaCached, quotaHit := quotaCache.Get(memberCacheKey)
+		deniedCached, deniedHit := deniedModelsCacheGet(memberCacheKey)
+
+		if quotaHit && quotaCached >= 0 {
+			v := quotaCached
+			userQuotaPct = &v
+		}
+		if deniedHit {
+			userDeniedModels = deniedCached
+		}
+
+		if !quotaHit || !deniedHit {
 			member, memberErr := st.GetProjectMember(project.ID, userID)
 			if memberErr != nil {
 				// Fail open.
-			} else if member != nil && member.CreditQuotaPct != nil {
-				userQuotaPct = member.CreditQuotaPct
-				quotaCache.Set(quotaCacheKey, *member.CreditQuotaPct)
+			} else if member != nil {
+				if !quotaHit {
+					if member.CreditQuotaPct != nil {
+						userQuotaPct = member.CreditQuotaPct
+						quotaCache.Set(memberCacheKey, *member.CreditQuotaPct)
+					} else {
+						quotaCache.Set(memberCacheKey, -1)
+					}
+				}
+				if !deniedHit {
+					userDeniedModels = member.DeniedModels
+					deniedModelsCacheSet(memberCacheKey, member.DeniedModels)
+				}
 			} else {
-				quotaCache.Set(quotaCacheKey, -1)
+				if !quotaHit {
+					quotaCache.Set(memberCacheKey, -1)
+				}
+				if !deniedHit {
+					deniedModelsCacheSet(memberCacheKey, nil)
+				}
 			}
 		}
 	}
@@ -397,6 +507,9 @@ func handleTokenIntrospectionAuth(w http.ResponseWriter, r *http.Request, next h
 	}
 	if userQuotaPct != nil {
 		ctx = context.WithValue(ctx, ctxUserQuotaPct, userQuotaPct)
+	}
+	if len(userDeniedModels) > 0 {
+		ctx = context.WithValue(ctx, ctxUserDeniedModels, userDeniedModels)
 	}
 	if oauthGrantID != "" {
 		ctx = context.WithValue(ctx, ctxOAuthGrantID, oauthGrantID)

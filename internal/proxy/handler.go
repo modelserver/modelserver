@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -67,6 +68,35 @@ func (h *Handler) resolveModel(w http.ResponseWriter, rawModel, ingress string) 
 		return "", false
 	}
 	return m.Name, true
+}
+
+// checkModelAllowed enforces, in order:
+//  1. the member-level denied_models (project administrator policy)
+//  2. the api_key.allowed_models (per-key customization)
+//
+// The denylist is checked FIRST per the design (spec §"Check order and
+// error messages"): it's the harder, project-wide constraint, so when
+// both would reject, the denylist message names the right layer.
+//
+// On rejection, writeErr writes a 403 with the appropriate envelope
+// (writeProxyError for OpenAI/Anthropic; writeGeminiError for Gemini).
+// Returns false on rejection so the caller can `return`.
+func (h *Handler) checkModelAllowed(
+	w http.ResponseWriter,
+	ctx context.Context,
+	apiKey *types.APIKey,
+	canonical string,
+	writeErr func(http.ResponseWriter, int, string),
+) bool {
+	if denied := UserDeniedModelsFromContext(ctx); len(denied) > 0 && modelInList(denied, canonical) {
+		writeErr(w, http.StatusForbidden, "model denied for this member by project policy")
+		return false
+	}
+	if len(apiKey.AllowedModels) > 0 && !modelInList(apiKey.AllowedModels, canonical) {
+		writeErr(w, http.StatusForbidden, "model not allowed for this API key")
+		return false
+	}
+	return true
 }
 
 // HandleMessages proxies Anthropic /v1/messages (stream + non-stream).
@@ -151,8 +181,7 @@ func (h *Handler) handleImagesEditsMultipart(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if len(apiKey.AllowedModels) > 0 && !modelInList(apiKey.AllowedModels, canonical) {
-		writeProxyError(w, http.StatusForbidden, "model not allowed for this API key")
+	if !h.checkModelAllowed(w, r.Context(), apiKey, canonical, writeProxyError) {
 		return
 	}
 
@@ -284,8 +313,7 @@ func (h *Handler) HandleGemini(w http.ResponseWriter, r *http.Request) {
 	}
 	model = canonical
 
-	if len(apiKey.AllowedModels) > 0 && !modelInList(apiKey.AllowedModels, canonical) {
-		writeGeminiError(w, http.StatusForbidden, "model not allowed for this API key")
+	if !h.checkModelAllowed(w, r.Context(), apiKey, canonical, writeGeminiError) {
 		return
 	}
 
@@ -383,8 +411,7 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, ing
 		reqShape.Model = canonical
 	}
 
-	if len(apiKey.AllowedModels) > 0 && !modelInList(apiKey.AllowedModels, canonical) {
-		writeProxyError(w, http.StatusForbidden, "model not allowed for this API key")
+	if !h.checkModelAllowed(w, r.Context(), apiKey, canonical, writeProxyError) {
 		return
 	}
 
@@ -500,8 +527,7 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 		reqShape.Model = canonical
 	}
 
-	if len(apiKey.AllowedModels) > 0 && !modelInList(apiKey.AllowedModels, canonical) {
-		writeProxyError(w, http.StatusForbidden, "model not allowed for this API key")
+	if !h.checkModelAllowed(w, r.Context(), apiKey, canonical, writeProxyError) {
 		return
 	}
 

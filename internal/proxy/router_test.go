@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -211,5 +212,132 @@ func TestMountRoutes_ResponsesCompactIsRegistered(t *testing.T) {
 	}
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d before auth", w.Code, http.StatusUnauthorized)
+	}
+}
+
+// TestHandleListModels_DenylistSubtract ensures the /v1/models output
+// has the per-member denylist subtracted, regardless of whether the
+// caller's api_key has an allowlist.
+func TestHandleListModels_DenylistSubtract(t *testing.T) {
+	cat := newTestCatalog()
+	h := &Handler{catalog: cat}
+
+	cases := []struct {
+		name    string
+		allowed []string
+		denied  []string
+		want    []string
+	}{
+		{
+			name:    "allowlist intersected with denylist",
+			allowed: []string{"gpt-5", "claude-opus-4-7"},
+			denied:  []string{"claude-opus-4-7"},
+			want:    []string{"gpt-5"},
+		},
+		{
+			name:    "empty denylist = unchanged",
+			allowed: []string{"gpt-5", "claude-opus-4-7"},
+			denied:  nil,
+			want:    []string{"gpt-5", "claude-opus-4-7"},
+		},
+		{
+			name:    "denylist removes all entries from allowlist",
+			allowed: []string{"gpt-5"},
+			denied:  []string{"gpt-5"},
+			want:    []string{},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/v1/models", nil)
+			ctx := context.WithValue(req.Context(), ctxAPIKey, &types.APIKey{
+				AllowedModels: tc.allowed,
+			})
+			if len(tc.denied) > 0 {
+				ctx = context.WithValue(ctx, ctxUserDeniedModels, tc.denied)
+			}
+			req = req.WithContext(ctx)
+
+			rec := httptest.NewRecorder()
+			h.HandleListModels(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			var resp struct {
+				Data []struct {
+					ID string `json:"id"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			got := make([]string, 0, len(resp.Data))
+			for _, d := range resp.Data {
+				got = append(got, d.ID)
+			}
+			if !equalListModelsStringSet(got, tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func equalListModelsStringSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	m := make(map[string]int, len(a))
+	for _, s := range a {
+		m[s]++
+	}
+	for _, s := range b {
+		m[s]--
+		if m[s] < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// TestSubtractStrings exercises the pure helper that HandleListModels
+// applies to the source model list. The helper runs unconditionally on
+// both branches of HandleListModels (allowlist-derived names AND
+// router.ActiveModels()-derived names), so direct unit coverage here
+// substitutes for setting up a full Router fixture in the table-driven
+// HandleListModels test above.
+func TestSubtractStrings(t *testing.T) {
+	cases := []struct {
+		name string
+		a    []string
+		b    []string
+		want []string
+	}{
+		{"empty_b_returns_a", []string{"x", "y"}, nil, []string{"x", "y"}},
+		{"empty_a_returns_empty", nil, []string{"x"}, []string{}},
+		{"remove_one", []string{"a", "b", "c"}, []string{"b"}, []string{"a", "c"}},
+		{"remove_all", []string{"a", "b"}, []string{"a", "b"}, []string{}},
+		{"preserves_order", []string{"z", "a", "m"}, []string{"a"}, []string{"z", "m"}},
+		{"no_match_returns_a", []string{"a"}, []string{"x", "y"}, []string{"a"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := subtractStrings(c.a, c.b)
+			if !equalListModelsStringSet(got, c.want) {
+				t.Fatalf("got %v, want %v", got, c.want)
+			}
+			// For order-preservation cases, also check exact slice ordering.
+			if c.name == "preserves_order" || c.name == "remove_one" || c.name == "no_match_returns_a" {
+				if len(got) != len(c.want) {
+					t.Fatalf("len got %d, want %d", len(got), len(c.want))
+				}
+				for i := range got {
+					if got[i] != c.want[i] {
+						t.Fatalf("at %d: got %q, want %q", i, got[i], c.want[i])
+					}
+				}
+			}
+		})
 	}
 }

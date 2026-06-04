@@ -45,6 +45,7 @@ type ProjectMember struct {
 	ProjectID      string    `json:"project_id"`
 	Role           string    `json:"role"`
 	CreditQuotaPct *float64  `json:"credit_quota_percent"` // nil = no limit (effective 100%)
+	DeniedModels   []string  `json:"denied_models"`         // empty = no model denied
 	CreatedAt      time.Time `json:"created_at"`
 
 	// User is populated when the record is fetched with a join.

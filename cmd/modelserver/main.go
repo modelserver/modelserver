@@ -276,6 +276,11 @@ func main() {
 	// Mount admin API routes.
 	admin.MountRoutes(adminRouter, st, cfg, encryptionKey, jwtMgr, catalog, httpLogger)
 
+	// Wire admin → proxy denylist-cache invalidation. PATCH /members/{id}
+	// drops the per-user cache entry so updates take effect immediately
+	// instead of after the 10s TTL.
+	admin.SetDeniedModelsCacheInvalidator(proxy.InvalidateDeniedModelsCache)
+
 	adminServer := &http.Server{
 		Addr:    cfg.Server.AdminAddr,
 		Handler: adminRouter,

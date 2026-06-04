@@ -13,6 +13,20 @@ import (
 	"github.com/modelserver/modelserver/internal/types"
 )
 
+// proxyInvalidateDeniedModelsCache is set during init() to the proxy
+// package's cache-invalidation function. Indirected as a function
+// variable to avoid an admin→proxy import cycle.
+var proxyInvalidateDeniedModelsCache = func(projectID, userID string) {}
+
+// SetDeniedModelsCacheInvalidator wires the proxy's cache-invalidation
+// function so admin handlers can drop stale denylist entries after a
+// successful PATCH. Defaults to a no-op until called.
+func SetDeniedModelsCacheInvalidator(fn func(projectID, userID string)) {
+	if fn != nil {
+		proxyInvalidateDeniedModelsCache = fn
+	}
+}
+
 func handleListProjects(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user := UserFromContext(r.Context())
@@ -456,7 +470,7 @@ func handleAddMember(st *store.Store) http.HandlerFunc {
 		// Set quota if provided.
 		if body.CreditQuotaPct != nil {
 			quotaPtr := &body.CreditQuotaPct
-			if err := st.UpdateProjectMember(projectID, userID, nil, quotaPtr); err != nil {
+			if err := st.UpdateProjectMember(projectID, userID, nil, quotaPtr, nil); err != nil {
 				writeError(w, http.StatusInternalServerError, "internal", "failed to set member quota")
 				return
 			}
@@ -475,9 +489,10 @@ func handleUpdateMember(st *store.Store) http.HandlerFunc {
 		userID := chi.URLParam(r, "userID")
 
 		var body struct {
-			Role           *string  `json:"role"`
-			CreditQuotaPct *float64 `json:"credit_quota_percent"`
-			ClearQuota     bool     `json:"clear_quota"`
+			Role           *string   `json:"role"`
+			CreditQuotaPct *float64  `json:"credit_quota_percent"`
+			ClearQuota     bool      `json:"clear_quota"`
+			DeniedModels   *[]string `json:"denied_models"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
@@ -485,8 +500,9 @@ func handleUpdateMember(st *store.Store) http.HandlerFunc {
 		}
 
 		// At least one field must be provided.
-		if body.Role == nil && body.CreditQuotaPct == nil && !body.ClearQuota {
-			writeError(w, http.StatusBadRequest, "bad_request", "at least one of role, credit_quota_percent, or clear_quota must be provided")
+		if body.Role == nil && body.CreditQuotaPct == nil && !body.ClearQuota && body.DeniedModels == nil {
+			writeError(w, http.StatusBadRequest, "bad_request",
+				"at least one of role, credit_quota_percent, clear_quota, or denied_models must be provided")
 			return
 		}
 
@@ -494,6 +510,20 @@ func handleUpdateMember(st *store.Store) http.HandlerFunc {
 		if body.CreditQuotaPct != nil && (*body.CreditQuotaPct < 0 || *body.CreditQuotaPct > 100) {
 			writeError(w, http.StatusBadRequest, "bad_request", "credit_quota_percent must be between 0 and 100")
 			return
+		}
+
+		// Normalize denied_models: trim, drop empties, dedupe in input order.
+		// Hard cap of 256 entries after normalization. No catalog existence
+		// check — storing names not in the catalog is a documented no-op
+		// (spec §Non-goals).
+		if body.DeniedModels != nil {
+			cleaned, ok := normalizeDeniedModels(*body.DeniedModels)
+			if !ok {
+				writeError(w, http.StatusBadRequest, "bad_request",
+					"denied_models has too many entries (max 256)")
+				return
+			}
+			body.DeniedModels = &cleaned
 		}
 
 		caller := UserFromContext(r.Context())
@@ -519,6 +549,10 @@ func handleUpdateMember(st *store.Store) http.HandlerFunc {
 		}
 
 		// Maintainers cannot set quota on other maintainers.
+		//
+		// NOTE: this restriction intentionally does NOT extend to denied_models.
+		// Per the design (Q1), any owner or maintainer may configure the
+		// denylist for any member. Do not "mirror" the quota rule here.
 		if callerMember != nil && callerMember.Role == types.RoleMaintainer &&
 			(body.CreditQuotaPct != nil || body.ClearQuota) &&
 			targetMember.Role == types.RoleMaintainer {
@@ -527,23 +561,52 @@ func handleUpdateMember(st *store.Store) http.HandlerFunc {
 		}
 
 		// Build quota pointer argument (**float64).
-		// nil = don't change; &nilPtr = set NULL; &valuePtr = set value.
 		var quotaArg **float64
 		if body.ClearQuota {
 			var nilPtr *float64
 			quotaArg = &nilPtr
 		} else if body.CreditQuotaPct != nil {
-			// body.CreditQuotaPct is *float64; take its address to get **float64.
 			quotaArg = &body.CreditQuotaPct
 		}
 
 		// If promoting to owner, quota is auto-cleared in the store layer.
-		if err := st.UpdateProjectMember(projectID, userID, body.Role, quotaArg); err != nil {
+		if err := st.UpdateProjectMember(projectID, userID, body.Role, quotaArg, body.DeniedModels); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to update member")
 			return
 		}
+
+		// Cache invalidation for the denylist context value (10s TTL).
+		if body.DeniedModels != nil {
+			proxyInvalidateDeniedModelsCache(projectID, userID)
+		}
+
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// normalizeDeniedModels trims whitespace, drops empties, dedupes
+// (preserving first-seen order), and enforces the 256-entry cap.
+// Returns (cleaned, ok). ok=false only on cap overflow.
+const deniedModelsMaxEntries = 256
+
+func normalizeDeniedModels(in []string) ([]string, bool) {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, raw := range in {
+		s := strings.TrimSpace(raw)
+		if s == "" {
+			continue
+		}
+		if _, dup := seen[s]; dup {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	if len(out) > deniedModelsMaxEntries {
+		return nil, false
+	}
+	return out, true
 }
 
 func handleRemoveMember(st *store.Store) http.HandlerFunc {
@@ -704,9 +767,10 @@ func handleMyMembership(st *store.Store) http.HandlerFunc {
 			// Superadmins may not be actual members; return a synthetic owner record.
 			if caller.IsSuperadmin {
 				writeData(w, http.StatusOK, types.ProjectMember{
-					UserID:    caller.ID,
-					ProjectID: projectID,
-					Role:      types.RoleOwner,
+					UserID:       caller.ID,
+					ProjectID:    projectID,
+					Role:         types.RoleOwner,
+					DeniedModels: []string{}, // contract: always an array, never null
 				})
 				return
 			}

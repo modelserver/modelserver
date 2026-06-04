@@ -68,7 +68,9 @@ func MountRoutes(
 
 // HandleListModels returns available models in OpenAI or Anthropic format
 // depending on the auth-header style the client used. Bearer or fallback →
-// OpenAI; x-api-key → Anthropic.
+// OpenAI; x-api-key → Anthropic. The per-member denylist (if any) is
+// subtracted from the result, so a caller never sees a model whose
+// requests will 403 against their own member-level policy.
 func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 	apiKey := APIKeyFromContext(r.Context())
 	if apiKey == nil {
@@ -82,6 +84,9 @@ func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 	} else {
 		names = h.router.ActiveModels()
 	}
+	if denied := UserDeniedModelsFromContext(r.Context()); len(denied) > 0 {
+		names = subtractStrings(names, denied)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -91,6 +96,21 @@ func (h *Handler) HandleListModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeOpenAIModelsList(w, h.catalog, names)
+}
+
+// subtractStrings returns the elements of a that are not present in b,
+// preserving order. b is small (≤256 entries) so linear scan suffices.
+func subtractStrings(a, b []string) []string {
+	if len(b) == 0 {
+		return a
+	}
+	out := make([]string, 0, len(a))
+	for _, s := range a {
+		if !modelInList(b, s) {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 type openaiModel struct {
