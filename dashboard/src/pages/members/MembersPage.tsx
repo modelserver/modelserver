@@ -33,6 +33,12 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import type { ProjectMember, MemberUsage } from "@/api/types";
 import { Plus, MoreHorizontal, Pencil } from "lucide-react";
+import { DeniedModelsDialog } from "./DeniedModelsDialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 const roles = ["owner", "maintainer", "developer"] as const;
 const PER_PAGE = 20;
@@ -56,6 +62,15 @@ export function MembersPage() {
   const [quotaTarget, setQuotaTarget] = useState<ProjectMember | null>(null);
   const [quotaValue, setQuotaValue] = useState<string>("100");
   const [removeQuota, setRemoveQuota] = useState(false);
+
+  // Denied-models dialog state
+  const [showDenied, setShowDenied] = useState(false);
+  const [deniedTarget, setDeniedTarget] = useState<ProjectMember | null>(null);
+
+  function openDeniedDialog(m: ProjectMember) {
+    setDeniedTarget(m);
+    setShowDenied(true);
+  }
 
   const members = data?.data ?? [];
   const meta = data?.meta;
@@ -197,6 +212,40 @@ export function MembersPage() {
       },
     },
     {
+      header: "Denied Models",
+      accessor: (m) => {
+        const denied = m.denied_models ?? [];
+        if (denied.length === 0) {
+          return <span className="text-xs text-muted-foreground">—</span>;
+        }
+        const MAX = 10;
+        const overflow = denied.length - MAX;
+        const lines = denied.slice(0, MAX);
+        return (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span className="cursor-default text-xs tabular-nums text-muted-foreground">
+                  {denied.length} denied
+                </span>
+              }
+            />
+            <TooltipContent>
+              <div className="space-y-0.5 text-left">
+                {lines.map((m) => (
+                  <div key={m} className="font-mono text-[11px]">{m}</div>
+                ))}
+                {overflow > 0 && (
+                  <div className="text-[11px] opacity-70">… +{overflow} more</div>
+                )}
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        );
+      },
+      className: "w-32",
+    },
+    {
       header: "Joined",
       accessor: (m) => new Date(m.created_at).toLocaleDateString(),
     },
@@ -229,6 +278,11 @@ export function MembersPage() {
                   Set Quota
                 </DropdownMenuItem>
               )}
+            {canManageQuota && m.role !== "owner" && (
+              <DropdownMenuItem onClick={() => openDeniedDialog(m)}>
+                Manage Denied Models
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               className="text-destructive-foreground"
               onClick={() => removeMember.mutate(m.user_id)}
@@ -387,6 +441,19 @@ export function MembersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Denied Models Dialog */}
+      {deniedTarget && (
+        <DeniedModelsDialog
+          open={showDenied}
+          onOpenChange={(o) => {
+            setShowDenied(o);
+            if (!o) setDeniedTarget(null);
+          }}
+          projectId={projectId}
+          member={deniedTarget}
+        />
+      )}
     </div>
   );
 }
