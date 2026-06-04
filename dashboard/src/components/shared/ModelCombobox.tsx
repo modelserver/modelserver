@@ -21,6 +21,8 @@ function ComboboxShell({
   disabled,
   triggerLabel,
   renderRows,
+  rows: rowsOverride,
+  isLoadingOverride,
 }: {
   placeholder: string;
   disabled?: boolean;
@@ -32,11 +34,18 @@ function ComboboxShell({
     isLoading: boolean;
     close: () => void;
   }) => React.ReactNode;
+  // When provided, these override the default admin-catalog source.
+  // Use for project-scoped or otherwise pre-fetched lists.
+  rows?: ModelListRow[];
+  isLoadingOverride?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const { data, isLoading } = useModels();
-  const rows = data?.data ?? [];
+  // useModels is always invoked to keep the hook stable across renders,
+  // but its result is discarded when an override is supplied.
+  const adminQuery = useModels();
+  const rows = rowsOverride ?? adminQuery.data?.data ?? [];
+  const isLoading = isLoadingOverride ?? adminQuery.isLoading;
 
   const [active, dimmed] = useMemo(() => {
     const matching = rows.filter((m) => {
@@ -47,8 +56,10 @@ function ComboboxShell({
       return m.aliases?.some((a) => a.toLowerCase().includes(q));
     });
     return [
-      matching.filter((m) => m.status === "active"),
-      matching.filter((m) => m.status !== "active"),
+      // Rows without an explicit status (e.g. project-scoped catalog)
+      // are treated as active so they appear in the top group.
+      matching.filter((m) => m.status === undefined || m.status === "active"),
+      matching.filter((m) => m.status !== undefined && m.status !== "active"),
     ] as const;
   }, [rows, query]);
 
@@ -107,11 +118,17 @@ export function ModelMultiSelect({
   onChange,
   placeholder = "Select models...",
   disabled,
+  rows,
+  isLoadingOverride,
 }: {
   value: string[];
   onChange: (next: string[]) => void;
   placeholder?: string;
   disabled?: boolean;
+  // Optional pre-fetched model list. When omitted, the component
+  // falls back to the admin catalog via useModels().
+  rows?: ModelListRow[];
+  isLoadingOverride?: boolean;
 }) {
   const selected = new Set(value);
 
@@ -149,6 +166,8 @@ export function ModelMultiSelect({
       <ComboboxShell
         placeholder={placeholder}
         disabled={disabled}
+        rows={rows}
+        isLoadingOverride={isLoadingOverride}
         triggerLabel={null}
         renderRows={({ query, active, dimmed }) => (
           <>
