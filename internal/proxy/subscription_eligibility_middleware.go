@@ -70,6 +70,21 @@ func SubscriptionEligibilityMiddleware() func(http.Handler) http.Handler {
 // models. Today that's Anthropic's first-party clients: Claude Code (CLI)
 // and Claude Desktop (Electron app). Third-party tools and unknown clients
 // must take the extra-usage path instead.
+//
+// Security note (acknowledged tradeoff, 2026-06-05): the input `kind` is
+// derived in deriveClientKind from request features the client controls
+// (Claude Code: body.metadata.user_id shape; Claude Desktop: User-Agent
+// substrings). Either branch is therefore spoofable by an attacker who
+// constructs the matching request features, and the subscription gate
+// implemented here is the only thing between such a request and the
+// project's paid subscription. This is accepted because (a) the spoofer
+// already needs valid authenticated credentials for the project, (b) the
+// per-project subscription budget is the spoofer's only reward and is
+// owned by that same authenticated principal, and (c) the alternative —
+// a shared secret or signed header from the Anthropic identity service —
+// is not available to us upstream. If Anthropic later exposes a signed
+// client attestation or distinct API-key class for first-party clients,
+// route the eligibility decision through that instead of UA/body shape.
 func isAnthropicSubscriptionClient(kind string) bool {
 	return kind == types.ClientKindClaudeCode || kind == types.ClientKindClaudeDesktop
 }
