@@ -278,7 +278,13 @@ export function MembersPage() {
                   Set Quota
                 </DropdownMenuItem>
               )}
-            {canManageQuota && m.role !== "owner" && (
+            {/* Denylist is configurable for all roles (owner, maintainer,
+                developer) and self. The backend (spec Q1) deliberately
+                does NOT mirror the maintainer→maintainer quota restriction
+                here — denylist is a project-policy lever, not a credit
+                gate, and owners who lock themselves out can be recovered
+                by another owner. */}
+            {canManageQuota && (
               <DropdownMenuItem onClick={() => openDeniedDialog(m)}>
                 Manage Denied Models
               </DropdownMenuItem>

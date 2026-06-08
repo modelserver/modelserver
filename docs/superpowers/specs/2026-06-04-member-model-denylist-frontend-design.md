@@ -32,8 +32,13 @@ a script. We need a one-click path for owners and maintainers.
   configured for *this* project (`useProjectModels(projectId)`).
 - No `denied_models` field in the "Add Member" Dialog. New members start
   with `[]`; configure via Actions afterward.
-- No edit entry point on owner rows (matches the existing Quota gate).
-  Owners who want to deny themselves a model still can — via API.
+- Self-edit and owner-edit guard rails. Any owner or maintainer can
+  manage the denylist on **any** member — including owners, other
+  maintainers, and themselves. This deliberately diverges from the
+  Quota gate (which blocks owner rows and self-rows) because the
+  backend spec (Q1) treats `denied_models` as a project-policy lever,
+  not a credit gate. Recovery from an owner self-lockout is "another
+  owner clears it."
 - No frontend tests. The dashboard has no test framework today
   (no vitest/jest, no `test` script); we will not add one for this
   feature. Verification is manual (checklist below).
@@ -74,14 +79,19 @@ In the existing `DropdownMenu` per row, add an item below
 </DropdownMenuItem>
 ```
 
-Visibility gate (matches Quota):
+Visibility gate (deliberately wider than Quota):
 ```ts
-canManageQuota && m.role !== "owner"
+canManageQuota
 ```
 
-We deliberately do NOT add a `m.user_id !== currentUser?.id` gate;
-maintainers and owners can configure their own denylist via this UI.
-This is consistent with the backend (Q1 of the backend spec).
+We deliberately do NOT add either an `m.role !== "owner"` gate or an
+`m.user_id !== currentUser?.id` gate. Owners and maintainers can
+configure the denylist on any member — including owners, other
+maintainers, and themselves. This is consistent with the backend
+(Q1 of the backend spec, and the explicit comment at
+`internal/admin/handle_projects.go:553-561` documenting that the
+maintainer→maintainer quota restriction does NOT carry over to
+`denied_models`).
 
 ### Denied Models Dialog
 
@@ -251,8 +261,10 @@ operator runs through these after deployment:
    for any member. Empty-state hint renders; Save is disabled.
 7. Log in as a **developer**. Confirm Actions menu does NOT show
    "Manage Denied Models".
-8. Confirm the row whose `role === "owner"` does NOT show
-   "Manage Denied Models" in its Actions menu either.
+8. As an **owner** or **maintainer**, confirm "Manage Denied Models"
+   IS available on every row — including the owner row, other
+   maintainer rows, and the caller's own row. Apply a denylist to an
+   owner, then to yourself, and verify both round-trip.
 9. End-to-end backend check: with a member denylist set, send a
    request with that model — confirm 403
    `"model denied for this member by project policy"`.
