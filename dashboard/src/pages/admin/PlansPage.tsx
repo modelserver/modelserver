@@ -81,6 +81,28 @@ const DEFAULT_MODEL_CREDIT_RATES: Record<string, CreditRate> = {
       output_multiplier: 1.5,
     },
   },
+  "gpt-5.4-mini": {
+    input_rate: 0.0022,
+    output_rate: 0.0175,
+    cache_creation_rate: 0,
+    cache_read_rate: 0.0002,
+    long_context: {
+      threshold_input_tokens: 272000,
+      input_multiplier: 2,
+      output_multiplier: 1.5,
+    },
+  },
+  "gpt-5.4-nano": {
+    input_rate: 0.0005,
+    output_rate: 0.0035,
+    cache_creation_rate: 0,
+    cache_read_rate: 0.0001,
+    long_context: {
+      threshold_input_tokens: 272000,
+      input_multiplier: 2,
+      output_multiplier: 1.5,
+    },
+  },
   _default: {
     input_rate: 0.4,
     output_rate: 2.0,
