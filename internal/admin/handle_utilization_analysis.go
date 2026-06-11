@@ -53,6 +53,16 @@ var utilizationAnalysisBaseRates = map[string]types.CreditRate{
 		InputMultiplier:      2.0,
 		OutputMultiplier:     1.5,
 	}},
+	"gpt-5.4-mini": {InputRate: 0.0022, OutputRate: 0.0175, CacheCreationRate: 0, CacheReadRate: 0.0002, LongContext: &types.LongContextCreditRate{
+		ThresholdInputTokens: 272000,
+		InputMultiplier:      2.0,
+		OutputMultiplier:     1.5,
+	}},
+	"gpt-5.4-nano": {InputRate: 0.0005, OutputRate: 0.0035, CacheCreationRate: 0, CacheReadRate: 0.0001, LongContext: &types.LongContextCreditRate{
+		ThresholdInputTokens: 272000,
+		InputMultiplier:      2.0,
+		OutputMultiplier:     1.5,
+	}},
 	"gpt-5.4":            {InputRate: 0.333, OutputRate: 2.0, CacheCreationRate: 0, CacheReadRate: 0.033},
 	"gpt-5.3-codex":      {InputRate: 0.233, OutputRate: 1.867, CacheCreationRate: 0, CacheReadRate: 0.023},
 	"codex-auto-review":  {InputRate: 0.233, OutputRate: 1.867, CacheCreationRate: 0, CacheReadRate: 0.023},
