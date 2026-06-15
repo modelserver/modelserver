@@ -89,9 +89,14 @@ export function MembersPage() {
   const currentRole = myMembershipData?.data?.role;
   const canManageQuota = currentRole === "owner" || currentRole === "maintainer";
 
+  // Mirror backend rule: a maintainer cannot create an owner with a quota.
+  // Owners may now set a quota on any role at create time, including owner.
+  const canSetQuotaForRole = (r: string) =>
+    !(currentRole === "maintainer" && r === "owner");
+
   async function handleAdd() {
     const params: { email: string; role: string; credit_quota_percent?: number } = { email, role };
-    if (addQuota !== "" && role !== "owner") {
+    if (addQuota !== "" && canSetQuotaForRole(role)) {
       const parsed = parseFloat(addQuota);
       if (!isNaN(parsed) && parsed >= 0 && parsed <= 100) {
         params.credit_quota_percent = parsed;
@@ -372,7 +377,7 @@ export function MembersPage() {
                 </SelectContent>
               </Select>
             </div>
-            {role !== "owner" && (
+            {canSetQuotaForRole(role) && (
               <div className="space-y-2">
                 <Label htmlFor="add-quota">Credit Quota % (optional)</Label>
                 <Input
