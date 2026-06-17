@@ -70,6 +70,63 @@ func TestGeminiStreamInterceptor(t *testing.T) {
 	}
 }
 
+// TestGeminiStreamInterceptor_DataNoSpace covers SSE streams where `data:`
+// lines omit the optional trailing space (per HTML SSE spec §9.2.6). Same
+// regression as TestStreamInterceptor_DataNoSpace in stream_test.go but
+// for the Google GenAI interceptor — guards against future Gemini-compat
+// upstreams emitting `data:{...}` recording zero usage.
+func TestGeminiStreamInterceptor_DataNoSpace(t *testing.T) {
+	sseData := strings.Join([]string{
+		`data:{"candidates":[{"content":{"parts":[{"text":"Hello"}],"role":"model"}}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":1,"totalTokenCount":11},"modelVersion":"gemini-2.5-flash-001","responseId":"resp-1"}`,
+		``,
+		`data:{"candidates":[{"content":{"parts":[{"text":" world"}],"role":"model"},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"totalTokenCount":15,"cachedContentTokenCount":2,"thoughtsTokenCount":3},"modelVersion":"gemini-2.5-flash-001","responseId":"resp-1"}`,
+		``,
+	}, "\n")
+
+	var gotMetrics StreamMetrics
+	done := make(chan struct{})
+
+	interceptor := newGeminiStreamInterceptor(
+		io.NopCloser(strings.NewReader(sseData)),
+		time.Now(),
+		func(metrics StreamMetrics) {
+			gotMetrics = metrics
+			close(done)
+		},
+	)
+
+	output, err := io.ReadAll(interceptor)
+	if err != nil {
+		t.Fatalf("ReadAll failed: %v", err)
+	}
+	if string(output) != sseData {
+		t.Errorf("output differs from input (pass-through must be byte-exact)")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("onComplete callback not called")
+	}
+
+	if gotMetrics.Model != "gemini-2.5-flash-001" {
+		t.Errorf("Model = %q", gotMetrics.Model)
+	}
+	if gotMetrics.MsgID != "resp-1" {
+		t.Errorf("MsgID = %q", gotMetrics.MsgID)
+	}
+	if gotMetrics.InputTokens != 10 {
+		t.Errorf("InputTokens = %d, want 10", gotMetrics.InputTokens)
+	}
+	// OutputTokens = candidatesTokenCount (5) + thoughtsTokenCount (3) = 8
+	if gotMetrics.OutputTokens != 8 {
+		t.Errorf("OutputTokens = %d, want 8 (5 candidates + 3 thoughts)", gotMetrics.OutputTokens)
+	}
+	if gotMetrics.CacheReadTokens != 2 {
+		t.Errorf("CacheReadTokens = %d, want 2", gotMetrics.CacheReadTokens)
+	}
+}
+
 func TestGeminiStreamInterceptor_EmptyStream(t *testing.T) {
 	var gotMetrics StreamMetrics
 	done := make(chan struct{})

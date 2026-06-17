@@ -81,6 +81,78 @@ func TestOpenAIStreamInterceptor(t *testing.T) {
 	}
 }
 
+// TestOpenAIStreamInterceptor_DataNoSpace covers SSE streams where `data:`
+// lines omit the optional trailing space (per HTML SSE spec §9.2.6). Same
+// regression as TestStreamInterceptor_DataNoSpace in stream_test.go but
+// for the OpenAI Responses API interceptor — guards against future
+// OpenAI-compat upstreams emitting `data:{...}` recording zero usage.
+func TestOpenAIStreamInterceptor_DataNoSpace(t *testing.T) {
+	sseData := strings.Join([]string{
+		`event:response.created`,
+		`data:{"type":"response.created","response":{"id":"resp_001","model":"gpt-5.2","usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}}}}`,
+		``,
+		`event:response.output_text.delta`,
+		`data:{"type":"response.output_text.delta","delta":"Hello"}`,
+		``,
+		`event:response.completed`,
+		`data:{"type":"response.completed","response":{"id":"resp_001","model":"gpt-5.2","usage":{"input_tokens":120,"output_tokens":50,"total_tokens":170,"input_tokens_details":{"cached_tokens":80},"output_tokens_details":{"reasoning_tokens":0}}}}`,
+		``,
+	}, "\n")
+
+	var gotModel, gotRespID string
+	var gotInput, gotOutput, gotCacheRead, gotTTFT int64
+	done := make(chan struct{})
+
+	interceptor := newOpenAIStreamInterceptor(
+		io.NopCloser(strings.NewReader(sseData)),
+		time.Now(),
+		"",
+		func(model, respID string, inputTokens, outputTokens, cacheReadTokens, ttft int64) {
+			gotModel = model
+			gotRespID = respID
+			gotInput = inputTokens
+			gotOutput = outputTokens
+			gotCacheRead = cacheReadTokens
+			gotTTFT = ttft
+			close(done)
+		},
+	)
+
+	output, err := io.ReadAll(interceptor)
+	if err != nil {
+		t.Fatalf("ReadAll failed: %v", err)
+	}
+	if string(output) != sseData {
+		t.Errorf("output differs from input (pass-through must be byte-exact)")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("onComplete callback not called")
+	}
+
+	if gotModel != "gpt-5.2" {
+		t.Errorf("model = %q, want %q", gotModel, "gpt-5.2")
+	}
+	if gotRespID != "resp_001" {
+		t.Errorf("respID = %q, want %q", gotRespID, "resp_001")
+	}
+	// Normalized: 120 - 80 = 40
+	if gotInput != 40 {
+		t.Errorf("inputTokens = %d, want 40", gotInput)
+	}
+	if gotOutput != 50 {
+		t.Errorf("outputTokens = %d, want 50", gotOutput)
+	}
+	if gotCacheRead != 80 {
+		t.Errorf("cacheReadTokens = %d, want 80", gotCacheRead)
+	}
+	if gotTTFT < 0 {
+		t.Errorf("ttft = %d, want >= 0", gotTTFT)
+	}
+}
+
 func TestOpenAIStreamInterceptor_Incomplete(t *testing.T) {
 	sseData := strings.Join([]string{
 		`event: response.created`,
