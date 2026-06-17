@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"math"
 	"testing"
 )
 
@@ -56,7 +57,7 @@ func TestMigration047_CatalogBackfilled(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: query catalog: %v", tc.name, err)
 		}
-		if input != tc.wantInput || output != tc.wantOutput || cacheRead != tc.wantCacheRead {
+		if math.Abs(input-tc.wantInput) > 1e-9 || math.Abs(output-tc.wantOutput) > 1e-9 || math.Abs(cacheRead-tc.wantCacheRead) > 1e-9 {
 			t.Fatalf("%s catalog: input=%v output=%v cache_read=%v; want %v/%v/%v",
 				tc.name, input, output, cacheRead, tc.wantInput, tc.wantOutput, tc.wantCacheRead)
 		}
@@ -93,7 +94,7 @@ func TestMigration047_PlansRebased(t *testing.T) {
 		if err != nil {
 			t.Fatalf("pro plan %s query: %v", name, err)
 		}
-		if input != want.Input || output != want.Output || cacheRead != want.CacheRead {
+		if math.Abs(input-want.Input) > 1e-9 || math.Abs(output-want.Output) > 1e-9 || math.Abs(cacheRead-want.CacheRead) > 1e-9 {
 			t.Fatalf("pro plan %s: input=%v output=%v cache_read=%v; want %v/%v/%v",
 				name, input, output, cacheRead, want.Input, want.Output, want.CacheRead)
 		}
@@ -126,6 +127,12 @@ func TestMigration047_PoliciesRebased(t *testing.T) {
 		t.Skip("no rate_limit_policies rows to verify (fresh install)")
 	}
 
+	// Pick a single policy row to spot-check rates on.
+	var policyName string
+	if err := st.pool.QueryRow(ctx, `SELECT name FROM rate_limit_policies LIMIT 1`).Scan(&policyName); err != nil {
+		t.Fatalf("pick a policy: %v", err)
+	}
+
 	for name, want := range migration047PlanRates {
 		var missing int
 		if err := st.pool.QueryRow(ctx, `
@@ -136,7 +143,34 @@ func TestMigration047_PoliciesRebased(t *testing.T) {
 		if missing != 0 {
 			t.Fatalf("%d polic(y/ies) missing %s after migration 047", missing, name)
 		}
-		_ = want // shape parity with plans test
+
+		// Spot-check rates on the sampled policy.
+		var input, output, cacheRead float64
+		err := st.pool.QueryRow(ctx, `
+			SELECT
+			  (model_credit_rates->$1->>'input_rate')::float8,
+			  (model_credit_rates->$1->>'output_rate')::float8,
+			  (model_credit_rates->$1->>'cache_read_rate')::float8
+			FROM rate_limit_policies WHERE name = $2`, name, policyName).
+			Scan(&input, &output, &cacheRead)
+		if err != nil {
+			t.Fatalf("policy %s rate query: %v", name, err)
+		}
+		if math.Abs(input-want.Input) > 1e-9 || math.Abs(output-want.Output) > 1e-9 || math.Abs(cacheRead-want.CacheRead) > 1e-9 {
+			t.Fatalf("policy %s rates: input=%v output=%v cache_read=%v; want %v/%v/%v",
+				name, input, output, cacheRead, want.Input, want.Output, want.CacheRead)
+		}
+
+		// Check long_context presence.
+		var hasLC bool
+		if err := st.pool.QueryRow(ctx, `
+			SELECT model_credit_rates->$1 ? 'long_context' FROM rate_limit_policies WHERE name = $2`, name, policyName).
+			Scan(&hasLC); err != nil {
+			t.Fatalf("policy %s long_context check: %v", name, err)
+		}
+		if hasLC != want.HasLongContext {
+			t.Fatalf("policy %s long_context present = %v, want %v", name, hasLC, want.HasLongContext)
+		}
 	}
 }
 
@@ -157,7 +191,7 @@ func TestMigration047_DoesNotTouchNonGPT(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query pro plan claude-opus-4-7: %v", err)
 	}
-	if input != 0.667 || output != 3.333 {
+	if math.Abs(input-0.667) > 1e-9 || math.Abs(output-3.333) > 1e-9 {
 		t.Fatalf("pro plan claude-opus-4-7 changed: input=%v output=%v; want 0.667/3.333", input, output)
 	}
 
@@ -172,7 +206,7 @@ func TestMigration047_DoesNotTouchNonGPT(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query pro plan _default: %v", err)
 	}
-	if defInput != 0.4 || defOutput != 2.0 {
+	if math.Abs(defInput-0.4) > 1e-9 || math.Abs(defOutput-2.0) > 1e-9 {
 		t.Fatalf("pro plan _default changed: input=%v output=%v; want 0.4/2.0", defInput, defOutput)
 	}
 }

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"math"
 	"testing"
 )
 
@@ -28,7 +29,7 @@ func TestMigration046_CatalogRowPresent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query catalog glm-5.2: %v", err)
 	}
-	if input != 0.187 || output != 0.587 || cacheCreate != 0 || cacheRead != 0.035 {
+	if math.Abs(input-0.187) > 1e-9 || math.Abs(output-0.587) > 1e-9 || math.Abs(cacheCreate-0) > 1e-9 || math.Abs(cacheRead-0.035) > 1e-9 {
 		t.Fatalf("glm-5.2 catalog rates: input=%v output=%v cache_creation=%v cache_read=%v; want 0.187/0.587/0/0.035",
 			input, output, cacheCreate, cacheRead)
 	}
@@ -80,7 +81,7 @@ func TestMigration046_PlansSeeded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query pro plan glm-5.2: %v", err)
 	}
-	if input != 0.0187 || output != 0.0587 || cacheCreate != 0 || cacheRead != 0.0035 {
+	if math.Abs(input-0.0187) > 1e-9 || math.Abs(output-0.0587) > 1e-9 || math.Abs(cacheCreate-0) > 1e-9 || math.Abs(cacheRead-0.0035) > 1e-9 {
 		t.Fatalf("pro plan glm-5.2 rates: input=%v output=%v cache_creation=%v cache_read=%v; want 0.0187/0.0587/0/0.0035",
 			input, output, cacheCreate, cacheRead)
 	}

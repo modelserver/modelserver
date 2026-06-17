@@ -4,7 +4,7 @@
 -- same time backfill the 6 NULL catalog rows for legacy gpt-5.1 / gpt-5.2
 -- variants. After this migration, every gpt-5.x plan entry can be
 -- re-derived from its catalog row by multiplying by 0.1 — replacing the
--- mix of three previous calibration eras (0.066, 1.0, 0.132, gpt-5.5-pin).
+-- mix of four previous calibration eras (0.066, 1.0, 0.132, gpt-5.5-pin).
 --
 -- See docs/superpowers/specs/2026-06-17-gpt-plan-rebase-design.md for
 -- full rationale, burn-rate impact analysis, and risks.
