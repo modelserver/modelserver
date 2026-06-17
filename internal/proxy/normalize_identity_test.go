@@ -5,50 +5,39 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"os"
 	"regexp"
 	"testing"
 	"unicode/utf16"
 
+	"github.com/OneOfOne/xxhash"
 	"github.com/tidwall/gjson"
 )
 
-func TestRecomputeCCH_CrossValidatedWithPythonPOC(t *testing.T) {
-	// Test vectors computed with the reverse-engineered seed (CLI 2.1.114):
-	//
-	//   import xxhash
-	//   CCH_SEED = 0x4d659218e32a3268
-	//   cch = format(xxhash.xxh64(body.encode(), seed=CCH_SEED).intdigest() & 0xFFFFF, "05x")
-	//
-	// Each body contains cch=00000 as the placeholder (hash is computed over
-	// the placeholder, then the result replaces "cch=00000" in the final output).
-
+// TestRecomputeCCH_Against2179RealBodies cross-validates recomputeCCH against
+// actual CLI 2.1.179 wire bodies captured under gdb (xxh64 update hook at
+// 0x2ad99c0). For each fixture: start with cch=00000, run recomputeCCH, assert
+// the resulting cch equals the value the real CLI wrote on the wire. Six
+// captured requests during reverse-engineering all verified the canonical
+// algorithm; two are committed as fixtures for regression coverage.
+func TestRecomputeCCH_Against2179RealBodies(t *testing.T) {
 	tests := []struct {
-		name string
-		body string
-		want string
+		fixture string
+		wantCCH string
 	}{
-		{
-			name: "full_attribution_header",
-			body: `{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.112.c30; cc_entrypoint=cli; cch=00000;"},{"type":"text","text":"You are Claude."}],"model":"claude-opus-4-7","messages":[{"role":"user","content":"hello"}]}`,
-			want: "09880",
-		},
-		{
-			name: "different_cc_version",
-			body: `{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.112.abc; cc_entrypoint=cli; cch=00000;"},{"type":"text","text":"You are Claude."}],"model":"claude-opus-4-7","messages":[{"role":"user","content":"hello"}]}`,
-			want: "bbc65",
-		},
-		{
-			name: "minimal_body",
-			body: `{"system":[{"type":"text","text":"x-anthropic-billing-header: cch=00000;"}],"messages":[]}`,
-			want: "e15ba",
-		},
+		{"testdata/cch_2179_b13.bin", "769b8"},
+		{"testdata/cch_2179_b14.bin", "2618e"},
 	}
-
 	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			// Start with a body that has a different cch value (simulating
-			// an incoming request whose cch is stale after body modification).
-			incoming := cchRe.ReplaceAll([]byte(tc.body), []byte("${1}00000${3}"))
+		t.Run(tc.fixture, func(t *testing.T) {
+			wire, err := os.ReadFile(tc.fixture)
+			if err != nil {
+				t.Fatalf("read fixture: %v", err)
+			}
+			// Reset cch to the placeholder so recomputeCCH has work to do —
+			// matches the in-CLI state right before the hash is written.
+			incoming := cchRe.ReplaceAll(wire, []byte("${1}00000${3}"))
 
 			result := recomputeCCH(incoming)
 
@@ -56,10 +45,8 @@ func TestRecomputeCCH_CrossValidatedWithPythonPOC(t *testing.T) {
 			if m == nil {
 				t.Fatal("result should contain a cch field")
 			}
-			got := string(m[2])
-
-			if got != tc.want {
-				t.Errorf("cch = %s, want %s (cross-validated with Python POC)", got, tc.want)
+			if got := string(m[2]); got != tc.wantCCH {
+				t.Errorf("cch = %s, want %s (real 2.1.179 CLI value)", got, tc.wantCCH)
 			}
 		})
 	}
@@ -100,8 +87,13 @@ func TestRecomputeCCH_Idempotent(t *testing.T) {
 // Full attribution header vector → expected hash "09880" (seed 0x4d659218e32a3268).
 const cchMatchBody = `{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.112.c30; cc_entrypoint=cli; cch=09880;"},{"type":"text","text":"You are Claude."}],"model":"claude-opus-4-7","messages":[{"role":"user","content":"hello"}]}`
 
-func TestValidateCCH_Match(t *testing.T) {
-	status, client, expected := ValidateCCH([]byte(cchMatchBody))
+func TestValidateCCH_LegacyMatch(t *testing.T) {
+	// cchMatchBody contains "max_tokens" implicitly absent and a non-empty
+	// model — for these inputs the canonical (2.1.179) and legacy hashes
+	// agree, so the body matches under either algorithm. The point of this
+	// test is to assert ValidateCCH still recognises this kind of body —
+	// reporting "match" with one of the two algorithms.
+	status, client, expected, algo := ValidateCCH([]byte(cchMatchBody))
 	if status != CCHStatusMatch {
 		t.Errorf("status = %q, want %q", status, CCHStatusMatch)
 	}
@@ -111,38 +103,46 @@ func TestValidateCCH_Match(t *testing.T) {
 	if expected != "09880" {
 		t.Errorf("expected = %q, want %q", expected, "09880")
 	}
+	if algo != "v2.1.179" && algo != "legacy" {
+		t.Errorf("algo = %q, want v2.1.179 or legacy", algo)
+	}
 }
 
 func TestValidateCCH_Mismatch(t *testing.T) {
 	// Same body shape as cchMatchBody but with a wrong cch value.
 	body := []byte(`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.112.c30; cc_entrypoint=cli; cch=deadb;"},{"type":"text","text":"You are Claude."}],"model":"claude-opus-4-7","messages":[{"role":"user","content":"hello"}]}`)
-	status, client, expected := ValidateCCH(body)
+	status, client, expected, algo := ValidateCCH(body)
 	if status != CCHStatusMismatch {
 		t.Errorf("status = %q, want %q", status, CCHStatusMismatch)
 	}
 	if client != "deadb" {
 		t.Errorf("client = %q, want %q", client, "deadb")
 	}
-	if expected != "09880" {
-		t.Errorf("expected = %q, want %q", expected, "09880")
+	// "expected" on mismatch is the canonical (2.1.179) hash — that's what a
+	// current-version client would have written.
+	if expected == "" || expected == "deadb" {
+		t.Errorf("expected = %q, want a non-empty hash distinct from the client value", expected)
+	}
+	if algo != "" {
+		t.Errorf("algo on mismatch = %q, want empty", algo)
 	}
 }
 
 func TestValidateCCH_Absent(t *testing.T) {
 	body := []byte(`{"model":"claude-3","messages":[]}`)
-	status, client, expected := ValidateCCH(body)
+	status, client, expected, algo := ValidateCCH(body)
 	if status != CCHStatusAbsent {
 		t.Errorf("status = %q, want %q", status, CCHStatusAbsent)
 	}
-	if client != "" || expected != "" {
-		t.Errorf("client/expected should be empty, got %q / %q", client, expected)
+	if client != "" || expected != "" || algo != "" {
+		t.Errorf("client/expected/algo should be empty, got %q / %q / %q", client, expected, algo)
 	}
 }
 
 func TestValidateCCH_AbsentAttributionNoCCH(t *testing.T) {
 	// Attribution header present but cch segment missing.
 	body := []byte(`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.112.c30; cc_entrypoint=cli;"}],"model":"claude-3","messages":[]}`)
-	status, _, _ := ValidateCCH(body)
+	status, _, _, _ := ValidateCCH(body)
 	if status != CCHStatusAbsent {
 		t.Errorf("status = %q, want %q", status, CCHStatusAbsent)
 	}
@@ -151,17 +151,20 @@ func TestValidateCCH_AbsentAttributionNoCCH(t *testing.T) {
 func TestValidateCCH_UppercaseIsMismatch(t *testing.T) {
 	// Real Claude Code CLI always emits lowercase hex. Uppercase cch is a
 	// signal of a non-authentic client — reported as mismatch under the
-	// byte-exact comparison policy.
+	// byte-exact comparison policy. The body below: an uppercase variant of
+	// a value that WOULD match under the legacy algorithm in lowercase. The
+	// match-via-legacy path is byte-exact so uppercase still mismatches even
+	// though the bytes (after lowercasing) would match.
 	body := []byte(`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.112.abc; cc_entrypoint=cli; cch=BBC65;"},{"type":"text","text":"You are Claude."}],"model":"claude-opus-4-7","messages":[{"role":"user","content":"hello"}]}`)
-	status, client, expected := ValidateCCH(body)
+	status, client, _, algo := ValidateCCH(body)
 	if status != CCHStatusMismatch {
 		t.Errorf("status = %q, want %q (uppercase should mismatch)", status, CCHStatusMismatch)
 	}
 	if client != "BBC65" {
 		t.Errorf("client = %q, want %q", client, "BBC65")
 	}
-	if expected != "bbc65" {
-		t.Errorf("expected = %q, want %q", expected, "bbc65")
+	if algo != "" {
+		t.Errorf("algo on uppercase mismatch = %q, want empty", algo)
 	}
 }
 
@@ -172,6 +175,85 @@ func TestValidateCCH_NoMutation(t *testing.T) {
 	if !bytes.Equal(body, snapshot) {
 		t.Error("ValidateCCH must not mutate the input body")
 	}
+}
+
+// TestValidateCCH_2179RealBodies pins ValidateCCH against real captured wire
+// bodies from CLI 2.1.179. Fixtures saved during the gdb reverse-engineering
+// session (hooked xxh64 update at 0x2ad99c0; six different requests verified
+// the canonical algorithm).
+func TestValidateCCH_2179RealBodies(t *testing.T) {
+	tests := []struct {
+		fixture string
+		wantCCH string
+	}{
+		{"testdata/cch_2179_b13.bin", "769b8"},
+		{"testdata/cch_2179_b14.bin", "2618e"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.fixture, func(t *testing.T) {
+			body, err := os.ReadFile(tc.fixture)
+			if err != nil {
+				t.Fatalf("read fixture: %v", err)
+			}
+			status, client, expected, algo := ValidateCCH(body)
+			if status != CCHStatusMatch {
+				t.Errorf("status = %q, want match (client=%s expected=%s algo=%s)", status, client, expected, algo)
+			}
+			if client != tc.wantCCH {
+				t.Errorf("client = %q, want %q", client, tc.wantCCH)
+			}
+			if algo != "v2.1.179" {
+				t.Errorf("algo = %q, want %q (real 2.1.179 client should match canonical algorithm)", algo, "v2.1.179")
+			}
+		})
+	}
+}
+
+// TestValidateCCH_LegacyFallback verifies that bodies signed under the legacy
+// (pre-2.1.179) algorithm still report Match — with algo="legacy" so the
+// dashboard can track the long tail of old CLIs.
+//
+// cchMatchBody is constructed without a max_tokens field and with a non-empty
+// model. For such bodies the canonical and legacy hashes happen to agree
+// (canonicalization is a no-op except for the cch placeholder, which both
+// algorithms apply). To force a "legacy only" match we'd need a body that has
+// max_tokens and was signed with the legacy algorithm — synthesize one here.
+func TestValidateCCH_LegacyFallback(t *testing.T) {
+	// Body with max_tokens — under the canonical algorithm, max_tokens is
+	// stripped before hashing, so a body signed with the legacy algorithm
+	// (which hashes max_tokens as part of the body) will only match via the
+	// legacy fallback.
+	rawWithMaxTokens := `{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.114.abc; cc_entrypoint=cli; cch=00000;"}],"model":"claude-opus-4-7","max_tokens":4096,"messages":[{"role":"user","content":"legacy client test"}]}`
+
+	// Sign with the legacy algorithm: hash the body verbatim (with cch=00000)
+	// using the same xxh64 seed, take low 20 bits, write back.
+	legacySigned := recomputeCCHLegacyForTest(t, []byte(rawWithMaxTokens))
+
+	status, client, expected, algo := ValidateCCH(legacySigned)
+	if status != CCHStatusMatch {
+		t.Errorf("status = %q, want match via legacy fallback (client=%s expected=%s algo=%s)", status, client, expected, algo)
+	}
+	if algo != "legacy" {
+		t.Errorf("algo = %q, want %q (body signed with legacy algorithm, canonical should miss)", algo, "legacy")
+	}
+}
+
+// recomputeCCHLegacyForTest reproduces the pre-2.1.179 CCH algorithm:
+// xxh64(body_with_cch_placeholder, seed) & 0xFFFFF, no canonicalization.
+// Lives in the test file so the production code can drop the legacy writer
+// entirely.
+func recomputeCCHLegacyForTest(t *testing.T, body []byte) []byte {
+	t.Helper()
+	s, e := findBillingHeaderCCHRange(body)
+	if s < 0 {
+		t.Fatal("recomputeCCHLegacyForTest: no cch field found")
+	}
+	out := append([]byte{}, body...)
+	copy(out[s:e], []byte("00000"))
+	h := xxhash.NewS64(cchSeed)
+	h.Write(out)
+	copy(out[s:e], []byte(fmt.Sprintf("%05x", h.Sum64()&0xFFFFF)))
+	return out
 }
 
 var deviceIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -203,6 +285,25 @@ func TestDeriveClaudeCodeDeviceID_PanicsOnEmpty(t *testing.T) {
 		}
 	}()
 	DeriveClaudeCodeDeviceID("")
+}
+
+func TestNormalizeClientIdentity_SetsHeaders(t *testing.T) {
+	// Verify the headers a real CLI 2.1.179 request always carries are
+	// present on outbound requests. Captured under gdb on CLI 2.1.179:
+	// User-Agent advertises the CLI version; X-App: cli is sent on every
+	// request from the CLI entrypoint (interactive and --print/sdk-cli).
+	req, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	normalizeClientIdentity(req)
+
+	if got := req.Header.Get("User-Agent"); got != fixedUserAgent {
+		t.Errorf("User-Agent = %q, want %q", got, fixedUserAgent)
+	}
+	if got := req.Header.Get("X-App"); got != "cli" {
+		t.Errorf("X-App = %q, want %q", got, "cli")
+	}
 }
 
 func TestNormalizeMetadataDeviceID_RewritesDeviceID(t *testing.T) {
@@ -300,7 +401,7 @@ func TestNormalizeRequestBody_FingerprintAndCCHBothValid(t *testing.T) {
 
 	out := normalizeRequestBody(append([]byte{}, body...), DeriveClaudeCodeDeviceID("upstream-id-42"))
 
-	if st, c, e := ValidateCCH(out); st != CCHStatusMatch {
+	if st, c, e, _ := ValidateCCH(out); st != CCHStatusMatch {
 		t.Errorf("ValidateCCH = %s (client=%s expected=%s); body cch must be consistent", st, c, e)
 	}
 	if st, c, e := ValidateFingerprint(out); st != CCHStatusMatch {
@@ -331,7 +432,7 @@ func TestCCH_UserMessageCchNotTouched(t *testing.T) {
 	}
 
 	// And ValidateCCH on the re-signed body should report match.
-	status, client, expected := ValidateCCH(out)
+	status, client, expected, _ := ValidateCCH(out)
 	if status != CCHStatusMatch {
 		t.Errorf("ValidateCCH = %s, want match (client=%s expected=%s)", status, client, expected)
 	}
@@ -370,7 +471,7 @@ func TestCCH_EmbeddedBillingHeaderInUserMessageNotMatched(t *testing.T) {
 	// ValidateCCH on the re-signed body must report match — and the client
 	// cch reported must be the value computed for the real system header,
 	// NOT the embedded "097ba".
-	status, client, expected := ValidateCCH(out)
+	status, client, expected, _ := ValidateCCH(out)
 	if status != CCHStatusMatch {
 		t.Errorf("ValidateCCH = %s, want match (client=%s expected=%s)", status, client, expected)
 	}

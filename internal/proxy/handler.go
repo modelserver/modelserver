@@ -401,7 +401,7 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, ing
 	// Publisher filter is applied at write-time; here we validate unconditionally
 	// so non-Anthropic paths (ValidateCCH returns Absent quickly) don't need
 	// special handling.
-	cchStatus, cchClient, cchExpected := ValidateCCH(bodyBytes)
+	cchStatus, cchClient, cchExpected, cchAlgo := ValidateCCH(bodyBytes)
 	fpStatus, fpClient, fpExpected := ValidateFingerprint(bodyBytes)
 
 	if canonical != reqShape.Model {
@@ -437,6 +437,12 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, ing
 	// publisher since other publishers don't use the Claude Code CCH protocol.
 	if m := ModelFromContext(r.Context()); m != nil && m.Publisher == types.PublisherAnthropic {
 		metadata["cch_status"] = string(cchStatus)
+		if cchAlgo != "" {
+			// Distinguishes canonical 2.1.179 matches from legacy-algorithm
+			// matches — lets the dashboard track when the old-CLI long tail
+			// disappears.
+			metadata["cch_algo"] = cchAlgo
+		}
 		if cchStatus == CCHStatusMismatch {
 			metadata["cch_client"] = cchClient
 			metadata["cch_expected"] = cchExpected
