@@ -326,6 +326,22 @@ func TestNormalizeMetadataDeviceID_RewritesDeviceID(t *testing.T) {
 	}
 }
 
+func TestNormalizeMetadataDeviceID_PreservesKeyOrder(t *testing.T) {
+	// The real CLI emits keys in insertion order: device_id, account_uuid,
+	// session_id. Go's map iteration is randomised and json.Marshal sorts
+	// keys alphabetically — either would change the wire byte sequence and
+	// be a tell on the proxy. Confirmed via side-by-side capture against
+	// CLI 2.1.179: every request had keys in the device_id-first order.
+	body := []byte(`{"metadata":{"user_id":"{\"device_id\":\"client-xyz\",\"account_uuid\":\"acct-1\",\"session_id\":\"sess-1\"}"}}`)
+	out := normalizeMetadataDeviceID(body, "derived")
+
+	want := `{"device_id":"derived","account_uuid":"","session_id":"sess-1"}`
+	got := gjson.GetBytes(out, "metadata.user_id").String()
+	if got != want {
+		t.Errorf("user_id key order changed:\n  got:  %s\n  want: %s", got, want)
+	}
+}
+
 func TestNormalizeMetadataDeviceID_NoOpWithoutDeviceIDField(t *testing.T) {
 	// metadata.user_id exists but has no device_id field → leave untouched.
 	body := []byte(`{"metadata":{"user_id":"{\"session_id\":\"sess-1\"}"}}`)

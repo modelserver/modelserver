@@ -4,7 +4,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -108,22 +107,31 @@ func normalizeMetadataDeviceID(body []byte, deviceID string) []byte {
 		return body
 	}
 
-	var uid map[string]interface{}
-	if err := json.Unmarshal([]byte(raw.Str), &uid); err != nil {
-		return body
-	}
-	if _, ok := uid["device_id"]; !ok {
+	// metadata.user_id is itself a JSON object encoded as a string. The real
+	// CLI emits keys in insertion order: device_id, account_uuid, session_id.
+	// Unmarshalling into a map[string]interface{} loses that ordering — Go's
+	// json.Marshal then sorts keys alphabetically, which would be a tell on
+	// the wire. Mutate the inner JSON string via sjson instead so the
+	// original key order is preserved.
+	inner := raw.Str
+	if !gjson.Get(inner, "device_id").Exists() {
 		return body
 	}
 
-	uid["device_id"] = deviceID
-	uid["account_uuid"] = ""
-	encoded, err := json.Marshal(uid)
+	// sjson.Set on a string: only writes if the field already exists at this
+	// path, which is what we want — don't materialize fields the client didn't
+	// send. account_uuid is treated the same way.
+	updated, err := sjson.Set(inner, "device_id", deviceID)
 	if err != nil {
 		return body
 	}
+	if gjson.Get(updated, "account_uuid").Exists() {
+		if next, err := sjson.Set(updated, "account_uuid", ""); err == nil {
+			updated = next
+		}
+	}
 
-	result, err := sjson.SetBytes(body, "metadata.user_id", string(encoded))
+	result, err := sjson.SetBytes(body, "metadata.user_id", updated)
 	if err != nil {
 		return body
 	}
