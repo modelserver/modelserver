@@ -64,22 +64,19 @@ func TestSuggestRatesForFixedLimitScalesKnownRates(t *testing.T) {
 
 func TestUtilizationAnalysisBaseRates_GPT55SubscriptionDiscount(t *testing.T) {
 	rate := utilizationAnalysisBaseRates["gpt-5.5"]
-	if math.Abs(rate.InputRate-0.044) > 0.000001 {
-		t.Fatalf("InputRate = %v, want subscription discount 0.044", rate.InputRate)
+	if math.Abs(rate.InputRate-0.0667) > 0.000001 {
+		t.Fatalf("InputRate = %v, want subscription discount 0.0667 (catalog x 0.1)", rate.InputRate)
 	}
-	if math.Abs(rate.OutputRate-0.261) > 0.000001 {
-		t.Fatalf("OutputRate = %v, want subscription discount 0.261", rate.OutputRate)
+	if math.Abs(rate.OutputRate-0.4) > 0.000001 {
+		t.Fatalf("OutputRate = %v, want subscription discount 0.4 (catalog x 0.1)", rate.OutputRate)
 	}
-	if math.Abs(rate.CacheReadRate-0.0044) > 0.000001 {
-		t.Fatalf("CacheReadRate = %v, want subscription discount 0.0044", rate.CacheReadRate)
+	if math.Abs(rate.CacheReadRate-0.0067) > 0.000001 {
+		t.Fatalf("CacheReadRate = %v, want subscription discount 0.0067 (catalog x 0.1)", rate.CacheReadRate)
 	}
-	if rate.LongContext == nil {
-		t.Fatal("LongContext is nil")
-	}
-	if rate.LongContext.ThresholdInputTokens != 272000 ||
-		rate.LongContext.InputMultiplier != 2.0 ||
-		rate.LongContext.OutputMultiplier != 1.5 {
-		t.Fatalf("LongContext = %+v, want 272000/2.0/1.5", rate.LongContext)
+	// Migration 047 strips the long_context block from gpt-5.5 (the
+	// rebased plan entry has none, so the OLS base rate has none either).
+	if rate.LongContext != nil {
+		t.Fatalf("LongContext = %+v, want nil after 047 rebase", rate.LongContext)
 	}
 }
 
