@@ -84,6 +84,82 @@ func TestStreamInterceptor(t *testing.T) {
 	}
 }
 
+// TestStreamInterceptor_DataNoSpace covers SSE streams where `data:` lines
+// omit the optional trailing space (per HTML SSE spec §9.2.6: the space
+// after the colon is optional). Real-world example: DashScope's
+// `/apps/anthropic` BaiLian app endpoint emits `data:{...}` not `data: {...}`.
+// Without this tolerance, usage and TTFT extraction silently drop to zero
+// for every streaming request through such an upstream.
+func TestStreamInterceptor_DataNoSpace(t *testing.T) {
+	sseData := strings.Join([]string{
+		`event:message_start`,
+		`data:{"type":"message_start","message":{"id":"msg_1","model":"glm-5.2","usage":{"input_tokens":100,"cache_creation_input_tokens":5,"cache_read_input_tokens":10}}}`,
+		``,
+		`event:content_block_delta`,
+		`data:{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}`,
+		``,
+		`event:message_delta`,
+		`data:{"type":"message_delta","usage":{"output_tokens":50}}`,
+		``,
+		`event:message_stop`,
+		`data:{"type":"message_stop"}`,
+		``,
+	}, "\n")
+
+	var gotModel, gotMsgID string
+	var gotUsage anthropic.Usage
+	var gotTTFT int64
+	done := make(chan struct{})
+
+	interceptor := newStreamInterceptor(
+		io.NopCloser(strings.NewReader(sseData)),
+		time.Now(),
+		func(model, msgID string, usage anthropic.Usage, ttft int64) {
+			gotModel = model
+			gotMsgID = msgID
+			gotUsage = usage
+			gotTTFT = ttft
+			close(done)
+		},
+	)
+
+	output, err := io.ReadAll(interceptor)
+	if err != nil {
+		t.Fatalf("ReadAll failed: %v", err)
+	}
+	if string(output) != sseData {
+		t.Errorf("output differs from input (pass-through must be byte-exact)")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("callback not invoked within 1s")
+	}
+
+	if gotModel != "glm-5.2" {
+		t.Errorf("model = %q, want %q", gotModel, "glm-5.2")
+	}
+	if gotMsgID != "msg_1" {
+		t.Errorf("msgID = %q, want %q", gotMsgID, "msg_1")
+	}
+	if gotUsage.InputTokens != 100 {
+		t.Errorf("InputTokens = %d, want 100", gotUsage.InputTokens)
+	}
+	if gotUsage.CacheCreationInputTokens != 5 {
+		t.Errorf("CacheCreationInputTokens = %d, want 5", gotUsage.CacheCreationInputTokens)
+	}
+	if gotUsage.CacheReadInputTokens != 10 {
+		t.Errorf("CacheReadInputTokens = %d, want 10", gotUsage.CacheReadInputTokens)
+	}
+	if gotUsage.OutputTokens != 50 {
+		t.Errorf("OutputTokens = %d, want 50", gotUsage.OutputTokens)
+	}
+	if gotTTFT < 0 {
+		t.Errorf("TTFT = %d, want >= 0", gotTTFT)
+	}
+}
+
 func TestStreamInterceptor_InputJSONDelta(t *testing.T) {
 	// Simulate fine-grained tool streaming with input_json_delta events.
 	sseData := strings.Join([]string{

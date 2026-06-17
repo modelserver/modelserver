@@ -71,10 +71,19 @@ func (si *streamInterceptor) flushRemaining() {
 
 func (si *streamInterceptor) parseLine(line []byte) {
 	line = bytes.TrimSpace(line)
-	if !bytes.HasPrefix(line, []byte("data: ")) {
+	// SSE spec (whatwg §9.2.6): a `data:` field's value is the bytes after
+	// the colon, with EXACTLY ONE leading U+0020 SPACE removed if present.
+	// Do not greedy-trim — multi-space `data:` is rare but spec-defined
+	// to preserve the extra spaces as data content. JSON consumers tolerate
+	// the resulting leading whitespace; the `[DONE]` sentinel doesn't appear
+	// with multi-space prefixes in practice.
+	if !bytes.HasPrefix(line, []byte("data:")) {
 		return
 	}
-	data := bytes.TrimPrefix(line, []byte("data: "))
+	data := line[len("data:"):]
+	if len(data) > 0 && data[0] == ' ' {
+		data = data[1:]
+	}
 	if bytes.Equal(data, []byte("[DONE]")) {
 		return
 	}
