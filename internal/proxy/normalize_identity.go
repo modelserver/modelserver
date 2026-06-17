@@ -4,7 +4,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -38,15 +37,19 @@ const (
 	fingerprintSalt        = "59cf53e54c78"
 )
 
+// Constants pinned to CLI 2.1.179 wire signature. Bumping these is a
+// deliberate maintenance task — see docs/superpowers/plans for the
+// reverse-engineering write-up, and testdata/cch_2179_*.bin for the
+// fixtures that pin the CCH canonicalization to this version's behavior.
 const (
-	fixedUserAgent      = "claude-cli/2.1.116 (external, cli)"
+	fixedUserAgent      = "claude-cli/2.1.179 (external, cli)"
 	fixedStainlessOS    = "Linux"
 	fixedStainlessRtVer = "v24.3.0"
-	fixedStainlessPkgV  = "0.81.0"
+	fixedStainlessPkgV  = "0.94.0"
 	fixedStainlessArch  = "x64"
 	fixedStainlessLang  = "js"
 	fixedStainlessRt    = "node"
-	fixedCCVersion      = "2.1.116"
+	fixedCCVersion      = "2.1.179"
 )
 
 // deviceIDHMACKey is the fixed HMAC key used to derive a stable per-upstream
@@ -72,6 +75,9 @@ func DeriveClaudeCodeDeviceID(upstreamID string) string {
 
 func normalizeClientIdentity(req *http.Request) {
 	req.Header.Set("User-Agent", fixedUserAgent)
+	// X-App is always "cli" on real CLI 2.1.179 requests, regardless of
+	// entrypoint (interactive vs. --print/sdk-cli). Confirmed by raw capture.
+	req.Header.Set("X-App", "cli")
 	req.Header.Set("X-Stainless-Lang", fixedStainlessLang)
 	req.Header.Set("X-Stainless-Package-Version", fixedStainlessPkgV)
 	req.Header.Set("X-Stainless-Os", fixedStainlessOS)
@@ -101,22 +107,31 @@ func normalizeMetadataDeviceID(body []byte, deviceID string) []byte {
 		return body
 	}
 
-	var uid map[string]interface{}
-	if err := json.Unmarshal([]byte(raw.Str), &uid); err != nil {
-		return body
-	}
-	if _, ok := uid["device_id"]; !ok {
+	// metadata.user_id is itself a JSON object encoded as a string. The real
+	// CLI emits keys in insertion order: device_id, account_uuid, session_id.
+	// Unmarshalling into a map[string]interface{} loses that ordering — Go's
+	// json.Marshal then sorts keys alphabetically, which would be a tell on
+	// the wire. Mutate the inner JSON string via sjson instead so the
+	// original key order is preserved.
+	inner := raw.Str
+	if !gjson.Get(inner, "device_id").Exists() {
 		return body
 	}
 
-	uid["device_id"] = deviceID
-	uid["account_uuid"] = ""
-	encoded, err := json.Marshal(uid)
+	// sjson.Set on a string: only writes if the field already exists at this
+	// path, which is what we want — don't materialize fields the client didn't
+	// send. account_uuid is treated the same way.
+	updated, err := sjson.Set(inner, "device_id", deviceID)
 	if err != nil {
 		return body
 	}
+	if gjson.Get(updated, "account_uuid").Exists() {
+		if next, err := sjson.Set(updated, "account_uuid", ""); err == nil {
+			updated = next
+		}
+	}
 
-	result, err := sjson.SetBytes(body, "metadata.user_id", string(encoded))
+	result, err := sjson.SetBytes(body, "metadata.user_id", updated)
 	if err != nil {
 		return body
 	}
@@ -213,17 +228,71 @@ found:
 	return bodyBase + m[2], bodyBase + m[3]
 }
 
+// canonicalizeForCCH returns the byte sequence CLI 2.1.179 actually feeds
+// into xxh64 when computing the cch attestation. Three transforms relative
+// to the wire body:
+//
+//  1. cch=<5hex>;       → cch=00000;   (placeholder so the field hashes the
+//     same regardless of its eventual value)
+//  2. "model":"<X>"     → "model":""   (CLI/SDK may rewrite model on
+//     fallback/retry without re-signing)
+//  3. ,?"max_tokens":<N> → ""          (server can dynamically cap; not part
+//     of the prompt-content fingerprint)
+//
+// Reverse-engineered by hooking xxh64 update at 0x2ad99c0 in the 2.1.179
+// binary under gdb; 6 captured requests across 3 models and 2 entrypoints
+// all verified against this rule. See testdata/cch_2179_*.bin.
+//
+// The result is a hashing intermediate only — it's never sent on the wire.
+// Returns nil if the body has no cch field to anchor canonicalization.
+func canonicalizeForCCH(body []byte) []byte {
+	s, e := findBillingHeaderCCHRange(body)
+	if s < 0 {
+		return nil
+	}
+	out := make([]byte, len(body))
+	copy(out, body)
+	// (1) cch placeholder — byte-copy preserves length.
+	copy(out[s:e], []byte("00000"))
+	// (2) Clear "model" value via sjson. Skip when the field is missing or
+	// already empty (sjson would still write the field, slightly changing
+	// the JSON shape).
+	if v := gjson.GetBytes(out, "model"); v.Exists() && v.Type == gjson.String && v.Str != "" {
+		if next, err := sjson.SetBytes(out, "model", ""); err == nil {
+			out = next
+		}
+	}
+	// (3) Drop "max_tokens" entirely.
+	if gjson.GetBytes(out, "max_tokens").Exists() {
+		if next, err := sjson.DeleteBytes(out, "max_tokens"); err == nil {
+			out = next
+		}
+	}
+	return out
+}
+
+// recomputeCCH writes the CCH attestation that CLI 2.1.179 would produce
+// for body's content into body's existing cch=XXXXX; slot. Returns body
+// unchanged when no billing-header cch field is present.
+//
+// The hash is computed over canonicalizeForCCH(body), but the 5-hex result
+// is written back into the ORIGINAL wire body — only the cch bytes change,
+// the model and max_tokens fields are preserved on the wire.
 func recomputeCCH(body []byte) []byte {
 	s, e := findBillingHeaderCCHRange(body)
 	if s < 0 {
 		return body
 	}
+	canon := canonicalizeForCCH(body)
+	if canon == nil {
+		// Defensive: findBillingHeaderCCHRange already succeeded above, so
+		// canonicalizeForCCH should also succeed. Bail rather than panic.
+		return body
+	}
+	h := xxhash.NewS64(cchSeed)
+	h.Write(canon)
 	out := make([]byte, len(body))
 	copy(out, body)
-	copy(out[s:e], []byte("00000"))
-
-	h := xxhash.NewS64(cchSeed)
-	h.Write(out)
 	copy(out[s:e], []byte(fmt.Sprintf("%05x", h.Sum64()&0xFFFFF)))
 	return out
 }
@@ -239,31 +308,59 @@ const (
 	CCHStatusAbsent   CCHStatus = "absent"
 )
 
-// ValidateCCH computes the expected cch over the given request body and
-// compares it to the client-provided cch. Returns the status plus both
-// values (empty strings when absent). Does not mutate body.
+// CCH algorithm tags reported by ValidateCCH. Only meaningful for
+// CCHStatusMatch — empty otherwise.
+const (
+	cchAlgo2179   = "v2.1.179" // canonical: model cleared, max_tokens stripped
+	cchAlgoLegacy = "legacy"   // pre-2.1.179: hash the body verbatim
+)
+
+// ValidateCCH compares the client-provided cch against what a genuine Claude
+// Code CLI would compute. Tries the canonical 2.1.179 algorithm first; falls
+// back to the legacy (no-canonicalization) algorithm to support older clients
+// still in the wild. Reports which algorithm matched via algo.
 //
-// Comparison is byte-exact (case-sensitive): a real Claude Code CLI always
-// emits lowercase hex, so uppercase is reported as mismatch — it's a signal
-// the client is not the authentic CLI.
-func ValidateCCH(body []byte) (status CCHStatus, client, expected string) {
+// Returns (Absent, "", "", "") when there's no cch field at all.
+// Returns (Match, client, client, "v2.1.179"|"legacy") on success.
+// Returns (Mismatch, client, expected_v2.1.179, "") when neither matches —
+// the "expected" value uses the canonical algorithm since that's what a
+// current-version client would produce.
+//
+// Comparison is byte-exact (case-sensitive): a real CLI always emits
+// lowercase hex, so uppercase mismatches even if the bytes match — a signal
+// that the client is not the authentic CLI.
+//
+// Does not mutate body.
+func ValidateCCH(body []byte) (status CCHStatus, client, expected, algo string) {
 	s, e := findBillingHeaderCCHRange(body)
 	if s < 0 {
-		return CCHStatusAbsent, "", ""
+		return CCHStatusAbsent, "", "", ""
 	}
 	client = string(body[s:e])
 
-	scratch := make([]byte, len(body))
-	copy(scratch, body)
-	copy(scratch[s:e], []byte("00000"))
-	h := xxhash.NewS64(cchSeed)
-	h.Write(scratch)
-	expected = fmt.Sprintf("%05x", h.Sum64()&0xFFFFF)
-
-	if client == expected {
-		return CCHStatusMatch, client, expected
+	canon := canonicalizeForCCH(body)
+	hCanon := xxhash.NewS64(cchSeed)
+	hCanon.Write(canon)
+	expectedCanon := fmt.Sprintf("%05x", hCanon.Sum64()&0xFFFFF)
+	if client == expectedCanon {
+		return CCHStatusMatch, client, expectedCanon, cchAlgo2179
 	}
-	return CCHStatusMismatch, client, expected
+
+	// Legacy fallback: hash the body verbatim (with cch=00000 placeholder
+	// substituted in place). This is what pre-2.1.179 CLIs do.
+	legacy := make([]byte, len(body))
+	copy(legacy, body)
+	copy(legacy[s:e], []byte("00000"))
+	hLegacy := xxhash.NewS64(cchSeed)
+	hLegacy.Write(legacy)
+	expectedLegacy := fmt.Sprintf("%05x", hLegacy.Sum64()&0xFFFFF)
+	if client == expectedLegacy {
+		return CCHStatusMatch, client, expectedLegacy, cchAlgoLegacy
+	}
+
+	// Neither algorithm matched. Report the canonical expected value since
+	// that's what a current-version client would have produced.
+	return CCHStatusMismatch, client, expectedCanon, ""
 }
 
 // ValidateFingerprint checks whether the version suffix (fingerprint) in the
