@@ -20,33 +20,43 @@ type DeliveryPayload struct {
 	PaidAt     string `json:"paid_at"`
 }
 
+// CallbackTarget identifies where + how to deliver a webhook for a
+// specific payment. Resolved per-row from the tenant that owns the
+// payment: target.URL = tenant.callback_url, target.Secret =
+// tenant.callback_secret.
+type CallbackTarget struct {
+	URL    string
+	Secret string
+}
+
 type CallbackClient struct {
-	url        string
-	secret     string
 	httpClient *http.Client
 }
 
-func NewCallbackClient(url, secret string, timeout time.Duration) *CallbackClient {
+func NewCallbackClient(timeout time.Duration) *CallbackClient {
 	return &CallbackClient{
-		url:    url,
-		secret: secret,
-		httpClient: &http.Client{
-			Timeout: timeout,
-		},
+		httpClient: &http.Client{Timeout: timeout},
 	}
 }
 
-func (c *CallbackClient) Send(ctx context.Context, payload DeliveryPayload) error {
+// Send POSTs the payload to target.URL HMAC-SHA256-signed with
+// target.Secret. Empty target.URL is treated as a no-op success — a
+// tenant that doesn't configure a callback URL is read-only by design
+// (e.g. test/sandbox tenant).
+func (c *CallbackClient) Send(ctx context.Context, target CallbackTarget, payload DeliveryPayload) error {
+	if target.URL == "" {
+		return nil
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
 
-	mac := hmac.New(sha256.New, []byte(c.secret))
+	mac := hmac.New(sha256.New, []byte(target.Secret))
 	mac.Write(body)
 	signature := hex.EncodeToString(mac.Sum(nil))
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target.URL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
@@ -60,7 +70,7 @@ func (c *CallbackClient) Send(ctx context.Context, payload DeliveryPayload) erro
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("modelserver returned status %d", resp.StatusCode)
+		return fmt.Errorf("callback target returned status %d", resp.StatusCode)
 	}
 	return nil
 }
