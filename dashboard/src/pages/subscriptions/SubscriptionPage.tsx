@@ -88,7 +88,15 @@ function formatPriceForCurrency(plan: Plan, cur: "CNY" | "USD") {
     : formatPriceCNY(plan.price_cny_fen);
 }
 
-type PaymentChannel = "wechat" | "alipay";
+const getPriceForChannel = (plan: Plan, ch: PaymentChannel): number =>
+  ch === "stripe" ? plan.price_usd_cents : plan.price_cny_fen;
+
+const formatPriceForChannel = (plan: Plan, ch: PaymentChannel): string =>
+  ch === "stripe"
+    ? formatPriceUSD(plan.price_usd_cents)
+    : formatPriceCNY(plan.price_cny_fen);
+
+type PaymentChannel = "wechat" | "alipay" | "stripe";
 
 interface PaymentResult {
   order: Order;
@@ -154,6 +162,20 @@ export function SubscriptionPage() {
     if (activeSub?.currency === "USD") setDisplayCurrency("USD");
     else if (activeSub?.currency === "CNY") setDisplayCurrency("CNY");
   }, [activeSub?.currency]);
+
+  const channelOptions = [
+    { value: "wechat" as const, label: "WeChat Pay", currency: "CNY" as const },
+    { value: "alipay" as const, label: "Alipay",     currency: "CNY" as const },
+    { value: "stripe" as const, label: "Stripe",     currency: "USD" as const },
+  ];
+
+  // "" / undefined means unlocked (free or never-paid)
+  const lockedCurrency = (activeSub?.currency || "") as "CNY" | "USD" | "";
+
+  function pickInitialChannel(): PaymentChannel {
+    if (lockedCurrency === "USD") return "stripe";
+    return "wechat"; // CNY-locked or unlocked — sensible CN default
+  }
 
   const formatPrice = (plan: Plan) =>
     formatPriceForCurrency(plan, displayCurrency);
