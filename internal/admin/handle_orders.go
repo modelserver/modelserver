@@ -4,6 +4,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -13,6 +14,22 @@ import (
 	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
+
+// buildReturnURL joins a configured billing return URL base with the
+// dashboard subscription route for a specific project. Operators set the
+// base (e.g. `https://code.cs.ac.cn/projects`); this function appends
+// `/{projectID}/subscription` so the user lands on their own subscription
+// page after Stripe Checkout completes.
+//
+// Returns the empty string when no base is configured — callers must
+// handle that explicitly (Stripe rejects empty success_url with HTTP 400;
+// wechat/alipay ignore the field entirely so empty is harmless for them).
+func buildReturnURL(base, projectID string) string {
+	if base == "" {
+		return ""
+	}
+	return strings.TrimRight(base, "/") + "/" + projectID + "/subscription"
+}
 
 func handleListOrders(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -243,7 +260,7 @@ func handleCreateOrder(st *store.Store, payClient billing.PaymentClient, billing
 			Currency:      order.Currency,
 			Amount:        order.Amount,
 			NotifyURL:     billingCfg.NotifyURL,
-			ReturnURL:     billingCfg.ReturnURL,
+			ReturnURL:     buildReturnURL(billingCfg.ReturnURL, projectID),
 			CustomerEmail: ownerEmail,
 			Metadata: map[string]string{
 				"plan_slug": plan.Slug,
