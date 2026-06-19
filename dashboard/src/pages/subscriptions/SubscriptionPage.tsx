@@ -177,6 +177,11 @@ export function SubscriptionPage() {
     return "wechat"; // CNY-locked or unlocked — sensible CN default
   }
 
+  useEffect(() => {
+    setChannel(pickInitialChannel());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSub?.currency]);
+
   const formatPrice = (plan: Plan) =>
     formatPriceForCurrency(plan, displayCurrency);
 
@@ -203,6 +208,14 @@ export function SubscriptionPage() {
         channel,
       });
       const order = result.data;
+      if (channel === "stripe") {
+        if (!order.payment_url) {
+          toast.error("Stripe checkout URL missing");
+          return;
+        }
+        window.location.href = order.payment_url;
+        return; // unreachable on success
+      }
       if (order.payment_url) {
         setPaymentResult({ order, channel });
         setDialogStep("paying");
@@ -230,12 +243,23 @@ export function SubscriptionPage() {
     setPaymentResult(null);
     setDialogStep("form");
     setPeriods(1);
-    setChannel("wechat");
+    setChannel(pickInitialChannel());
     setIsRenewal(false);
   }
 
   function openPaymentDialog(order: Order) {
-    const ch: PaymentChannel = order.channel === "wechat" ? "wechat" : "alipay";
+    if (order.channel === "stripe") {
+      if (order.payment_url) {
+        window.location.href = order.payment_url;
+      } else {
+        toast.error("Stripe checkout URL missing");
+      }
+      return;
+    }
+    const ch: PaymentChannel =
+      order.channel === "wechat" || order.channel === "alipay"
+        ? order.channel
+        : "wechat";
     setPaymentResult({ order, channel: ch });
     setDialogStep("paying");
     setUpgradeDialog(plans.find((p: Plan) => p.id === order.plan_id) ?? null);
@@ -354,7 +378,7 @@ export function SubscriptionPage() {
                         setUpgradeDialog(activeSubPlan);
                         setIsRenewal(true);
                         setPeriods(1);
-                        setChannel("wechat");
+                        setChannel(pickInitialChannel());
                         setPaymentResult(null);
                         setDialogStep("form");
                       }}
@@ -482,7 +506,7 @@ export function SubscriptionPage() {
                         setUpgradeDialog(plan);
                         setIsRenewal(btn.label === "Renew");
                         setPeriods(1);
-                        setChannel("wechat");
+                        setChannel(pickInitialChannel());
                         setPaymentResult(null);
                         setDialogStep("form");
                       }}
@@ -565,7 +589,7 @@ export function SubscriptionPage() {
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">Price</span>
                   <span className="text-sm">
-                    {formatPrice(dialogPlan.price_cny_fen)}/
+                    {formatPriceForChannel(dialogPlan, channel)}/
                     {dialogPlan.period_months === 1 ? "mo" : `${dialogPlan.period_months}mo`}
                   </span>
                 </div>
@@ -597,47 +621,61 @@ export function SubscriptionPage() {
                 {/* Payment channel selector */}
                 <div className="space-y-2">
                   <Label>Payment Method</Label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      type="button"
-                      variant={channel === "wechat" ? "default" : "outline"}
-                      className="w-full"
-                      onClick={() => setChannel("wechat")}
-                    >
-                      WeChat Pay
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={channel === "alipay" ? "default" : "outline"}
-                      className="w-full"
-                      onClick={() => setChannel("alipay")}
-                    >
-                      Alipay
-                    </Button>
+                  <div className="grid grid-cols-3 gap-2">
+                    {channelOptions.map((opt) => {
+                      const locked = lockedCurrency !== "" && lockedCurrency !== opt.currency;
+                      return (
+                        <Button
+                          key={opt.value}
+                          type="button"
+                          variant={channel === opt.value ? "default" : "outline"}
+                          className="w-full"
+                          disabled={locked}
+                          title={
+                            locked
+                              ? `Current subscription is in ${lockedCurrency}; switching currency requires the subscription to expire first.`
+                              : undefined
+                          }
+                          onClick={() => setChannel(opt.value)}
+                        >
+                          {opt.label}
+                        </Button>
+                      );
+                    })}
                   </div>
+                  {lockedCurrency !== "" && (
+                    <p className="text-xs text-muted-foreground">
+                      Locked to {lockedCurrency} — current paid subscription pins the currency.
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex items-center justify-between border-t pt-3">
                   <span className="font-medium">Estimated Total</span>
                   <span className="font-medium">
-                    {isFreePlan || isRenewal
-                      ? formatPrice(dialogPlan.price_cny_fen * periods)
-                      : (() => {
-                          const currentPrice = activeSubPlan?.price_cny_fen ?? 0;
-                          if (!activeSub?.starts_at || !activeSub?.expires_at) {
-                            return formatPrice(Math.max(dialogPlan.price_cny_fen - currentPrice, 0));
-                          }
-                          const now = Date.now();
-                          const startsAt = new Date(activeSub.starts_at).getTime();
-                          const expiresAt = new Date(activeSub.expires_at).getTime();
-                          const totalDuration = expiresAt - startsAt;
-                          const usedDuration = now - startsAt;
-                          let remainingValue = 0;
-                          if (totalDuration > 0 && usedDuration < totalDuration) {
-                            remainingValue = Math.round(((totalDuration - usedDuration) / totalDuration) * currentPrice);
-                          }
-                          return formatPrice(Math.max(dialogPlan.price_cny_fen - remainingValue, 0));
-                        })()}
+                    {(() => {
+                      const dialogBase = getPriceForChannel(dialogPlan, channel);
+                      const activeBase = activeSubPlan ? getPriceForChannel(activeSubPlan, channel) : 0;
+                      const renderPrice = (v: number) =>
+                        channel === "stripe" ? formatPriceUSD(v) : formatPriceCNY(v);
+
+                      if (isFreePlan || isRenewal) {
+                        return renderPrice(dialogBase * periods);
+                      }
+                      if (!activeSub?.starts_at || !activeSub?.expires_at) {
+                        return renderPrice(Math.max(dialogBase - activeBase, 0));
+                      }
+                      const now = Date.now();
+                      const startsAt = new Date(activeSub.starts_at).getTime();
+                      const expiresAt = new Date(activeSub.expires_at).getTime();
+                      const totalDuration = expiresAt - startsAt;
+                      const usedDuration = now - startsAt;
+                      let remainingValue = 0;
+                      if (totalDuration > 0 && usedDuration < totalDuration) {
+                        remainingValue = Math.round(((totalDuration - usedDuration) / totalDuration) * activeBase);
+                      }
+                      return renderPrice(Math.max(dialogBase - remainingValue, 0));
+                    })()}
                   </span>
                 </div>
                 {!isFreePlan && !isRenewal && activeSubPlan && (
@@ -669,7 +707,9 @@ export function SubscriptionPage() {
                       <QRCodeSVG value={paymentResult.order.payment_url} size={200} />
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Amount: {formatPrice(paymentResult.order.amount)}
+                      Amount: {paymentResult.order.currency === "USD"
+                        ? formatPriceUSD(paymentResult.order.amount)
+                        : formatPriceCNY(paymentResult.order.amount)}
                     </p>
                   </div>
                 )}
@@ -687,7 +727,9 @@ export function SubscriptionPage() {
                       />
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Amount: {formatPrice(paymentResult.order.amount)}
+                      Amount: {paymentResult.order.currency === "USD"
+                        ? formatPriceUSD(paymentResult.order.amount)
+                        : formatPriceCNY(paymentResult.order.amount)}
                     </p>
                   </div>
                 )}
