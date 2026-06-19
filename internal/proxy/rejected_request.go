@@ -8,6 +8,9 @@
 package proxy
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 
@@ -56,4 +59,57 @@ func requestKindFromRequest(r *http.Request) string {
 		return types.KindGoogleGenerateContent
 	}
 	return ""
+}
+
+// streamingBodyPaths lists the proxy surfaces whose streaming flag lives
+// in the JSON request body as {"stream": bool}. Other surfaces either
+// signal streaming via the path (Gemini :stream*) or have no streaming
+// variant at all (count_tokens, images/*).
+var streamingBodyPaths = map[string]bool{
+	"/v1/messages":          true,
+	"/v1/responses":         true,
+	"/v1/responses/compact": true,
+	"/v1/chat/completions":  true,
+}
+
+// peekStreaming reports whether the incoming request is streaming
+// without consuming the body. Three sources of truth:
+//
+//   - Gemini native paths whose suffix is :stream<Anything> → true.
+//   - JSON POSTs to streamingBodyPaths → parse {"stream": bool}.
+//   - Everything else → false.
+//
+// Body reads are restored so downstream middleware/handlers still see
+// the original payload. Errors (bad JSON, IO failures) return false;
+// the success path's metadata population has the same best-effort style.
+func peekStreaming(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if strings.HasPrefix(r.URL.Path, "/v1beta/models/") {
+		// Gemini native: any `:stream*` suffix means streaming.
+		if i := strings.LastIndex(r.URL.Path, ":"); i >= 0 {
+			suffix := r.URL.Path[i+1:]
+			if strings.HasPrefix(suffix, "stream") {
+				return true
+			}
+		}
+		return false
+	}
+	if !streamingBodyPaths[r.URL.Path] {
+		return false
+	}
+	if r.Body == nil {
+		return false
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	var shape struct {
+		Stream bool `json:"stream"`
+	}
+	_ = json.Unmarshal(body, &shape)
+	return shape.Stream
 }
