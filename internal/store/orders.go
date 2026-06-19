@@ -155,3 +155,29 @@ func (s *Store) UpdateOrderPayment(id, paymentRef, paymentURL, status string) er
 		WHERE id = $4`, paymentRef, paymentURL, status, id)
 	return err
 }
+
+// GetActivePaidCurrency returns the currency code recorded on the latest
+// paid or delivered order tied to the given subscription. Empty string
+// means the subscription has no paid order (e.g. it's the Free tier
+// granted without a purchase) — callers treat that as "unlocked".
+//
+// Used to enforce the cross-currency lock: a project that paid in CNY can
+// only renew/upgrade with CNY; switching currencies requires waiting for
+// the subscription to expire.
+func (s *Store) GetActivePaidCurrency(projectID, subscriptionID string) (string, error) {
+	var currency string
+	err := s.pool.QueryRow(context.Background(), `
+		SELECT currency FROM orders
+		WHERE project_id = $1
+		  AND existing_subscription_id = $2
+		  AND status IN ('paid', 'delivered')
+		ORDER BY updated_at DESC
+		LIMIT 1`, projectID, subscriptionID).Scan(&currency)
+	if err == pgx.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("get active paid currency: %w", err)
+	}
+	return currency, nil
+}
