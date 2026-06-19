@@ -100,19 +100,17 @@ func logRateLimitRejection(st *store.Store, r *http.Request, project *types.Proj
 	logRateLimitRejectionMsg(st, r, project, apiKey, msg)
 }
 
-func logRateLimitRejectionMsg(st *store.Store, r *http.Request, project *types.Project, apiKey *types.APIKey, msg string) {
-	model := peekModel(r)
-	traceID := TraceIDFromContext(r.Context())
-	req := &types.Request{
-		ProjectID:    project.ID,
-		APIKeyID:     apiKey.ID,
-		CreatedBy:    apiKey.CreatedBy,
-		TraceID:      traceID,
-		Provider:     "",
-		Model:        model,
-		Status:       types.RequestStatusRateLimited,
-		ClientIP:     r.RemoteAddr,
-		ErrorMessage: msg,
+// logRateLimitRejectionMsg persists a requests row for a classic
+// rate-limit rejection. The project/apiKey parameters are kept for
+// signature stability (call sites at lines 51 and 75 supply them
+// already); buildRejectedRequestRow re-reads them from context to
+// share one extraction path with the extra-usage guard's
+// emitGuardRejection. ExtraUsageReason is empty because classic
+// rate-limit rejections are not on the extra-usage path.
+func logRateLimitRejectionMsg(st *store.Store, r *http.Request, _ *types.Project, _ *types.APIKey, msg string) {
+	req := buildRejectedRequestRow(r, types.RequestStatusRateLimited, msg, "")
+	if req == nil {
+		return
 	}
 	go st.CreateRequest(req)
 }
