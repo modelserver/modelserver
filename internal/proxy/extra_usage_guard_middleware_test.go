@@ -370,8 +370,8 @@ func TestExtraUsageGuard_ClientRestriction_NotEnabled_LogsRequest(t *testing.T) 
 	if got.OAuthGrantID != "grant-xyz" {
 		t.Errorf("OAuthGrantID=%q, want grant-xyz", got.OAuthGrantID)
 	}
-	if got.Provider != types.PublisherAnthropic {
-		t.Errorf("Provider=%q, want %q", got.Provider, types.PublisherAnthropic)
+	if got.Provider != "" {
+		t.Errorf("Provider=%q, want empty (rejection happens before upstream selection)", got.Provider)
 	}
 	if got.Metadata["user_agent"] != "foo/1.0" {
 		t.Errorf("metadata[user_agent]=%q, want foo/1.0", got.Metadata["user_agent"])

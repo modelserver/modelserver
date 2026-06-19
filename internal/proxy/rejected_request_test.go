@@ -128,8 +128,8 @@ func TestBuildRejectedRequestRow_FullContext(t *testing.T) {
 	if got.Model != "claude-opus-4-7" {
 		t.Errorf("Model=%q, want claude-opus-4-7", got.Model)
 	}
-	if got.Provider != types.PublisherAnthropic {
-		t.Errorf("Provider=%q, want %q", got.Provider, types.PublisherAnthropic)
+	if got.Provider != "" {
+		t.Errorf("Provider=%q, want empty (rejection happens before upstream selection)", got.Provider)
 	}
 	if got.RequestKind != types.KindAnthropicMessages {
 		t.Errorf("RequestKind=%q, want %q", got.RequestKind, types.KindAnthropicMessages)
@@ -195,7 +195,7 @@ func TestBuildRejectedRequestRow_NoUserAgent(t *testing.T) {
 		t.Fatalf("got nil")
 	}
 	if _, ok := got.Metadata["user_agent"]; ok {
-		t.Errorf("metadata.user_agent must be absent when no UA header, got %q", got.Metadata["user_agent"])
+		t.Errorf("metadata.user_agent must be absent when no UA header, got metadata=%v", got.Metadata)
 	}
 }
 

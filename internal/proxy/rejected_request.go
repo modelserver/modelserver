@@ -118,7 +118,8 @@ func peekStreaming(r *http.Request) bool {
 // fire-and-forget persistence on 4xx pre-handler rejections. It captures
 // every field that's knowable from the *http.Request + context at the
 // rejection point — UA, kind, streaming, oauth grant, trace id, client
-// ip, model, provider — so the row matches the shape of successful rows
+// ip, model, (Provider stays empty — set by the executor at completion time
+// on the success path) — so the row matches the shape of successful rows
 // (handler.go CreateRequest) except for the rejection-specific
 // status / error_message / extra_usage_reason fields.
 //
@@ -142,10 +143,8 @@ func buildRejectedRequestRow(
 	}
 
 	model := ""
-	provider := ""
 	if m := ModelFromContext(r.Context()); m != nil {
 		model = m.Name
-		provider = m.Publisher
 	}
 	if model == "" {
 		// Fall back to body shape — covers the case where ResolveModel
@@ -165,7 +164,11 @@ func buildRejectedRequestRow(
 		OAuthGrantID:     OAuthGrantIDFromContext(r.Context()),
 		CreatedBy:        apiKey.CreatedBy,
 		TraceID:          TraceIDFromContext(r.Context()),
-		Provider:         provider,
+		// Provider is intentionally left empty: rejection happens before
+		// upstream selection, so we don't know which upstream this would
+		// have hit. The success-path pending row (handler.go CreateRequest)
+		// also leaves Provider empty — it's filled at CompleteRequest time
+		// from the chosen upstream. See spec §"row comparison".
 		RequestKind:      requestKindFromRequest(r),
 		Model:            model,
 		Streaming:        peekStreaming(r),
