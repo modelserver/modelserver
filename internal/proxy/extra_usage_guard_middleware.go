@@ -378,19 +378,17 @@ func emitGuardRejection(logger *slog.Logger, st extraUsageStore, r *http.Request
 		)
 	}
 
-	if st == nil || project == nil || apiKey == nil {
+	if st == nil {
 		return
 	}
-	req := &types.Request{
-		ProjectID:        project.ID,
-		APIKeyID:         apiKey.ID,
-		CreatedBy:        apiKey.CreatedBy,
-		TraceID:          traceID,
-		Model:            modelName,
-		Status:           types.RequestStatusRateLimited,
-		ClientIP:         r.RemoteAddr,
-		ErrorMessage:     message,
-		ExtraUsageReason: reason,
+	// buildRejectedRequestRow re-derives the same project/apiKey/model
+	// the slog block above already extracted; we deliberately don't pass
+	// them through to keep the helper context-driven (so callers from
+	// other rejection sites — see ratelimit_middleware.go — share one
+	// extraction path).
+	req := buildRejectedRequestRow(r, types.RequestStatusRateLimited, message, reason)
+	if req == nil {
+		return
 	}
 	go st.CreateRequest(req)
 }

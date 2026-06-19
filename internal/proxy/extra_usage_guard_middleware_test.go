@@ -300,12 +300,15 @@ func TestExtraUsageGuard_ClientRestriction_NotEnabled_LogsRequest(t *testing.T) 
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true })
 	h := ExtraUsageGuardMiddleware(dummyCfg(true), st, slog.Default())(inner)
 
-	body := strings.NewReader(`{"model":"claude-haiku-4-5"}`)
+	body := strings.NewReader(`{"model":"claude-haiku-4-5","stream":true}`)
 	r := httptest.NewRequest("POST", "/v1/messages", body)
+	r.Header.Set("User-Agent", "foo/1.0")
 	ctx := context.WithValue(r.Context(), ctxExtraUsageIntent, ExtraUsageIntent{Reason: "client_restriction"})
 	ctx = context.WithValue(ctx, ctxProject, &types.Project{ID: "p1"})
 	ctx = context.WithValue(ctx, ctxAPIKey, &types.APIKey{ID: "k1", CreatedBy: "u1"})
 	ctx = context.WithValue(ctx, ctxTraceID, "trace-xyz")
+	ctx = context.WithValue(ctx, ctxModel, &types.Model{Name: "claude-haiku-4-5", Publisher: types.PublisherAnthropic})
+	ctx = context.WithValue(ctx, ctxOAuthGrantID, "grant-xyz")
 	r = r.WithContext(ctx)
 
 	rr := httptest.NewRecorder()
@@ -357,6 +360,21 @@ func TestExtraUsageGuard_ClientRestriction_NotEnabled_LogsRequest(t *testing.T) 
 	wantMsg := "this client cannot use subscription for anthropic models; enable extra usage"
 	if got.ErrorMessage != wantMsg {
 		t.Errorf("ErrorMessage=%q, want %q", got.ErrorMessage, wantMsg)
+	}
+	if got.RequestKind != types.KindAnthropicMessages {
+		t.Errorf("RequestKind=%q, want %q", got.RequestKind, types.KindAnthropicMessages)
+	}
+	if !got.Streaming {
+		t.Errorf("Streaming=false, want true")
+	}
+	if got.OAuthGrantID != "grant-xyz" {
+		t.Errorf("OAuthGrantID=%q, want grant-xyz", got.OAuthGrantID)
+	}
+	if got.Provider != types.PublisherAnthropic {
+		t.Errorf("Provider=%q, want %q", got.Provider, types.PublisherAnthropic)
+	}
+	if got.Metadata["user_agent"] != "foo/1.0" {
+		t.Errorf("metadata[user_agent]=%q, want foo/1.0", got.Metadata["user_agent"])
 	}
 }
 
