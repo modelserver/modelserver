@@ -29,3 +29,10 @@ alipay:
   alipay_public_key_path: ""
   notify_url: ""
   return_url: ""
+
+stripe:
+  secret_key: ""        # sk_live_... or sk_test_... (env: PAYSERVER_STRIPE_SECRET_KEY)
+  webhook_secret: ""    # whsec_... from Stripe Dashboard webhook endpoint
+  success_url: ""       # fallback; PaymentRequest.ReturnURL preferred when set
+  cancel_url: ""        # fallback; defaults to success_url if empty
+  default_locale: ""    # "" = auto (Stripe detects); "en" / "zh" / etc. to pin

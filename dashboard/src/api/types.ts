@@ -241,7 +241,8 @@ export interface Plan {
   description?: string;
   tier_level: number;
   group_tag?: string;
-  price_per_period: number;
+  price_cny_fen: number;
+  price_usd_cents: number;
   period_months: number;
   credit_rules?: CreditRule[];
   model_credit_rates?: Record<string, CreditRate>;

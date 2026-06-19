@@ -13,10 +13,10 @@ import (
 // CreateSubscription inserts a new subscription.
 func (s *Store) CreateSubscription(sub *types.Subscription) error {
 	return s.pool.QueryRow(context.Background(), `
-		INSERT INTO subscriptions (project_id, plan_id, plan_name, status, starts_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO subscriptions (project_id, plan_id, plan_name, status, starts_at, expires_at, currency)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, created_at, updated_at`,
-		sub.ProjectID, nullString(sub.PlanID), sub.PlanName, sub.Status, sub.StartsAt, sub.ExpiresAt,
+		sub.ProjectID, nullString(sub.PlanID), sub.PlanName, sub.Status, sub.StartsAt, sub.ExpiresAt, sub.Currency,
 	).Scan(&sub.ID, &sub.CreatedAt, &sub.UpdatedAt)
 }
 
@@ -25,12 +25,12 @@ func (s *Store) GetActiveSubscription(projectID string) (*types.Subscription, er
 	sub := &types.Subscription{}
 	var planID *string
 	err := s.pool.QueryRow(context.Background(), `
-		SELECT id, project_id, COALESCE(plan_id::text, ''), plan_name, status, starts_at, expires_at, created_at, updated_at
+		SELECT id, project_id, COALESCE(plan_id::text, ''), plan_name, status, starts_at, expires_at, currency, created_at, updated_at
 		FROM subscriptions
 		WHERE project_id = $1 AND status = 'active' AND starts_at <= NOW() AND expires_at >= NOW()
 		ORDER BY created_at DESC LIMIT 1`, projectID,
 	).Scan(&sub.ID, &sub.ProjectID, &planID, &sub.PlanName, &sub.Status,
-		&sub.StartsAt, &sub.ExpiresAt, &sub.CreatedAt, &sub.UpdatedAt)
+		&sub.StartsAt, &sub.ExpiresAt, &sub.Currency, &sub.CreatedAt, &sub.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -48,10 +48,10 @@ func (s *Store) GetSubscriptionByID(id string) (*types.Subscription, error) {
 	sub := &types.Subscription{}
 	var planID *string
 	err := s.pool.QueryRow(context.Background(), `
-		SELECT id, project_id, COALESCE(plan_id::text, ''), plan_name, status, starts_at, expires_at, created_at, updated_at
+		SELECT id, project_id, COALESCE(plan_id::text, ''), plan_name, status, starts_at, expires_at, currency, created_at, updated_at
 		FROM subscriptions WHERE id = $1`, id,
 	).Scan(&sub.ID, &sub.ProjectID, &planID, &sub.PlanName, &sub.Status,
-		&sub.StartsAt, &sub.ExpiresAt, &sub.CreatedAt, &sub.UpdatedAt)
+		&sub.StartsAt, &sub.ExpiresAt, &sub.Currency, &sub.CreatedAt, &sub.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -67,7 +67,7 @@ func (s *Store) GetSubscriptionByID(id string) (*types.Subscription, error) {
 // ListSubscriptions returns all subscriptions for a project.
 func (s *Store) ListSubscriptions(projectID string) ([]types.Subscription, error) {
 	rows, err := s.pool.Query(context.Background(), `
-		SELECT id, project_id, COALESCE(plan_id::text, ''), plan_name, status, starts_at, expires_at, created_at, updated_at
+		SELECT id, project_id, COALESCE(plan_id::text, ''), plan_name, status, starts_at, expires_at, currency, created_at, updated_at
 		FROM subscriptions WHERE project_id = $1
 		ORDER BY created_at DESC`, projectID)
 	if err != nil {
@@ -80,7 +80,7 @@ func (s *Store) ListSubscriptions(projectID string) ([]types.Subscription, error
 		var sub types.Subscription
 		var planID *string
 		if err := rows.Scan(&sub.ID, &sub.ProjectID, &planID, &sub.PlanName, &sub.Status,
-			&sub.StartsAt, &sub.ExpiresAt, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
+			&sub.StartsAt, &sub.ExpiresAt, &sub.Currency, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if planID != nil {
@@ -103,7 +103,7 @@ func (s *Store) GetActiveSubscriptionsByProjectIDs(projectIDs []string) (map[str
 	}
 	rows, err := s.pool.Query(context.Background(), `
 		SELECT DISTINCT ON (project_id)
-			id, project_id, COALESCE(plan_id::text, ''), plan_name, status, starts_at, expires_at, created_at, updated_at
+			id, project_id, COALESCE(plan_id::text, ''), plan_name, status, starts_at, expires_at, currency, created_at, updated_at
 		FROM subscriptions
 		WHERE project_id = ANY($1::uuid[])
 		  AND status = 'active'
@@ -120,7 +120,7 @@ func (s *Store) GetActiveSubscriptionsByProjectIDs(projectIDs []string) (map[str
 		sub := &types.Subscription{}
 		var planID *string
 		if err := rows.Scan(&sub.ID, &sub.ProjectID, &planID, &sub.PlanName, &sub.Status,
-			&sub.StartsAt, &sub.ExpiresAt, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
+			&sub.StartsAt, &sub.ExpiresAt, &sub.Currency, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan subscription: %w", err)
 		}
 		if planID != nil {
@@ -201,10 +201,11 @@ func (s *Store) ExpireAndFallbackToFree() (int64, error) {
 			tx.Rollback(ctx)
 			return count, fmt.Errorf("expire subscription %s: %w", e.id, err)
 		}
-		// Create free plan subscription.
+		// Create free plan subscription. Currency is empty: a free fallback
+		// unlocks the project for any-currency purchase next time.
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO subscriptions (project_id, plan_id, plan_name, status, starts_at, expires_at)
-			VALUES ($1, $2, $3, $4, $5, $6)`,
+			INSERT INTO subscriptions (project_id, plan_id, plan_name, status, starts_at, expires_at, currency)
+			VALUES ($1, $2, $3, $4, $5, $6, '')`,
 			e.projectID, freePlan.ID, freePlan.Slug, "active", now, freeExpiry,
 		); err != nil {
 			tx.Rollback(ctx)
@@ -324,12 +325,16 @@ func (s *Store) DeliverOrder(orderID string, plan *types.Plan, project *types.Pr
 		newExpiresAt = now.AddDate(0, plan.PeriodMonths*order.Periods, 0)
 	}
 
-	sub := &types.Subscription{ProjectID: order.ProjectID, PlanID: plan.ID, PlanName: plan.Slug, Status: types.SubscriptionStatusActive, StartsAt: now, ExpiresAt: newExpiresAt}
+	// Carry the order's currency onto the new subscription so the
+	// per-project currency lock in handleCreateOrder works across the
+	// DeliverOrder boundary (the order's existing_subscription_id points at
+	// the predecessor sub, not this new one — see migration 050).
+	sub := &types.Subscription{ProjectID: order.ProjectID, PlanID: plan.ID, PlanName: plan.Slug, Status: types.SubscriptionStatusActive, StartsAt: now, ExpiresAt: newExpiresAt, Currency: order.Currency}
 	err = tx.QueryRow(ctx, `
-		INSERT INTO subscriptions (project_id, plan_id, plan_name, status, starts_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO subscriptions (project_id, plan_id, plan_name, status, starts_at, expires_at, currency)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, created_at, updated_at`,
-		sub.ProjectID, sub.PlanID, sub.PlanName, sub.Status, sub.StartsAt, sub.ExpiresAt,
+		sub.ProjectID, sub.PlanID, sub.PlanName, sub.Status, sub.StartsAt, sub.ExpiresAt, sub.Currency,
 	).Scan(&sub.ID, &sub.CreatedAt, &sub.UpdatedAt)
 	if err != nil {
 		tx.Rollback(ctx)

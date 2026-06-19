@@ -18,6 +18,7 @@ type Config struct {
 	Gateways     map[string]gateway.Gateway
 	WeChatNotify *notify.WeChatNotifyHandler
 	AlipayNotify *notify.AlipayNotifyHandler
+	StripeNotify *notify.StripeNotifyHandler
 	Logger       *slog.Logger
 }
 
@@ -44,6 +45,9 @@ func NewRouter(cfg Config) http.Handler {
 		}
 		if cfg.AlipayNotify != nil {
 			r.Post("/alipay", cfg.AlipayNotify.ServeHTTP)
+		}
+		if cfg.StripeNotify != nil {
+			r.Post("/stripe", cfg.StripeNotify.ServeHTTP)
 		}
 	})
 

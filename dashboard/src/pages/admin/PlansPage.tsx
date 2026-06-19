@@ -176,7 +176,8 @@ interface PlanFormState {
   description: string;
   tier_level: number;
   group_tag: string;
-  price_per_period: number;
+  price_cny_fen: number;
+  price_usd_cents: number;
   period_months: number;
   credit_rules: CreditRule[];
   model_credit_rates: { model: string; rate: CreditRate }[];
@@ -191,7 +192,8 @@ function emptyForm(): PlanFormState {
     description: "",
     tier_level: 0,
     group_tag: "",
-    price_per_period: 0,
+    price_cny_fen: 0,
+    price_usd_cents: 0,
     period_months: 1,
     credit_rules: [],
     model_credit_rates: [],
@@ -207,7 +209,8 @@ function planToForm(p: Plan): PlanFormState {
     description: p.description ?? "",
     tier_level: p.tier_level,
     group_tag: p.group_tag ?? "",
-    price_per_period: p.price_per_period,
+    price_cny_fen: p.price_cny_fen,
+    price_usd_cents: p.price_usd_cents,
     period_months: p.period_months,
     credit_rules: p.credit_rules ?? [],
     model_credit_rates: Object.entries(p.model_credit_rates ?? {}).map(
@@ -229,7 +232,8 @@ function formToPayload(f: PlanFormState) {
     description: f.description || undefined,
     tier_level: f.tier_level,
     group_tag: f.group_tag || undefined,
-    price_per_period: f.price_per_period,
+    price_cny_fen: f.price_cny_fen,
+    price_usd_cents: f.price_usd_cents,
     period_months: f.period_months,
     credit_rules: f.credit_rules.length > 0 ? f.credit_rules : undefined,
     model_credit_rates: Object.keys(rates).length > 0 ? rates : undefined,
@@ -237,9 +241,14 @@ function formToPayload(f: PlanFormState) {
   };
 }
 
-function formatPrice(cents: number) {
-  if (cents === 0) return "Free";
-  return `\u00A5${(cents / 100).toFixed(2)}`;
+function formatPriceCNY(fen: number) {
+  if (fen === 0) return "Free";
+  return `\u00A5${(fen / 100).toFixed(2)}`;
+}
+
+function formatPriceUSD(cents: number) {
+  if (cents === 0) return "$0.00";
+  return `$${(cents / 100).toFixed(2)}`;
 }
 
 const PER_PAGE = 20;
@@ -365,7 +374,11 @@ export function PlansPage() {
       accessor: (p) => <Badge variant="outline">{p.tier_level}</Badge>,
       className: "w-16",
     },
-    { header: "Price", accessor: (p) => formatPrice(p.price_per_period) },
+    {
+      header: "Price (CNY / USD)",
+      accessor: (p) =>
+        `${formatPriceCNY(p.price_cny_fen)} / ${formatPriceUSD(p.price_usd_cents)}`,
+    },
     {
       header: "Period",
       accessor: (p) =>
@@ -521,12 +534,22 @@ export function PlansPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Price (cents)</Label>
+                  <Label>Price (CNY fen)</Label>
                   <Input
                     type="number"
-                    value={form.price_per_period}
+                    value={form.price_cny_fen}
                     onChange={(e) =>
-                      setForm((p) => ({ ...p, price_per_period: Number(e.target.value) || 0 }))
+                      setForm((p) => ({ ...p, price_cny_fen: Number(e.target.value) || 0 }))
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Price (USD cents)</Label>
+                  <Input
+                    type="number"
+                    value={form.price_usd_cents}
+                    onChange={(e) =>
+                      setForm((p) => ({ ...p, price_usd_cents: Number(e.target.value) || 0 }))
                     }
                   />
                 </div>

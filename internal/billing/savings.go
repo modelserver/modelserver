@@ -29,12 +29,18 @@ type CostBreakdown struct {
 
 // ComputeCostBreakdown folds per-model token sums against the catalog's
 // default credit rates to produce the equivalent API standard cost, then
-// combines that with the active plan's PricePerPeriod and accumulated
+// combines that with the active plan's PriceCNYFen and accumulated
 // extra-usage spend.
 //
 // sub/plan may be nil (no active subscription); fallbackStart/fallbackEnd
 // are used as the period in that case. Long-context multipliers are NOT
 // applied in this v1; see spec §VII for the known limitation.
+//
+// activeCurrency is the currency of the active subscription's paid orders
+// (from subscriptions.currency). USD orders are excluded from savings
+// analytics in v1: mixing USD cents into a fen-denominated aggregate would
+// produce a meaningless number.
+// See docs/superpowers/specs/2026-06-19-stripe-payserver-design.md §5.7.
 func ComputeCostBreakdown(
 	sums []store.PerModelTokenSums,
 	extraUsageFen int64,
@@ -43,7 +49,24 @@ func ComputeCostBreakdown(
 	sub *types.Subscription,
 	plan *types.Plan,
 	fallbackStart, fallbackEnd time.Time,
+	activeCurrency string,
 ) CostBreakdown {
+	// USD orders are excluded from savings analytics in v1; mixing USD cents
+	// into a fen-denominated aggregate would produce a meaningless number.
+	// See docs/superpowers/specs/2026-06-19-stripe-payserver-design.md §5.7.
+	if activeCurrency != "" && activeCurrency != "CNY" {
+		out := CostBreakdown{}
+		if sub != nil {
+			out.HasActiveSub = true
+			out.PeriodStart = sub.StartsAt
+			out.PeriodEnd = sub.ExpiresAt
+		} else {
+			out.PeriodStart = fallbackStart
+			out.PeriodEnd = fallbackEnd
+		}
+		return out
+	}
+
 	var apiFen int64
 	for _, s := range sums {
 		m, ok := catalog.Lookup(s.Model)
@@ -75,7 +98,7 @@ func ComputeCostBreakdown(
 	}
 	if sub != nil && plan != nil {
 		out.HasActiveSub = true
-		out.SubscriptionFen = plan.PricePerPeriod
+		out.SubscriptionFen = plan.PriceCNYFen
 		out.PeriodStart = sub.StartsAt
 		out.PeriodEnd = sub.ExpiresAt
 	} else {

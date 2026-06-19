@@ -5,6 +5,7 @@ go 1.26.1
 require (
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/jackc/pgx/v5 v5.8.0
+	github.com/stripe/stripe-go/v86 v86.0.0
 	github.com/wechatpay-apiv3/wechatpay-go v0.2.21
 	gopkg.in/yaml.v3 v3.0.1
 )

@@ -83,6 +83,11 @@ func (g *AlipayGateway) CreatePayment(_ context.Context, req *PaymentRequest) (*
 		return nil, fmt.Errorf("marshal biz_content: %w", err)
 	}
 
+	returnURL := req.ReturnURL
+	if returnURL == "" {
+		returnURL = g.cfg.ReturnURL
+	}
+
 	params := url.Values{}
 	params.Set("app_id", g.cfg.AppID)
 	params.Set("method", "alipay.trade.page.pay")
@@ -91,7 +96,7 @@ func (g *AlipayGateway) CreatePayment(_ context.Context, req *PaymentRequest) (*
 	params.Set("timestamp", time.Now().Format("2006-01-02 15:04:05"))
 	params.Set("version", "1.0")
 	params.Set("notify_url", g.cfg.NotifyURL)
-	params.Set("return_url", g.cfg.ReturnURL)
+	params.Set("return_url", returnURL)
 	params.Set("biz_content", string(bizContentBytes))
 
 	signStr := BuildSignString(params)

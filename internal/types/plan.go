@@ -11,7 +11,8 @@ type Plan struct {
 	Description      string                `json:"description,omitempty"`
 	TierLevel        int                   `json:"tier_level"`
 	GroupTag         string                `json:"group_tag,omitempty"`
-	PricePerPeriod   int64                 `json:"price_per_period"`
+	PriceCNYFen      int64                 `json:"price_cny_fen"`
+	PriceUSDCents    int64                 `json:"price_usd_cents"`
 	PeriodMonths     int                   `json:"period_months"`
 	CreditRules      []CreditRule          `json:"credit_rules,omitempty"`
 	ModelCreditRates map[string]CreditRate `json:"model_credit_rates,omitempty"`
@@ -19,6 +20,13 @@ type Plan struct {
 	IsActive         bool                  `json:"is_active"`
 	CreatedAt        time.Time             `json:"created_at"`
 	UpdatedAt        time.Time             `json:"updated_at"`
+}
+
+// IsFree reports whether the plan carries no price in any currency. Used by
+// handle_orders.go to detect the "free → first paid purchase" branch; checking
+// price_cny_fen alone would misclassify USD-only plans as free.
+func (p *Plan) IsFree() bool {
+	return p.PriceCNYFen == 0 && p.PriceUSDCents == 0
 }
 
 // ToPolicy constructs an in-memory RateLimitPolicy from the plan's rules.

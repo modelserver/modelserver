@@ -8,9 +8,13 @@ type Gateway interface {
 }
 
 type PaymentRequest struct {
-	OutTradeNo  string
-	Description string
-	Amount      int64
+	OutTradeNo    string
+	Description   string
+	Amount        int64
+	Currency      string
+	ReturnURL     string
+	CustomerEmail string
+	Metadata      map[string]string
 }
 
 type PaymentResult struct {

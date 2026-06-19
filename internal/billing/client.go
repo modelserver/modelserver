@@ -4,14 +4,15 @@ import "context"
 
 // PaymentRequest is sent to the payment provider to initiate a payment.
 type PaymentRequest struct {
-	OrderID     string            `json:"order_id"`
-	ProductName string            `json:"product_name"`
-	Channel     string            `json:"channel"`
-	Currency    string            `json:"currency"`
-	Amount      int64             `json:"amount"`
-	NotifyURL   string            `json:"notify_url"`
-	ReturnURL   string            `json:"return_url"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	OrderID       string            `json:"order_id"`
+	ProductName   string            `json:"product_name"`
+	Channel       string            `json:"channel"`
+	Currency      string            `json:"currency"`
+	Amount        int64             `json:"amount"`
+	NotifyURL     string            `json:"notify_url"`
+	ReturnURL     string            `json:"return_url"`
+	CustomerEmail string            `json:"customer_email,omitempty"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
 }
 
 // PaymentResponse is returned by the payment provider after creating a payment.

@@ -183,6 +183,12 @@ type Subscription struct {
 	Status    string    `json:"status"`
 	StartsAt  time.Time `json:"starts_at"`
 	ExpiresAt time.Time `json:"expires_at"`
+	// Currency is the currency code ("CNY"/"USD") the subscription was
+	// purchased in, or "" for free-tier / never-paid. Used by
+	// handleCreateOrder to lock subsequent purchases to the same currency
+	// until this subscription expires. DeliverOrder propagates the
+	// originating order's currency here when it inserts a new sub.
+	Currency  string    `json:"currency,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

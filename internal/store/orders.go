@@ -155,3 +155,4 @@ func (s *Store) UpdateOrderPayment(id, paymentRef, paymentURL, status string) er
 		WHERE id = $4`, paymentRef, paymentURL, status, id)
 	return err
 }
+

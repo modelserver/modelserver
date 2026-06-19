@@ -199,8 +199,15 @@ func handleGetUsage(st *store.Store, catalog modelcatalog.Catalog, creditPriceFe
 					writeError(w, http.StatusInternalServerError, "internal", "failed to get usage")
 					return
 				}
+				// savings.go gates out non-CNY subscriptions (USD cents must
+				// not mix into a fen-denominated aggregate). Currency is
+				// denormalized onto the subscription by DeliverOrder.
+				var activeCurrency string
+				if sub != nil {
+					activeCurrency = sub.Currency
+				}
 				cb := billing.ComputeCostBreakdown(sums, extraFen, catalog, creditPriceFen,
-					sub, plan, since, until)
+					sub, plan, since, until, activeCurrency)
 				overview["cost_breakdown"] = cb
 			}
 

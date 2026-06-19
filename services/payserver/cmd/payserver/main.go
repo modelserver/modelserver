@@ -89,6 +89,7 @@ func main() {
 	gateways := make(map[string]gateway.Gateway)
 	var wechatNotify *notifyPkg.WeChatNotifyHandler
 	var alipayNotify *notifyPkg.AlipayNotifyHandler
+	var stripeNotify *notifyPkg.StripeNotifyHandler
 
 	ctx := context.Background()
 
@@ -147,6 +148,25 @@ func main() {
 		logger.Info("alipay gateway initialized")
 	}
 
+	// Stripe gateway.
+	if cfg.Stripe.SecretKey != "" {
+		if cfg.Stripe.WebhookSecret == "" {
+			log.Fatal("stripe.webhook_secret is required when stripe is enabled")
+		}
+		sg, err := gateway.NewStripeGateway(gateway.StripeGatewayConfig{
+			SecretKey:     cfg.Stripe.SecretKey,
+			SuccessURL:    cfg.Stripe.SuccessURL,
+			CancelURL:     cfg.Stripe.CancelURL,
+			DefaultLocale: cfg.Stripe.DefaultLocale,
+		})
+		if err != nil {
+			log.Fatalf("failed to init stripe gateway: %v", err)
+		}
+		gateways["stripe"] = sg
+		stripeNotify = notifyPkg.NewStripeNotifyHandler(cfg.Stripe.WebhookSecret, st, callbackClient, logger)
+		logger.Info("stripe gateway initialized")
+	}
+
 	if len(gateways) == 0 {
 		logger.Warn("no payment gateways configured")
 	}
@@ -163,6 +183,7 @@ func main() {
 		Gateways:     gateways,
 		WeChatNotify: wechatNotify,
 		AlipayNotify: alipayNotify,
+		StripeNotify: stripeNotify,
 		Logger:       logger,
 	})
 

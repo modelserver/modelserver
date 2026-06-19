@@ -398,8 +398,8 @@ export function SubscriptionPage() {
                       <p className="text-sm text-muted-foreground">{plan.description}</p>
                     )}
                     <div>
-                      <span className="text-2xl font-bold">{formatPrice(plan.price_per_period)}</span>
-                      {plan.price_per_period > 0 && (
+                      <span className="text-2xl font-bold">{formatPrice(plan.price_cny_fen)}</span>
+                      {plan.price_cny_fen > 0 && (
                         <span className="text-sm text-muted-foreground">
                           /{plan.period_months === 1 ? "mo" : `${plan.period_months}mo`}
                         </span>
@@ -496,7 +496,7 @@ export function SubscriptionPage() {
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">Price</span>
                   <span className="text-sm">
-                    {formatPrice(dialogPlan.price_per_period)}/
+                    {formatPrice(dialogPlan.price_cny_fen)}/
                     {dialogPlan.period_months === 1 ? "mo" : `${dialogPlan.period_months}mo`}
                   </span>
                 </div>
@@ -505,7 +505,7 @@ export function SubscriptionPage() {
                     <span className="text-sm font-medium">Current Plan</span>
                     <span className="text-sm">
                       {activeSubPlan.display_name || activeSubPlan.name}{" "}
-                      ({formatPrice(activeSubPlan.price_per_period)}/
+                      ({formatPrice(activeSubPlan.price_cny_fen)}/
                       {activeSubPlan.period_months === 1 ? "mo" : `${activeSubPlan.period_months}mo`})
                     </span>
                   </div>
@@ -552,11 +552,11 @@ export function SubscriptionPage() {
                   <span className="font-medium">Estimated Total</span>
                   <span className="font-medium">
                     {isFreePlan || isRenewal
-                      ? formatPrice(dialogPlan.price_per_period * periods)
+                      ? formatPrice(dialogPlan.price_cny_fen * periods)
                       : (() => {
-                          const currentPrice = activeSubPlan?.price_per_period ?? 0;
+                          const currentPrice = activeSubPlan?.price_cny_fen ?? 0;
                           if (!activeSub?.starts_at || !activeSub?.expires_at) {
-                            return formatPrice(Math.max(dialogPlan.price_per_period - currentPrice, 0));
+                            return formatPrice(Math.max(dialogPlan.price_cny_fen - currentPrice, 0));
                           }
                           const now = Date.now();
                           const startsAt = new Date(activeSub.starts_at).getTime();
@@ -567,7 +567,7 @@ export function SubscriptionPage() {
                           if (totalDuration > 0 && usedDuration < totalDuration) {
                             remainingValue = Math.round(((totalDuration - usedDuration) / totalDuration) * currentPrice);
                           }
-                          return formatPrice(Math.max(dialogPlan.price_per_period - remainingValue, 0));
+                          return formatPrice(Math.max(dialogPlan.price_cny_fen - remainingValue, 0));
                         })()}
                   </span>
                 </div>

@@ -17,6 +17,7 @@ type Config struct {
 	Log      LogConfig      `yaml:"log"`
 	WeChat   WeChatConfig   `yaml:"wechat"`
 	Alipay   AlipayConfig   `yaml:"alipay"`
+	Stripe   StripeConfig   `yaml:"stripe"`
 }
 
 type ServerConfig struct {
@@ -56,6 +57,14 @@ type AlipayConfig struct {
 	AlipayPublicKeyPEM  string `yaml:"alipay_public_key_pem"`
 	NotifyURL           string `yaml:"notify_url"`
 	ReturnURL           string `yaml:"return_url"`
+}
+
+type StripeConfig struct {
+	SecretKey     string `yaml:"secret_key"`
+	WebhookSecret string `yaml:"webhook_secret"`
+	SuccessURL    string `yaml:"success_url"`
+	CancelURL     string `yaml:"cancel_url"`
+	DefaultLocale string `yaml:"default_locale"`
 }
 
 func defaults() Config {
@@ -143,6 +152,21 @@ func (c *Config) ApplyEnvOverrides() {
 	}
 	if v := os.Getenv("PAYSERVER_ALIPAY_RETURN_URL"); v != "" {
 		c.Alipay.ReturnURL = v
+	}
+	if v := os.Getenv("PAYSERVER_STRIPE_SECRET_KEY"); v != "" {
+		c.Stripe.SecretKey = v
+	}
+	if v := os.Getenv("PAYSERVER_STRIPE_WEBHOOK_SECRET"); v != "" {
+		c.Stripe.WebhookSecret = v
+	}
+	if v := os.Getenv("PAYSERVER_STRIPE_SUCCESS_URL"); v != "" {
+		c.Stripe.SuccessURL = v
+	}
+	if v := os.Getenv("PAYSERVER_STRIPE_CANCEL_URL"); v != "" {
+		c.Stripe.CancelURL = v
+	}
+	if v := os.Getenv("PAYSERVER_STRIPE_DEFAULT_LOCALE"); v != "" {
+		c.Stripe.DefaultLocale = v
 	}
 
 	// Normalize PEM strings — detect raw base64 and wrap with proper headers.

@@ -3,25 +3,59 @@ package server
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/modelserver/modelserver/services/payserver/internal/gateway"
 	"github.com/modelserver/modelserver/services/payserver/internal/store"
 )
 
-const maxRequestBodySize = 64 * 1024 // 64 KB
+const (
+	maxRequestBodySize = 64 * 1024 // 64 KB
+	maxReturnURLLen    = 2048      // RFC-suggested URL ceiling; Stripe/alipay tolerate well under this
+)
+
+// validateReturnURL accepts an empty string (caller's responsibility to
+// fall back to a configured default) or a syntactically well-formed http /
+// https URL with no embedded userinfo. Defense in depth against
+// open-redirect / phishing-assist where callers pass through user input
+// without their own allowlist.
+func validateReturnURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	if len(raw) > maxReturnURLLen {
+		return fmt.Errorf("return_url too long")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("return_url: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("return_url scheme must be http or https")
+	}
+	if u.Host == "" {
+		return fmt.Errorf("return_url missing host")
+	}
+	if u.User != nil {
+		return fmt.Errorf("return_url must not contain userinfo")
+	}
+	return nil
+}
 
 type paymentAPIRequest struct {
-	OrderID     string            `json:"order_id"`
-	ProductName string            `json:"product_name"`
-	Channel     string            `json:"channel"`
-	Currency    string            `json:"currency"`
-	Amount      int64             `json:"amount"`
-	NotifyURL   string            `json:"notify_url"`
-	ReturnURL   string            `json:"return_url"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	OrderID       string            `json:"order_id"`
+	ProductName   string            `json:"product_name"`
+	Channel       string            `json:"channel"`
+	Currency      string            `json:"currency"`
+	Amount        int64             `json:"amount"`
+	NotifyURL     string            `json:"notify_url"`
+	ReturnURL     string            `json:"return_url"`
+	CustomerEmail string            `json:"customer_email,omitempty"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
 }
 
 type paymentAPIResponse struct {
@@ -42,6 +76,11 @@ func handleCreatePayment(st *store.Store, gateways map[string]gateway.Gateway, l
 
 		if req.OrderID == "" || req.Channel == "" || req.Amount <= 0 {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "order_id, channel, and amount are required"})
+			return
+		}
+
+		if err := validateReturnURL(req.ReturnURL); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 
@@ -83,9 +122,13 @@ func handleCreatePayment(st *store.Store, gateways map[string]gateway.Gateway, l
 
 		// New record inserted — call payment gateway.
 		result, err := gw.CreatePayment(r.Context(), &gateway.PaymentRequest{
-			OutTradeNo:  strings.ReplaceAll(req.OrderID, "-", ""),
-			Description: req.ProductName,
-			Amount:      req.Amount,
+			OutTradeNo:    strings.ReplaceAll(req.OrderID, "-", ""),
+			Description:   req.ProductName,
+			Amount:        req.Amount,
+			Currency:      req.Currency,
+			ReturnURL:     req.ReturnURL,
+			CustomerEmail: req.CustomerEmail,
+			Metadata:      req.Metadata,
 		})
 		if err != nil {
 			logger.Error("create payment", "channel", req.Channel, "order_id", req.OrderID, "error", err)

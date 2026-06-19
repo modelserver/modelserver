@@ -87,7 +87,8 @@ func handleCreatePlan(st *store.Store, catalog modelcatalog.Catalog) http.Handle
 			Description      string                      `json:"description"`
 			TierLevel        int                         `json:"tier_level"`
 			GroupTag         string                      `json:"group_tag"`
-			PricePerPeriod   int64                       `json:"price_per_period"`
+			PriceCNYFen      int64                       `json:"price_cny_fen"`
+			PriceUSDCents    int64                       `json:"price_usd_cents"`
 			PeriodMonths     int                         `json:"period_months"`
 			CreditRules      []types.CreditRule          `json:"credit_rules"`
 			ModelCreditRates map[string]types.CreditRate `json:"model_credit_rates"`
@@ -121,7 +122,8 @@ func handleCreatePlan(st *store.Store, catalog modelcatalog.Catalog) http.Handle
 			Description:      body.Description,
 			TierLevel:        body.TierLevel,
 			GroupTag:         body.GroupTag,
-			PricePerPeriod:   body.PricePerPeriod,
+			PriceCNYFen:      body.PriceCNYFen,
+			PriceUSDCents:    body.PriceUSDCents,
 			PeriodMonths:     body.PeriodMonths,
 			CreditRules:      body.CreditRules,
 			ModelCreditRates: rates,
@@ -158,7 +160,7 @@ func handleUpdatePlan(st *store.Store, catalog modelcatalog.Catalog) http.Handle
 
 		updates := make(map[string]interface{})
 		for _, field := range []string{"name", "slug", "display_name", "description", "tier_level",
-			"group_tag", "price_per_period", "period_months", "is_active"} {
+			"group_tag", "price_cny_fen", "price_usd_cents", "period_months", "is_active"} {
 			if v, ok := body[field]; ok {
 				updates[field] = v
 			}
