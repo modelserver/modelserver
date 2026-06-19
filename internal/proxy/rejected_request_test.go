@@ -217,3 +217,75 @@ func TestBuildRejectedRequestRow_ModelFallsBackToBodyPeek(t *testing.T) {
 		t.Errorf("Provider=%q, want empty (no ModelRef in ctx)", got.Provider)
 	}
 }
+
+func TestBuildRejectedRequestRow_AnthropicHeaders_OnMessages(t *testing.T) {
+	r := httptest.NewRequest("POST", "/v1/messages", nil)
+	r.Header.Set("Anthropic-Beta", "interleaved-thinking-2025-05-14")
+	r.Header.Set("Anthropic-Version", "2023-06-01")
+	ctx := context.WithValue(r.Context(), ctxProject, &types.Project{ID: "p1"})
+	ctx = context.WithValue(ctx, ctxAPIKey, &types.APIKey{ID: "k1"})
+	r = r.WithContext(ctx)
+
+	got := buildRejectedRequestRow(r, types.RequestStatusRateLimited, "msg", "")
+	if got == nil {
+		t.Fatalf("got nil")
+	}
+	if got.Metadata["anthropic_beta"] != "interleaved-thinking-2025-05-14" {
+		t.Errorf("anthropic_beta=%q, want interleaved-thinking-2025-05-14", got.Metadata["anthropic_beta"])
+	}
+	if got.Metadata["anthropic_version"] != "2023-06-01" {
+		t.Errorf("anthropic_version=%q, want 2023-06-01", got.Metadata["anthropic_version"])
+	}
+}
+
+func TestBuildRejectedRequestRow_AnthropicHeaders_OnCountTokens(t *testing.T) {
+	r := httptest.NewRequest("POST", "/v1/messages/count_tokens", nil)
+	r.Header.Set("Anthropic-Beta", "beta-x")
+	r.Header.Set("Anthropic-Version", "2023-06-01")
+	ctx := context.WithValue(r.Context(), ctxProject, &types.Project{ID: "p1"})
+	ctx = context.WithValue(ctx, ctxAPIKey, &types.APIKey{ID: "k1"})
+	r = r.WithContext(ctx)
+
+	got := buildRejectedRequestRow(r, types.RequestStatusRateLimited, "msg", "")
+	if got == nil {
+		t.Fatalf("got nil")
+	}
+	if got.Metadata["anthropic_beta"] != "beta-x" {
+		t.Errorf("anthropic_beta=%q, want beta-x", got.Metadata["anthropic_beta"])
+	}
+	if got.Metadata["anthropic_version"] != "2023-06-01" {
+		t.Errorf("anthropic_version=%q, want 2023-06-01", got.Metadata["anthropic_version"])
+	}
+}
+
+func TestBuildRejectedRequestRow_AnthropicHeaders_NotCapturedOnNonAnthropicPaths(t *testing.T) {
+	// Even if a client wrongly sends Anthropic-Beta to a non-anthropic
+	// path, mirror the success-path scoping and do not capture it. This
+	// keeps the metadata column shape consistent across kinds.
+	cases := []struct{ method, path string }{
+		{"POST", "/v1/chat/completions"},
+		{"POST", "/v1/responses"},
+		{"POST", "/v1/images/generations"},
+		{"POST", "/v1beta/models/gemini-2.5-flash:generateContent"},
+		{"POST", "/unknown/route"},
+	}
+	for _, c := range cases {
+		r := httptest.NewRequest(c.method, c.path, nil)
+		r.Header.Set("Anthropic-Beta", "interleaved-thinking-2025-05-14")
+		r.Header.Set("Anthropic-Version", "2023-06-01")
+		ctx := context.WithValue(r.Context(), ctxProject, &types.Project{ID: "p1"})
+		ctx = context.WithValue(ctx, ctxAPIKey, &types.APIKey{ID: "k1"})
+		r = r.WithContext(ctx)
+
+		got := buildRejectedRequestRow(r, types.RequestStatusRateLimited, "msg", "")
+		if got == nil {
+			t.Fatalf("%s %s: got nil", c.method, c.path)
+		}
+		if _, ok := got.Metadata["anthropic_beta"]; ok {
+			t.Errorf("%s %s: anthropic_beta must NOT be captured on non-anthropic paths, got metadata=%v", c.method, c.path, got.Metadata)
+		}
+		if _, ok := got.Metadata["anthropic_version"]; ok {
+			t.Errorf("%s %s: anthropic_version must NOT be captured on non-anthropic paths, got metadata=%v", c.method, c.path, got.Metadata)
+		}
+	}
+}

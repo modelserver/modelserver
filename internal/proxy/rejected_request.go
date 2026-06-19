@@ -157,6 +157,19 @@ func buildRejectedRequestRow(
 	if ua := r.Header.Get("User-Agent"); ua != "" {
 		metadata["user_agent"] = ua
 	}
+	kind := requestKindFromRequest(r)
+	// Anthropic-specific headers — captured on the success path by
+	// HandleMessages and HandleCountTokens (handler.go). Mirror the same
+	// scoping: only the two anthropic surfaces, never Gemini / OpenAI
+	// paths that don't read these headers.
+	if kind == types.KindAnthropicMessages || kind == types.KindAnthropicCountTokens {
+		if v := r.Header.Get("Anthropic-Beta"); v != "" {
+			metadata["anthropic_beta"] = v
+		}
+		if v := r.Header.Get("Anthropic-Version"); v != "" {
+			metadata["anthropic_version"] = v
+		}
+	}
 
 	return &types.Request{
 		ProjectID:        project.ID,
@@ -169,7 +182,7 @@ func buildRejectedRequestRow(
 		// have hit. The success-path pending row (handler.go CreateRequest)
 		// also leaves Provider empty — it's filled at CompleteRequest time
 		// from the chosen upstream. See spec §"row comparison".
-		RequestKind:      requestKindFromRequest(r),
+		RequestKind:      kind,
 		Model:            model,
 		Streaming:        peekStreaming(r),
 		Status:           status,
