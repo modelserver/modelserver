@@ -105,6 +105,14 @@ interface PaymentResult {
 
 const ORDER_PAGE_SIZE = 10;
 
+// Module-scope so the array reference is stable across renders — `as const`
+// keeps the literal types narrow for the dialog's `channel` discriminated render.
+const CHANNEL_OPTIONS = [
+  { value: "wechat" as const, label: "WeChat Pay", currency: "CNY" as const },
+  { value: "alipay" as const, label: "Alipay",     currency: "CNY" as const },
+  { value: "stripe" as const, label: "Stripe",     currency: "USD" as const },
+];
+
 export function SubscriptionPage() {
   const projectId = useCurrentProject();
   const { data: plansData, isLoading: plansLoading } = useAvailablePlans(projectId);
@@ -163,12 +171,6 @@ export function SubscriptionPage() {
     else if (activeSub?.currency === "CNY") setDisplayCurrency("CNY");
   }, [activeSub?.currency]);
 
-  const channelOptions = [
-    { value: "wechat" as const, label: "WeChat Pay", currency: "CNY" as const },
-    { value: "alipay" as const, label: "Alipay",     currency: "CNY" as const },
-    { value: "stripe" as const, label: "Stripe",     currency: "USD" as const },
-  ];
-
   // "" / undefined means unlocked (free or never-paid)
   const lockedCurrency = (activeSub?.currency || "") as "CNY" | "USD" | "";
 
@@ -178,6 +180,10 @@ export function SubscriptionPage() {
   }
 
   useEffect(() => {
+    // Skip while a dialog is open — otherwise a background subscription
+    // refresh could clobber the user's mid-flight channel pick. The lock
+    // helper text + disabled buttons still enforce the rule on submit.
+    if (upgradeDialog) return;
     setChannel(pickInitialChannel());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSub?.currency]);
@@ -622,7 +628,7 @@ export function SubscriptionPage() {
                 <div className="space-y-2">
                   <Label>Payment Method</Label>
                   <div className="grid grid-cols-3 gap-2">
-                    {channelOptions.map((opt) => {
+                    {CHANNEL_OPTIONS.map((opt) => {
                       const locked = lockedCurrency !== "" && lockedCurrency !== opt.currency;
                       return (
                         <Button
