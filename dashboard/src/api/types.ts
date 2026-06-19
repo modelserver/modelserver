@@ -274,7 +274,7 @@ export interface Order {
   periods: number;
   unit_price: number;
   amount: number;
-  currency: string;
+  currency: "CNY" | "USD";
   status: "pending" | "paying" | "paid" | "delivered" | "failed" | "cancelled";
   channel?: string;
   payment_ref?: string;

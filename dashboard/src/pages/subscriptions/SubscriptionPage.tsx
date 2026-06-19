@@ -239,7 +239,10 @@ export function SubscriptionPage() {
     },
     {
       header: "Amount",
-      accessor: (o) => formatPrice(o.amount),
+      accessor: (o) =>
+        o.currency === "USD"
+          ? formatPriceUSD(o.amount)
+          : formatPriceCNY(o.amount),
     },
     {
       header: "Channel",
@@ -397,9 +400,27 @@ export function SubscriptionPage() {
 
       {/* Available Plans */}
       <div className="space-y-3">
-        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
-          Available Plans
-        </h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
+            Available Plans
+          </h3>
+          <div className="flex gap-1">
+            <Button
+              size="sm"
+              variant={displayCurrency === "CNY" ? "default" : "outline"}
+              onClick={() => setDisplayCurrency("CNY")}
+            >
+              ¥ CNY
+            </Button>
+            <Button
+              size="sm"
+              variant={displayCurrency === "USD" ? "default" : "outline"}
+              onClick={() => setDisplayCurrency("USD")}
+            >
+              $ USD
+            </Button>
+          </div>
+        </div>
         {plans.length === 0 ? (
           <Card>
             <CardContent className="py-8 text-center text-muted-foreground">
@@ -424,8 +445,8 @@ export function SubscriptionPage() {
                       <p className="text-sm text-muted-foreground">{plan.description}</p>
                     )}
                     <div>
-                      <span className="text-2xl font-bold">{formatPrice(plan.price_cny_fen)}</span>
-                      {plan.price_cny_fen > 0 && (
+                      <span className="text-2xl font-bold">{formatPrice(plan)}</span>
+                      {(displayCurrency === "USD" ? plan.price_usd_cents : plan.price_cny_fen) > 0 && (
                         <span className="text-sm text-muted-foreground">
                           /{plan.period_months === 1 ? "mo" : `${plan.period_months}mo`}
                         </span>
@@ -531,7 +552,7 @@ export function SubscriptionPage() {
                     <span className="text-sm font-medium">Current Plan</span>
                     <span className="text-sm">
                       {activeSubPlan.display_name || activeSubPlan.name}{" "}
-                      ({formatPrice(activeSubPlan.price_cny_fen)}/
+                      ({formatPriceForCurrency(activeSubPlan, (activeSub?.currency || "CNY") as "CNY" | "USD")}/
                       {activeSubPlan.period_months === 1 ? "mo" : `${activeSubPlan.period_months}mo`})
                     </span>
                   </div>
