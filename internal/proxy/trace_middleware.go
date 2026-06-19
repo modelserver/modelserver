@@ -17,10 +17,13 @@ import (
 )
 
 const (
-	ctxTraceID     contextKey = "trace_id"
-	ctxTraceSource contextKey = "trace_source"
-	ctxClientKind  contextKey = "client_kind"
+	ctxTraceID              contextKey = "trace_id"
+	ctxTraceSource          contextKey = "trace_source"
+	ctxClientKind           contextKey = "client_kind"
+	ctxClaudeAgentSDKSource contextKey = "claude_agent_sdk_source"
+)
 
+const (
 	openCodeTraceHeader = "X-Opencode-Session"
 	// codexTraceHeader is the hyphenated form emitted by codex CLI ≥0.135.0
 	// (openai/codex#22193 dropped the underscored alias). codexTraceHeaderLegacy
@@ -45,6 +48,41 @@ func codexSessionIDFromRequest(r *http.Request) string {
 // user_<64 hex chars>_account__session_<uuid>
 var claudeUserIDLegacyPattern = regexp.MustCompile(
 	`(?i)^user_[0-9a-f]{64}_account_(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?_session_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$`,
+)
+
+// claudeAgentSDKSystemPrompts is the set of system prompts that Anthropic's
+// /v1/messages API recognises as first-party Claude Code traffic when
+// presented with an OAuth subscriber token. Background hooks shipped with
+// the CC CLI (e.g. the security-guidance plugin's Python hooks calling
+// urllib.request.urlopen with UA "Python-urllib/3.x") emit a minimal
+// request body — no metadata.user_id, no CCH header — using one of these
+// prompts. Matching them here mirrors Anthropic's own gate so plugin
+// traffic consumes subscription budget alongside the user's main session,
+// rather than being mis-classified as a third-party client and 429'd by
+// ExtraUsageGuardMiddleware.
+//
+// Must be byte-exact. "appending text fails the check" — see
+// claude-plugins-official/security-guidance/hooks/llm.py:133-137.
+var claudeAgentSDKSystemPrompts = map[string]struct{}{
+	"You are a Claude agent, built on Anthropic's Claude Agent SDK.": {},
+}
+
+// ClaudeAgentSDK source labels written to requests.metadata when an
+// SDK-shaped request is admitted as ClaudeCode. The "plugin:*" labels are
+// best-effort attributions based on multi-signal fingerprints; the generic
+// "claude-agent-sdk" label is the fallback when the system prompt matches
+// but no narrower signature does.
+const (
+	// ClaudeAgentSDKSourceSecurityGuidance is the fingerprint triad of the
+	// security-guidance plugin's Python review hook: SDK system prompt +
+	// Python-urllib UA + structured-outputs json_schema output_config. The
+	// hook lives at hooks/llm.py in the plugin and is the dominant emitter
+	// of Python-urllib traffic on a normal CC install.
+	ClaudeAgentSDKSourceSecurityGuidance = "plugin:security-guidance"
+	// ClaudeAgentSDKSourceGeneric tags a request whose system prompt is in
+	// the Agent SDK allowlist but whose other signals don't match any
+	// known plugin signature — e.g. a user's own Agent SDK script.
+	ClaudeAgentSDKSourceGeneric = "claude-agent-sdk"
 )
 
 // TraceIDFromContext returns the trace ID from the request context.
@@ -119,7 +157,11 @@ func TraceMiddleware(traceCfg config.TraceConfig, st *store.Store, logger *slog.
 			// Independent client-kind detection (decoupled from TraceSource
 			// precedence — a Claude Code request carrying X-Trace-Id must
 			// still be classified as claude-code for subscription-eligibility).
-			ctx = context.WithValue(ctx, ctxClientKind, deriveClientKind(r, traceCfg))
+			kind, sdkSource := deriveClientKind(r, traceCfg)
+			ctx = context.WithValue(ctx, ctxClientKind, kind)
+			if sdkSource != "" {
+				ctx = context.WithValue(ctx, ctxClaudeAgentSDKSource, sdkSource)
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -132,15 +174,28 @@ func TraceMiddleware(traceCfg config.TraceConfig, st *store.Store, logger *slog.
 // detection on them, disabling claude_code_trace_enabled would silently
 // force every Claude Code request into the client-restriction extra-usage
 // branch, which is a major surprise for operators.
-func deriveClientKind(r *http.Request, cfg config.TraceConfig) string {
+// deriveClientKind also returns the Claude Agent SDK source label when one
+// matched (e.g. "plugin:security-guidance"), so the caller can stash it on
+// the context without re-parsing the body. The label is "" for non-SDK
+// classifications.
+func deriveClientKind(r *http.Request, cfg config.TraceConfig) (kind, sdkSource string) {
 	_ = cfg // kept for future per-client flags; today all checks run unconditionally.
 	if id, err := tryExtractClaudeCodeTraceID(r); err == nil && id != "" {
-		return types.ClientKindClaudeCode
+		return types.ClientKindClaudeCode, ""
+	}
+	// Claude Agent SDK / first-party CC plugin probe: requests built by
+	// hooks like security-guidance never carry metadata.user_id, but their
+	// system prompt is the SDK-attested string Anthropic uses as its own
+	// OAuth gate. Treat them as Claude Code so they consume subscription,
+	// and remember which plugin family matched so the request row can carry
+	// that attribution.
+	if src := classifyClaudeAgentSDK(r); src != "" {
+		return types.ClientKindClaudeCode, src
 	}
 	ua := strings.ToLower(r.Header.Get("User-Agent"))
 	if strings.Contains(ua, "opencode/") ||
 		strings.TrimSpace(r.Header.Get(openCodeTraceHeader)) != "" {
-		return types.ClientKindOpenCode
+		return types.ClientKindOpenCode, ""
 	}
 	// Claude Desktop (Anthropic's Electron app) ships a Chromium-style UA
 	// containing both "Claude/<version>" (the product segment) and
@@ -149,15 +204,15 @@ func deriveClientKind(r *http.Request, cfg config.TraceConfig) string {
 	// normalize_identity.go, so requiring both substrings keeps CLI traffic
 	// out of this branch even if its UA is ever shortened to "claude/".
 	if strings.Contains(ua, "claude/") && strings.Contains(ua, "electron/") {
-		return types.ClientKindClaudeDesktop
+		return types.ClientKindClaudeDesktop, ""
 	}
 	if isOpenClawRequest(r) {
-		return types.ClientKindOpenClaw
+		return types.ClientKindOpenClaw, ""
 	}
 	if codexSessionIDFromRequest(r) != "" {
-		return types.ClientKindCodex
+		return types.ClientKindCodex, ""
 	}
-	return types.ClientKindUnknown
+	return types.ClientKindUnknown, ""
 }
 
 // extractTraceID tries each source in priority order and returns the trace ID
@@ -272,6 +327,85 @@ func extractClaudeTraceID(userID string) string {
 		return ""
 	}
 	return strings.TrimSpace(m[1])
+}
+
+// classifyClaudeAgentSDK inspects a POST /v1/messages request for the
+// fingerprint of a first-party Claude Code plugin / Agent SDK caller.
+// Returns one of:
+//
+//   - "" — not an SDK request
+//   - ClaudeAgentSDKSourceSecurityGuidance — strong triad signature for the
+//     bundled security-guidance Python hook (SDK system prompt + Python-urllib
+//     UA + structured-outputs json_schema output_config)
+//   - ClaudeAgentSDKSourceGeneric — SDK system prompt matched but the
+//     narrower plugin signature did not (e.g. a user-authored Agent SDK
+//     script, or a non-Python SDK consumer)
+//
+// Gated to POST /v1/messages — every other endpoint short-circuits without
+// touching the body. Body access uses readAndRestoreBody so downstream
+// handlers still see the full payload.
+//
+// The Agent SDK plugin emits "system" as a plain string. The CC CLI emits
+// "system" as an array of {type:"text",text:"..."} blocks; we walk that
+// shape too so a future SDK revision that wraps the prompt in an array
+// stays classified correctly without a code change.
+func classifyClaudeAgentSDK(r *http.Request) string {
+	if r.Method != http.MethodPost || r.URL.Path != "/v1/messages" {
+		return ""
+	}
+	body, err := readAndRestoreBody(r)
+	if err != nil || len(body) == 0 {
+		return ""
+	}
+	if !systemPromptInAgentSDKAllowlist(body) {
+		return ""
+	}
+
+	// Plugin-specific narrowing: the security-guidance hook is identifiable
+	// by the combination of Python-urllib UA and the structured-outputs
+	// output_config.format.type=json_schema body shape it always emits.
+	// Either signal alone is too weak; together they are unique on the
+	// public CC plugin surface today.
+	ua := r.Header.Get("User-Agent")
+	hasPythonUrllibUA := strings.HasPrefix(ua, "Python-urllib/")
+	hasJSONSchemaOutput := gjson.GetBytes(body, "output_config.format.type").Str == "json_schema"
+	if hasPythonUrllibUA && hasJSONSchemaOutput {
+		return ClaudeAgentSDKSourceSecurityGuidance
+	}
+	return ClaudeAgentSDKSourceGeneric
+}
+
+// systemPromptInAgentSDKAllowlist returns true when the body's top-level
+// "system" field — whether a bare string or an array of {type:"text",
+// text:"..."} blocks — exactly matches an entry in
+// claudeAgentSDKSystemPrompts.
+func systemPromptInAgentSDKAllowlist(body []byte) bool {
+	sys := gjson.GetBytes(body, "system")
+	switch {
+	case sys.Type == gjson.String:
+		_, ok := claudeAgentSDKSystemPrompts[sys.Str]
+		return ok
+	case sys.IsArray():
+		for _, item := range sys.Array() {
+			t := item.Get("text")
+			if t.Exists() && t.Type == gjson.String {
+				if _, ok := claudeAgentSDKSystemPrompts[t.Str]; ok {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// ClaudeAgentSDKSourceFromContext returns the source label written by
+// TraceMiddleware when a request was admitted as ClaudeCode via the Agent
+// SDK system-prompt allowlist. Returns "" for non-SDK requests.
+func ClaudeAgentSDKSourceFromContext(ctx context.Context) string {
+	if s, ok := ctx.Value(ctxClaudeAgentSDKSource).(string); ok {
+		return s
+	}
+	return ""
 }
 
 // tryExtractTraceIDFromBody reads the request body and checks configured

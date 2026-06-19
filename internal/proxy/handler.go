@@ -204,6 +204,12 @@ func (h *Handler) handleImagesEditsMultipart(w http.ResponseWriter, r *http.Requ
 	if v := r.Header.Get("User-Agent"); v != "" {
 		metadata["user_agent"] = v
 	}
+	if src := ClaudeAgentSDKSourceFromContext(r.Context()); src != "" {
+		// Attribution for requests admitted as ClaudeCode via the Agent SDK
+		// system-prompt allowlist — distinguishes plugin/SDK traffic from
+		// the user's primary CC session in dashboards and audit queries.
+		metadata["claude_agent_sdk_source"] = src
+	}
 
 	pendingReq := &types.Request{
 		ProjectID:    project.ID,
@@ -326,6 +332,12 @@ func (h *Handler) HandleGemini(w http.ResponseWriter, r *http.Request) {
 	if v := r.Header.Get("User-Agent"); v != "" {
 		metadata["user_agent"] = v
 	}
+	if src := ClaudeAgentSDKSourceFromContext(r.Context()); src != "" {
+		// Attribution for requests admitted as ClaudeCode via the Agent SDK
+		// system-prompt allowlist — distinguishes plugin/SDK traffic from
+		// the user's primary CC session in dashboards and audit queries.
+		metadata["claude_agent_sdk_source"] = src
+	}
 
 	pendingReq := &types.Request{
 		ProjectID:    project.ID,
@@ -430,6 +442,12 @@ func (h *Handler) handleProxyRequest(w http.ResponseWriter, r *http.Request, ing
 	}
 	if v := r.Header.Get("User-Agent"); v != "" {
 		metadata["user_agent"] = v
+	}
+	if src := ClaudeAgentSDKSourceFromContext(r.Context()); src != "" {
+		// Attribution for requests admitted as ClaudeCode via the Agent SDK
+		// system-prompt allowlist — distinguishes plugin/SDK traffic from
+		// the user's primary CC session in dashboards and audit queries.
+		metadata["claude_agent_sdk_source"] = src
 	}
 
 	// Record CCH validation result (computed earlier, against the original
@@ -553,6 +571,12 @@ func (h *Handler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	if v := r.Header.Get("User-Agent"); v != "" {
 		metadata["user_agent"] = v
+	}
+	if src := ClaudeAgentSDKSourceFromContext(r.Context()); src != "" {
+		// Attribution for requests admitted as ClaudeCode via the Agent SDK
+		// system-prompt allowlist — distinguishes plugin/SDK traffic from
+		// the user's primary CC session in dashboards and audit queries.
+		metadata["claude_agent_sdk_source"] = src
 	}
 
 	pendingReq := &types.Request{
