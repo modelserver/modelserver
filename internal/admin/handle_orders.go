@@ -3,6 +3,7 @@ package admin
 import (
 	"math"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -125,6 +126,28 @@ func handleCreateOrder(st *store.Store, payClient billing.PaymentClient, billing
 			return
 		}
 
+		// Determine the currency the project is locked to via its paid history.
+		// "" means no paid commitment yet (Free) — any channel is allowed.
+		lockedCurrency, err := st.GetActivePaidCurrency(projectID, activeSub.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "currency lookup failed")
+			return
+		}
+
+		orderCurrency, basePrice, ok := billing.ChannelPricing(body.Channel, plan)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "bad_request",
+				"channel '"+body.Channel+"' not supported or plan has no price for this channel")
+			return
+		}
+
+		if lockedCurrency != "" && lockedCurrency != orderCurrency {
+			writeError(w, http.StatusConflict, "currency_mismatch",
+				"current subscription is in "+lockedCurrency+
+					"; please use the same currency to renew/upgrade, or wait for it to expire")
+			return
+		}
+
 		// Must be an upgrade or renewal (same plan).
 		if !isRenewal && plan.TierLevel <= activePlan.TierLevel {
 			writeError(w, http.StatusConflict, "downgrade_not_allowed", "cannot downgrade to a lower or same tier plan")
@@ -147,25 +170,34 @@ func handleCreateOrder(st *store.Store, payClient billing.PaymentClient, billing
 		periods := body.Periods
 		existingSubID := activeSub.ID
 
-		if isRenewal {
-			// Renewal: same plan, user picks periods, full price.
-			unitPrice = plan.PriceCNYFen
+		switch {
+		case isRenewal:
+			unitPrice = basePrice
 			amount = unitPrice * int64(periods)
-		} else if activePlan.PriceCNYFen == 0 {
+		case activePlan.IsFree():
 			// Free → paid: user picks periods, full price.
-			unitPrice = plan.PriceCNYFen
+			unitPrice = basePrice
 			amount = unitPrice * int64(periods)
-		} else {
-			// Paid → paid upgrade: credit remaining value of current subscription.
+		default:
+			// Paid → paid upgrade in the SAME currency (currency lock above
+			// guarantees this). Credit the residual time-based value of the
+			// active subscription, denominated in the same currency.
+			_, activeBase, ok := billing.ChannelPricing(body.Channel, activePlan)
+			if !ok {
+				// Defense in depth: the lock should have made this unreachable.
+				writeError(w, http.StatusConflict, "currency_mismatch",
+					"active plan has no price in "+orderCurrency)
+				return
+			}
 			now := time.Now()
 			totalDuration := activeSub.ExpiresAt.Sub(activeSub.StartsAt)
 			usedDuration := now.Sub(activeSub.StartsAt)
 			var remainingValue int64
 			if totalDuration > 0 && usedDuration < totalDuration {
 				fraction := float64(totalDuration-usedDuration) / float64(totalDuration)
-				remainingValue = int64(math.Round(fraction * float64(activePlan.PriceCNYFen)))
+				remainingValue = int64(math.Round(fraction * float64(activeBase)))
 			}
-			unitPrice = plan.PriceCNYFen - remainingValue
+			unitPrice = basePrice - remainingValue
 			if unitPrice < 0 {
 				unitPrice = 0
 			}
@@ -180,7 +212,7 @@ func handleCreateOrder(st *store.Store, payClient billing.PaymentClient, billing
 			Periods:                periods,
 			UnitPrice:              unitPrice,
 			Amount:                 amount,
-			Currency:               "CNY",
+			Currency:               orderCurrency,
 			Status:                 types.OrderStatusPending,
 			Channel:                body.Channel,
 			ExistingSubscriptionID: existingSubID,
@@ -197,14 +229,28 @@ func handleCreateOrder(st *store.Store, payClient billing.PaymentClient, billing
 			writeError(w, http.StatusServiceUnavailable, "payment_not_configured", "payment provider is not configured")
 			return
 		}
+
+		// Project owner email — used by Stripe Checkout to prefill the email
+		// field. Best-effort: if lookup fails or owner has no email, send empty
+		// and let Stripe collect it.
+		var ownerEmail string
+		if owner, _ := st.GetUserByID(project.CreatedBy); owner != nil {
+			ownerEmail = owner.Email
+		}
+
 		payResp, err := payClient.CreatePayment(r.Context(), billing.PaymentRequest{
-			OrderID:     order.ID,
-			ProductName: plan.DisplayName,
-			Channel:     body.Channel,
-			Currency:    order.Currency,
-			Amount:      order.Amount,
-			NotifyURL:   billingCfg.NotifyURL,
-			ReturnURL:   billingCfg.ReturnURL,
+			OrderID:       order.ID,
+			ProductName:   plan.DisplayName,
+			Channel:       body.Channel,
+			Currency:      order.Currency,
+			Amount:        order.Amount,
+			NotifyURL:     billingCfg.NotifyURL,
+			ReturnURL:     billingCfg.ReturnURL,
+			CustomerEmail: ownerEmail,
+			Metadata: map[string]string{
+				"plan_slug": plan.Slug,
+				"periods":   strconv.Itoa(periods),
+			},
 		})
 		if err != nil {
 			_ = st.UpdateOrderStatus(order.ID, types.OrderStatusFailed)

@@ -199,8 +199,15 @@ func handleGetUsage(st *store.Store, catalog modelcatalog.Catalog, creditPriceFe
 					writeError(w, http.StatusInternalServerError, "internal", "failed to get usage")
 					return
 				}
+				// Look up the locked currency so savings.go can gate out
+				// non-CNY subscriptions (USD cents must not mix into a
+				// fen-denominated aggregate).
+				var activeCurrency string
+				if sub != nil {
+					activeCurrency, _ = st.GetActivePaidCurrency(projectID, sub.ID)
+				}
 				cb := billing.ComputeCostBreakdown(sums, extraFen, catalog, creditPriceFen,
-					sub, plan, since, until)
+					sub, plan, since, until, activeCurrency)
 				overview["cost_breakdown"] = cb
 			}
 
