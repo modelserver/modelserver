@@ -26,6 +26,7 @@ events, no async-payment-method states.
 | Two-phase callback | Reuse existing `callback_status` + `compensate.Worker` |
 | `gateway.PaymentRequest` | Extended with `Currency`, `ReturnURL`, `CustomerEmail`, `Metadata` |
 | Multi-currency rollout | Plan gets new column `price_usd_cents`; old column renamed `price_per_period → price_cny_fen` in the same migration |
+| Cross-currency upgrade | **Strictly forbidden.** A paid subscription locks the project to its purchase currency. Switching currency requires waiting for the current subscription to expire (back to Free). |
 
 ## §1 — File Changes
 
@@ -55,15 +56,16 @@ internal/
 │   ├── client.go                     # PaymentRequest gains CustomerEmail / Metadata
 │   ├── http_client.go                # serialize new fields
 │   ├── channel.go                    # NEW: ChannelPricing helper
-│   ├── savings.go / savings_test.go  # field rename
+│   ├── savings.go / savings_test.go  # field rename + tests already in CNY stay CNY
 ├── store/
 │   ├── migrations/
 │   │   └── 049_plans_multi_currency.sql  # NEW: rename + add USD column + backfill
+│   ├── orders.go                     # NEW helper: GetActivePaidCurrency(projectID, subID)
 │   └── plans.go                      # column rename, scan new column
 ├── types/plan.go                     # rename field + add PriceUSDCents
 ├── admin/
-│   ├── handle_orders.go              # ChannelPricing, cross-currency upgrade rejected, pass email/metadata
-│   ├── handle_plans.go               # CRUD exposes new field
+│   ├── handle_orders.go              # ChannelPricing, cross-currency strict lock, pass email/metadata
+│   ├── handle_plans.go               # CRUD exposes new field + UPDATE allow-list updated
 │   └── usage_period_test.go          # field rename
 dashboard/src/
 ├── api/types.ts                      # Plan interface rename + add field
@@ -86,8 +88,25 @@ type PaymentRequest struct {
 }
 ```
 
-`server/handler.go` forwards the four new fields. WeChat / Alipay gateways do
-not read them, so behavior is unchanged for existing channels.
+`server/handler.go` forwards the four new fields. WeChat gateway ignores them
+(its Prepay API has no use for `Currency` / `ReturnURL` / `CustomerEmail` /
+`Metadata`).
+
+**Alipay gateway — behavior clarification.** Today `AlipayGateway` reads
+`ReturnURL` from `cfg.Alipay.ReturnURL`; the value `modelserver` already sends
+in `paymentAPIRequest.ReturnURL` is silently dropped (latent bug — payserver
+accepts the field but never forwards it). After this change:
+
+- `AlipayGateway.CreatePayment` uses `req.ReturnURL` if non-empty, otherwise
+  falls back to `cfg.Alipay.ReturnURL` (same precedence rule as Stripe in §3).
+- Operators must verify that `billingCfg.ReturnURL` on the modelserver side
+  matches what `cfg.Alipay.ReturnURL` was, since traffic that previously
+  ignored the request value now honors it.
+
+Similarly, today `gateway.PaymentRequest` has no `Currency` field, so the
+`Currency` value `modelserver` already sends in `paymentAPIRequest.Currency`
+is silently dropped at the payserver/handler boundary. This change closes
+that gap.
 
 `billing.PaymentRequest` gains `CustomerEmail` and `Metadata`; `http_client.go`
 serializes them; payserver `paymentAPIRequest` mirrors the fields and forwards
@@ -383,12 +402,24 @@ columns directly.
 
 Touch list:
 
-- `internal/types/plan.go`
+- `internal/types/plan.go` — field rename, add `PriceUSDCents`, add `IsFree()` helper.
 - `internal/store/plans.go` — SELECT/INSERT/UPDATE column lists + scan args
-- `internal/admin/handle_orders.go`
-- `internal/admin/handle_plans.go`
-- `internal/admin/usage_period_test.go`
-- `internal/billing/savings.go` + `savings_test.go`
+  in `CreatePlan`, `GetPlanByID`, `GetPlanBySlug`, `ListPlans`,
+  `ListPlansPaginated`, `ListPlansForProject`, `scanPlans` (all 7 callsites).
+- `internal/admin/handle_orders.go` — see §5.4.
+- `internal/admin/handle_plans.go` — `PricePerPeriod` field in `body` struct
+  (line ~90), `body.PricePerPeriod` reference (~124), **and the UPDATE
+  allow-list at line 161** must rename `"price_per_period"` →
+  `"price_cny_fen"` and add `"price_usd_cents"`. Missing the allow-list edit
+  means the admin UI cannot edit either currency's price.
+- `internal/admin/usage_period_test.go` — fixture field name.
+- `internal/billing/savings.go` — `plan.PricePerPeriod → plan.PriceCNYFen`
+  for now; `savings` is currently a CNY-only concept (it computes how much
+  the user "saved" relative to OAuth top-ups, all in CNY fen). Stripe
+  orders should bypass the savings calculation. Add an early-return when
+  `order.Currency != "CNY"`, and document that USD savings analytics are
+  Future Work.
+- `internal/billing/savings_test.go` — fixture rename, no semantic change.
 
 Historical migration files (`001_init.sql`, `009..044_*.sql`) keep their
 references to `price_per_period` — they ran against the database before the
@@ -413,14 +444,81 @@ func ChannelPricing(channel string, plan *types.Plan) (currency string, unitPric
 
 ### 5.4 `handleCreateOrder` Diff
 
-- Replace `unitPrice = plan.PricePerPeriod` with the channel-derived
-  `basePrice` from `ChannelPricing(body.Channel, plan)`.
-- Replace the hard-coded `Currency: "CNY"` with the derived `currency`.
-- Apply the same derivation to `activePlan` when computing the
-  upgrade-credit residual; if `ChannelPricing(channel, activePlan)` returns
-  `ok=false`, reject the order. This safely refuses cross-currency upgrades
-  (e.g. a CNY subscriber upgrading via Stripe).
-- Pass `CustomerEmail` and `Metadata` per §2.
+The existing flow has three pricing branches: renewal / free→paid first buy
+/ paid→paid upgrade with time-based proration. Multi-currency adds a
+**strict currency lock** in front of all three.
+
+**New: currency lock check.** After resolving `plan` and `activeSub` (but
+before the renewal / upgrade branching), determine the currency the project
+is currently locked to:
+
+```go
+// currency the project is committed to via its current paid subscription.
+// Empty string = no paid commitment yet (active sub is Free) → any channel OK.
+lockedCurrency, err := st.GetActivePaidCurrency(projectID, activeSub.ID)
+if err != nil {
+    writeError(w, http.StatusInternalServerError, "internal", "currency lookup failed")
+    return
+}
+
+orderCurrency, basePrice, ok := ChannelPricing(body.Channel, plan)
+if !ok {
+    writeError(w, http.StatusBadRequest, "bad_request",
+        "channel "+body.Channel+" not supported or plan has no price for this channel")
+    return
+}
+
+if lockedCurrency != "" && lockedCurrency != orderCurrency {
+    writeError(w, http.StatusConflict, "currency_mismatch",
+        "current subscription is in "+lockedCurrency+
+        "; please use the same currency to renew/upgrade, or wait for it to expire")
+    return
+}
+```
+
+`GetActivePaidCurrency` (new in `store/orders.go`):
+
+```go
+// GetActivePaidCurrency returns the currency of the latest paid/delivered
+// order tied to the given subscription, or "" if none exists (e.g. the
+// active subscription is the free tier, granted without an order).
+func (s *Store) GetActivePaidCurrency(projectID, subscriptionID string) (string, error) {
+    var currency string
+    err := s.pool.QueryRow(context.Background(), `
+        SELECT currency FROM orders
+        WHERE project_id = $1
+          AND existing_subscription_id = $2
+          AND status IN ('paid', 'delivered')
+        ORDER BY updated_at DESC
+        LIMIT 1`, projectID, subscriptionID).Scan(&currency)
+    if err == pgx.ErrNoRows { return "", nil }
+    if err != nil { return "", fmt.Errorf("get active paid currency: %w", err) }
+    return currency, nil
+}
+```
+
+Rationale: the subscription that the user is *currently* sitting on was
+either granted (Free, no order) or purchased with a specific order whose
+`currency` is recorded. Reading that single row is enough — no new column,
+no extra schema, same data source the proration math already trusts.
+
+**Per-channel pricing.** Replace each `plan.PricePerPeriod` /
+`activePlan.PricePerPeriod` reference with the channel-derived value:
+
+- `unitPrice = basePrice` (from `ChannelPricing(body.Channel, plan)` above).
+- Free→paid branch detection (`activePlan.PricePerPeriod == 0`) becomes
+  `activePlan.IsFree()` — a small helper on `*types.Plan` that returns
+  `p.PriceCNYFen == 0 && p.PriceUSDCents == 0`. This avoids the false
+  positive where a USD plan happens to have `PriceCNYFen == 0` (which would
+  otherwise look "free" to the old check).
+- The upgrade-proration branch computes `remainingValue` from
+  `ChannelPricing(body.Channel, activePlan).unitPrice` — safe because the
+  currency-lock check above guarantees `activePlan` has a non-zero price in
+  the same currency as the new order (otherwise the request was already
+  rejected).
+- `order.Currency = orderCurrency`.
+
+**Customer email + metadata** pass-through per §2.
 
 ### 5.5 Dashboard
 
@@ -445,8 +543,21 @@ func ChannelPricing(channel string, plan *types.Plan) (currency string, unitPric
   back to a dual-column transition (add new + dual-write + drop old).
 - Dashboard and backend must ship together to avoid missing fields in the
   plans page.
-- Cross-currency upgrade: v1 rejects via `ChannelPricing` returning `ok=false`
-  on the active plan side.
+- **Public admin API JSON contract changes.** The plans admin endpoint
+  returns / accepts `price_cny_fen` instead of `price_per_period`. Any
+  external operator tooling (Postman collections, internal scripts, Excel
+  imports) that drives that endpoint must be updated. There is no JSON
+  alias compatibility layer in v1.
+- **Cross-currency upgrade is strictly forbidden** (see top of doc). A
+  project locked to CNY can only buy CNY plans; ditto USD. To change
+  currency the user must wait for the active paid subscription to expire
+  (system rolls back to Free) and then buy in the other currency. v1 does
+  not provide an admin-side "switch currency" escape hatch — if support
+  needs to do this, they can manually cancel the subscription via the
+  existing admin tooling.
+- **`savings.go` is CNY-only in v1.** USD orders skip savings analytics
+  (early return). Re-introducing savings for USD requires either a
+  per-currency series or a normalized aggregate; deferred to Future Work.
 
 ## §6 — Configuration & Deployment
 
@@ -533,7 +644,8 @@ return URL should point to the dashboard "order complete" page.
 | `gateway/stripe_test.go` | `CreatePayment` param assembly: currency/amount, ClientReferenceID, CustomerEmail optional, SuccessURL precedence (PaymentRequest > config). Use `stripe.SetBackend` with a fake backend; assert the outgoing form. |
 | `notify/stripe_test.go` | 1) signature failure → 400; 2) non-`checkout.session.completed` → 200; 3) `payment_status != paid` → 200; 4) payment row not found → 404; 5) channel mismatch → 400; 6) amount mismatch → 400; 7) happy path → MarkPaymentPaid + CallbackClient.Send invoked; 8) duplicate webhook (already paid + callback success) → 200 with no extra callback; 9) callback failure → IncrCallbackRetries. |
 | `billing/channel_test.go` | `ChannelPricing` full matrix. |
-| `admin/handle_orders_test.go` | Cross-currency upgrade rejected; same-currency upgrade prorate unchanged. |
+| `admin/handle_orders_test.go` | (a) Free→CNY first buy; (b) Free→USD first buy; (c) CNY-locked → CNY renewal OK; (d) CNY-locked → USD purchase rejected `currency_mismatch`; (e) USD-locked → CNY purchase rejected; (f) same-currency upgrade proration unchanged; (g) plan missing USD price → `ChannelPricing` returns `ok=false` → 400. |
+| `store/orders_test.go` | `GetActivePaidCurrency`: returns "" when no paid order; returns latest paid order's currency; ignores `pending`/`failed`/`cancelled` orders; subscription-scoped (different subscription IDs don't bleed across). |
 | `store/migrations_049_test.go` | Migration applies → all 12 plan rows have expected `price_usd_cents`; queries on the old column fail, queries on the new succeed. |
 
 ### 7.2 Integration (semi-manual)
@@ -548,7 +660,8 @@ return URL should point to the dashboard "order complete" page.
 
 | Stage | Failure | Behavior |
 |---|---|---|
-| modelserver create order | cross-currency upgrade | 400 (rejected by `ChannelPricing`) |
+| modelserver create order | cross-currency renew/upgrade | 409 `currency_mismatch` (rejected by `GetActivePaidCurrency` check) |
+| modelserver create order | plan has no price in requested channel's currency | 400 `bad_request` (rejected by `ChannelPricing` → `ok=false`) |
 | modelserver → payserver | gateway "unsupported channel" | order → failed, frontend error |
 | payserver → Stripe API | Stripe rejects (BIN, currency, etc.) | 502 → modelserver order → failed; payment row stays pending |
 | Stripe webhook | signature failure | 400 → Stripe retries (up to 3 days) |
@@ -590,7 +703,9 @@ return URL should point to the dashboard "order complete" page.
    Apple/Google Pay. Adding bank-debit / Bancontact / Alipay-via-Stripe etc.
    requires listening to `checkout.session.async_payment_succeeded` /
    `async_payment_failed`.
-7. **Cross-currency upgrade proration.** Hard rejected in v1.
+7. **Cross-currency renewal / upgrade.** Hard rejected in v1: a paid project
+   is locked to its purchase currency until the subscription expires and
+   reverts to Free. No FX conversion, no proration across currencies.
 8. **Tax / invoicing.** No Stripe Tax, no invoices generated. CN customers
    continue offline invoicing; US sales tax to be re-evaluated by business
    before launch.
@@ -599,4 +714,6 @@ return URL should point to the dashboard "order complete" page.
 
 - ✱ Refund support (high operational frequency).
 - ✱ Async payment methods + a more complete `payment_status` state machine.
+- USD-aware savings analytics (`billing/savings.go`).
+- Admin "switch currency" escape hatch (cancel + refund-aware path for ops).
 - Stripe Subscription (depends on a broader billing redesign).
