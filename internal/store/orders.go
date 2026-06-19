@@ -156,29 +156,3 @@ func (s *Store) UpdateOrderPayment(id, paymentRef, paymentURL, status string) er
 	return err
 }
 
-// Deprecated: GetActivePaidCurrency was the original implementation of the
-// cross-currency lock. It was broken: it joined on
-// existing_subscription_id, but DeliverOrder revokes that sub and inserts
-// a new one, so after the first delivery the lookup found nothing and
-// silently unlocked the project. Replaced by reading
-// subscriptions.currency directly (denormalized in migration 050,
-// populated by DeliverOrder). This function is retained ONLY to keep
-// orders_currency_test.go compiling until the next cleanup wave removes
-// both — it has no callers in production code.
-func (s *Store) GetActivePaidCurrency(projectID, subscriptionID string) (string, error) {
-	var currency string
-	err := s.pool.QueryRow(context.Background(), `
-		SELECT currency FROM orders
-		WHERE project_id = $1
-		  AND existing_subscription_id = $2
-		  AND status IN ('paid', 'delivered')
-		ORDER BY updated_at DESC
-		LIMIT 1`, projectID, subscriptionID).Scan(&currency)
-	if err == pgx.ErrNoRows {
-		return "", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("get active paid currency: %w", err)
-	}
-	return currency, nil
-}
