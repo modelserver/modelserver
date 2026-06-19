@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -90,5 +91,129 @@ func TestPeekStreaming(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBuildRejectedRequestRow_FullContext(t *testing.T) {
+	body := `{"model":"claude-opus-4-7","stream":true}`
+	r := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(body))
+	r.Header.Set("User-Agent", "foo/1.0")
+	r.RemoteAddr = "10.0.0.5:54321"
+	ctx := context.WithValue(r.Context(), ctxProject, &types.Project{ID: "p1"})
+	ctx = context.WithValue(ctx, ctxAPIKey, &types.APIKey{ID: "k1", CreatedBy: "u1"})
+	ctx = context.WithValue(ctx, ctxModel, &types.Model{Name: "claude-opus-4-7", Publisher: types.PublisherAnthropic})
+	ctx = context.WithValue(ctx, ctxOAuthGrantID, "grant-xyz")
+	ctx = context.WithValue(ctx, ctxTraceID, "trace-xyz")
+	r = r.WithContext(ctx)
+
+	got := buildRejectedRequestRow(r, types.RequestStatusRateLimited, "denied", "client_restriction")
+	if got == nil {
+		t.Fatalf("got nil, want populated request row")
+	}
+	if got.ProjectID != "p1" {
+		t.Errorf("ProjectID=%q, want p1", got.ProjectID)
+	}
+	if got.APIKeyID != "k1" {
+		t.Errorf("APIKeyID=%q, want k1", got.APIKeyID)
+	}
+	if got.CreatedBy != "u1" {
+		t.Errorf("CreatedBy=%q, want u1", got.CreatedBy)
+	}
+	if got.TraceID != "trace-xyz" {
+		t.Errorf("TraceID=%q, want trace-xyz", got.TraceID)
+	}
+	if got.OAuthGrantID != "grant-xyz" {
+		t.Errorf("OAuthGrantID=%q, want grant-xyz", got.OAuthGrantID)
+	}
+	if got.Model != "claude-opus-4-7" {
+		t.Errorf("Model=%q, want claude-opus-4-7", got.Model)
+	}
+	if got.Provider != types.PublisherAnthropic {
+		t.Errorf("Provider=%q, want %q", got.Provider, types.PublisherAnthropic)
+	}
+	if got.RequestKind != types.KindAnthropicMessages {
+		t.Errorf("RequestKind=%q, want %q", got.RequestKind, types.KindAnthropicMessages)
+	}
+	if !got.Streaming {
+		t.Errorf("Streaming=false, want true")
+	}
+	if got.Status != types.RequestStatusRateLimited {
+		t.Errorf("Status=%q, want %q", got.Status, types.RequestStatusRateLimited)
+	}
+	if got.ErrorMessage != "denied" {
+		t.Errorf("ErrorMessage=%q, want denied", got.ErrorMessage)
+	}
+	if got.ExtraUsageReason != "client_restriction" {
+		t.Errorf("ExtraUsageReason=%q, want client_restriction", got.ExtraUsageReason)
+	}
+	if got.ClientIP != "10.0.0.5:54321" {
+		t.Errorf("ClientIP=%q, want 10.0.0.5:54321", got.ClientIP)
+	}
+	if got.Metadata["user_agent"] != "foo/1.0" {
+		t.Errorf("metadata[user_agent]=%q, want foo/1.0", got.Metadata["user_agent"])
+	}
+}
+
+func TestBuildRejectedRequestRow_MissingProjectOrAPIKey(t *testing.T) {
+	mk := func(seed func(context.Context) context.Context) *http.Request {
+		r := httptest.NewRequest("POST", "/v1/messages", nil)
+		if seed != nil {
+			r = r.WithContext(seed(r.Context()))
+		}
+		return r
+	}
+	cases := []struct {
+		name string
+		seed func(context.Context) context.Context
+	}{
+		{"no project, no apikey", nil},
+		{"project only", func(ctx context.Context) context.Context {
+			return context.WithValue(ctx, ctxProject, &types.Project{ID: "p1"})
+		}},
+		{"apikey only", func(ctx context.Context) context.Context {
+			return context.WithValue(ctx, ctxAPIKey, &types.APIKey{ID: "k1"})
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := buildRejectedRequestRow(mk(c.seed), types.RequestStatusRateLimited, "msg", "")
+			if got != nil {
+				t.Errorf("want nil, got %+v", got)
+			}
+		})
+	}
+}
+
+func TestBuildRejectedRequestRow_NoUserAgent(t *testing.T) {
+	r := httptest.NewRequest("POST", "/v1/messages", nil)
+	ctx := context.WithValue(r.Context(), ctxProject, &types.Project{ID: "p1"})
+	ctx = context.WithValue(ctx, ctxAPIKey, &types.APIKey{ID: "k1"})
+	r = r.WithContext(ctx)
+
+	got := buildRejectedRequestRow(r, types.RequestStatusRateLimited, "msg", "")
+	if got == nil {
+		t.Fatalf("got nil")
+	}
+	if _, ok := got.Metadata["user_agent"]; ok {
+		t.Errorf("metadata.user_agent must be absent when no UA header, got %q", got.Metadata["user_agent"])
+	}
+}
+
+func TestBuildRejectedRequestRow_ModelFallsBackToBodyPeek(t *testing.T) {
+	// No ModelRef in context — must fall back to peekModel reading the body.
+	r := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(`{"model":"x"}`))
+	ctx := context.WithValue(r.Context(), ctxProject, &types.Project{ID: "p1"})
+	ctx = context.WithValue(ctx, ctxAPIKey, &types.APIKey{ID: "k1"})
+	r = r.WithContext(ctx)
+
+	got := buildRejectedRequestRow(r, types.RequestStatusRateLimited, "msg", "")
+	if got == nil {
+		t.Fatalf("got nil")
+	}
+	if got.Model != "x" {
+		t.Errorf("Model=%q, want x", got.Model)
+	}
+	if got.Provider != "" {
+		t.Errorf("Provider=%q, want empty (no ModelRef in ctx)", got.Provider)
 	}
 }

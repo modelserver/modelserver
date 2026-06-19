@@ -113,3 +113,66 @@ func peekStreaming(r *http.Request) bool {
 	_ = json.Unmarshal(body, &shape)
 	return shape.Stream
 }
+
+// buildRejectedRequestRow assembles a *types.Request suitable for
+// fire-and-forget persistence on 4xx pre-handler rejections. It captures
+// every field that's knowable from the *http.Request + context at the
+// rejection point — UA, kind, streaming, oauth grant, trace id, client
+// ip, model, provider — so the row matches the shape of successful rows
+// (handler.go CreateRequest) except for the rejection-specific
+// status / error_message / extra_usage_reason fields.
+//
+// Returns nil when Project or APIKey is missing from context. That's
+// the same skip-on-missing-attribution policy the original
+// emitGuardRejection used: 5xx infra paths that bypass auth would
+// otherwise produce orphan rows.
+func buildRejectedRequestRow(
+	r *http.Request,
+	status string,
+	errMsg string,
+	extraUsageReason string,
+) *types.Request {
+	if r == nil {
+		return nil
+	}
+	project := ProjectFromContext(r.Context())
+	apiKey := APIKeyFromContext(r.Context())
+	if project == nil || apiKey == nil {
+		return nil
+	}
+
+	model := ""
+	provider := ""
+	if m := ModelFromContext(r.Context()); m != nil {
+		model = m.Name
+		provider = m.Publisher
+	}
+	if model == "" {
+		// Fall back to body shape — covers the case where ResolveModel
+		// ran but the catalog had no entry (the success path's pending
+		// row also stores whatever the client sent).
+		model = peekModel(r)
+	}
+
+	metadata := map[string]string{}
+	if ua := r.Header.Get("User-Agent"); ua != "" {
+		metadata["user_agent"] = ua
+	}
+
+	return &types.Request{
+		ProjectID:        project.ID,
+		APIKeyID:         apiKey.ID,
+		OAuthGrantID:     OAuthGrantIDFromContext(r.Context()),
+		CreatedBy:        apiKey.CreatedBy,
+		TraceID:          TraceIDFromContext(r.Context()),
+		Provider:         provider,
+		RequestKind:      requestKindFromRequest(r),
+		Model:            model,
+		Streaming:        peekStreaming(r),
+		Status:           status,
+		ClientIP:         r.RemoteAddr,
+		ErrorMessage:     errMsg,
+		ExtraUsageReason: extraUsageReason,
+		Metadata:         metadata,
+	}
+}
