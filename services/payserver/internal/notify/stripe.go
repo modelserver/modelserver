@@ -112,12 +112,21 @@ func (h *StripeNotifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	// Phase 1: mark payment as paid (CAS on status='pending').
 	if payment.Status == "pending" {
 		rawNotify, _ := json.Marshal(sess)
-		if _, err := h.store.MarkPaymentPaid(orderID, tradeNo, string(rawNotify), paidAt); err != nil {
+		updated, err := h.store.MarkPaymentPaid(orderID, tradeNo, string(rawNotify), paidAt)
+		if err != nil {
 			h.logger.Error("stripe notify: mark paid failed",
 				"order_id", orderID, "channel", "stripe",
 				"trade_no", tradeNo, "event_id", event.ID, "error", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
+		}
+		if !updated {
+			// Concurrent webhook lost the CAS race; the row already transitioned
+			// out of pending. The idempotency guard above catches the
+			// paid+success case; this log surfaces the rarer paid+pending race.
+			h.logger.Warn("stripe notify: payment already transitioned from pending",
+				"order_id", orderID, "channel", "stripe",
+				"trade_no", tradeNo, "event_id", event.ID)
 		}
 	}
 
