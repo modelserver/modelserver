@@ -75,7 +75,7 @@ func ComputeCostBreakdown(
 	}
 	if sub != nil && plan != nil {
 		out.HasActiveSub = true
-		out.SubscriptionFen = plan.PricePerPeriod
+		out.SubscriptionFen = plan.PriceCNYFen
 		out.PeriodStart = sub.StartsAt
 		out.PeriodEnd = sub.ExpiresAt
 	} else {

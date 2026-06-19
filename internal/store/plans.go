@@ -18,11 +18,11 @@ func (s *Store) CreatePlan(p *types.Plan) error {
 
 	return s.pool.QueryRow(context.Background(), `
 		INSERT INTO plans (name, slug, display_name, description, tier_level, group_tag,
-			price_per_period, period_months, credit_rules, model_credit_rates, classic_rules, is_active)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			price_cny_fen, price_usd_cents, period_months, credit_rules, model_credit_rates, classic_rules, is_active)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING id, created_at, updated_at`,
 		p.Name, p.Slug, p.DisplayName, p.Description, p.TierLevel, p.GroupTag,
-		p.PricePerPeriod, p.PeriodMonths, creditRulesJSON, ratesJSON, classicJSON, p.IsActive,
+		p.PriceCNYFen, p.PriceUSDCents, p.PeriodMonths, creditRulesJSON, ratesJSON, classicJSON, p.IsActive,
 	).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
 }
 
@@ -32,11 +32,11 @@ func (s *Store) GetPlanByID(id string) (*types.Plan, error) {
 	var creditRules, rates, classic []byte
 	err := s.pool.QueryRow(context.Background(), `
 		SELECT id, name, slug, display_name, description, tier_level, group_tag,
-			price_per_period, period_months, credit_rules, model_credit_rates, classic_rules,
+			price_cny_fen, price_usd_cents, period_months, credit_rules, model_credit_rates, classic_rules,
 			is_active, created_at, updated_at
 		FROM plans WHERE id = $1`, id,
 	).Scan(&p.ID, &p.Name, &p.Slug, &p.DisplayName, &p.Description, &p.TierLevel, &p.GroupTag,
-		&p.PricePerPeriod, &p.PeriodMonths, &creditRules, &rates, &classic,
+		&p.PriceCNYFen, &p.PriceUSDCents, &p.PeriodMonths, &creditRules, &rates, &classic,
 		&p.IsActive, &p.CreatedAt, &p.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
@@ -56,11 +56,11 @@ func (s *Store) GetPlanBySlug(slug string) (*types.Plan, error) {
 	var creditRules, rates, classic []byte
 	err := s.pool.QueryRow(context.Background(), `
 		SELECT id, name, slug, display_name, description, tier_level, group_tag,
-			price_per_period, period_months, credit_rules, model_credit_rates, classic_rules,
+			price_cny_fen, price_usd_cents, period_months, credit_rules, model_credit_rates, classic_rules,
 			is_active, created_at, updated_at
 		FROM plans WHERE slug = $1`, slug,
 	).Scan(&p.ID, &p.Name, &p.Slug, &p.DisplayName, &p.Description, &p.TierLevel, &p.GroupTag,
-		&p.PricePerPeriod, &p.PeriodMonths, &creditRules, &rates, &classic,
+		&p.PriceCNYFen, &p.PriceUSDCents, &p.PeriodMonths, &creditRules, &rates, &classic,
 		&p.IsActive, &p.CreatedAt, &p.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
@@ -78,7 +78,7 @@ func (s *Store) GetPlanBySlug(slug string) (*types.Plan, error) {
 func (s *Store) ListPlans(activeOnly bool) ([]types.Plan, error) {
 	query := `
 		SELECT id, name, slug, display_name, description, tier_level, group_tag,
-			price_per_period, period_months, credit_rules, model_credit_rates, classic_rules,
+			price_cny_fen, price_usd_cents, period_months, credit_rules, model_credit_rates, classic_rules,
 			is_active, created_at, updated_at
 		FROM plans`
 	if activeOnly {
@@ -104,7 +104,7 @@ func (s *Store) ListPlansPaginated(p types.PaginationParams) ([]types.Plan, int,
 
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT id, name, slug, display_name, description, tier_level, group_tag,
-			price_per_period, period_months, credit_rules, model_credit_rates, classic_rules,
+			price_cny_fen, price_usd_cents, period_months, credit_rules, model_credit_rates, classic_rules,
 			is_active, created_at, updated_at
 		FROM plans ORDER BY %s %s LIMIT $1 OFFSET $2`,
 		sanitizeSort(p.Sort, "tier_level"), sanitizeOrder(p.Order)),
@@ -126,7 +126,7 @@ func (s *Store) ListPlansPaginated(p types.PaginationParams) ([]types.Plan, int,
 func (s *Store) ListPlansForProject(projectID string) ([]types.Plan, error) {
 	rows, err := s.pool.Query(context.Background(), `
 		SELECT pl.id, pl.name, pl.slug, pl.display_name, pl.description, pl.tier_level, pl.group_tag,
-			pl.price_per_period, pl.period_months, pl.credit_rules, pl.model_credit_rates, pl.classic_rules,
+			pl.price_cny_fen, pl.price_usd_cents, pl.period_months, pl.credit_rules, pl.model_credit_rates, pl.classic_rules,
 			pl.is_active, pl.created_at, pl.updated_at
 		FROM plans pl
 		JOIN projects pr ON pr.id = $1
@@ -160,7 +160,7 @@ func scanPlans(rows pgx.Rows) ([]types.Plan, error) {
 		var p types.Plan
 		var creditRules, rates, classic []byte
 		if err := rows.Scan(&p.ID, &p.Name, &p.Slug, &p.DisplayName, &p.Description,
-			&p.TierLevel, &p.GroupTag, &p.PricePerPeriod, &p.PeriodMonths,
+			&p.TierLevel, &p.GroupTag, &p.PriceCNYFen, &p.PriceUSDCents, &p.PeriodMonths,
 			&creditRules, &rates, &classic,
 			&p.IsActive, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan plan: %w", err)

@@ -14,7 +14,7 @@ func TestResolveOverviewPeriod(t *testing.T) {
 	subEnd := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 
 	sub := &types.Subscription{StartsAt: subStart, ExpiresAt: subEnd, PlanID: "p1"}
-	plan := &types.Plan{ID: "p1", PricePerPeriod: 19900}
+	plan := &types.Plan{ID: "p1", PriceCNYFen: 19900}
 
 	cases := []struct {
 		name         string

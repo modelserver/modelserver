@@ -31,7 +31,7 @@ func TestComputeCostBreakdown_PaidPlanWithSavings(t *testing.T) {
 	sub := &types.Subscription{ID: "s1", Status: types.SubscriptionStatusActive,
 		StartsAt:  time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
 		ExpiresAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)}
-	plan := &types.Plan{PricePerPeriod: 19900} // ¥199.00
+	plan := &types.Plan{PriceCNYFen: 19900} // ¥199.00
 
 	sums := []store.PerModelTokenSums{{
 		Model: "claude-sonnet-4-6",
@@ -97,7 +97,7 @@ func TestComputeCostBreakdown_LowUsageClampsSavedToZero(t *testing.T) {
 	cat := newTestCatalog()
 	sub := &types.Subscription{Status: types.SubscriptionStatusActive,
 		StartsAt: time.Now(), ExpiresAt: time.Now().Add(30 * 24 * time.Hour)}
-	plan := &types.Plan{PricePerPeriod: 19900}
+	plan := &types.Plan{PriceCNYFen: 19900}
 
 	// Tiny usage: 100 input tokens → credits = 300, fen = ceil(300*5438/1e6)=2
 	sums := []store.PerModelTokenSums{{Model: "claude-sonnet-4-6", InputTokens: 100}}
@@ -160,7 +160,7 @@ func TestComputeCostBreakdown_SavedZeroAtExactBreakeven(t *testing.T) {
 		StartsAt: time.Now(), ExpiresAt: time.Now().Add(30 * 24 * time.Hour)}
 	// 1M input tokens with InputRate=3 → credits=3e6 → fen = 3e6*5438/1e6 = 16314 exactly.
 	// Set plan price to the same value so APIStandard == ActualPaid exactly.
-	plan := &types.Plan{PricePerPeriod: 16314}
+	plan := &types.Plan{PriceCNYFen: 16314}
 	sums := []store.PerModelTokenSums{{Model: "claude-sonnet-4-6", InputTokens: 1_000_000}}
 
 	got := ComputeCostBreakdown(sums, 0, cat, 5438, sub, plan, time.Time{}, time.Time{})
@@ -197,7 +197,7 @@ func TestComputeCostBreakdown_ExtraUsageOnlyCountedThroughExtraField(t *testing.
 	cat := newTestCatalog()
 	sub := &types.Subscription{Status: types.SubscriptionStatusActive,
 		StartsAt: time.Now(), ExpiresAt: time.Now().Add(30 * 24 * time.Hour)}
-	plan := &types.Plan{PricePerPeriod: 0} // free plan
+	plan := &types.Plan{PriceCNYFen: 0} // free plan
 
 	sums := []store.PerModelTokenSums{{Model: "claude-sonnet-4-6",
 		InputTokens: 1_000_000, OutputTokens: 1_000_000}}

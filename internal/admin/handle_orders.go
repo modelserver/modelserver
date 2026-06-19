@@ -149,11 +149,11 @@ func handleCreateOrder(st *store.Store, payClient billing.PaymentClient, billing
 
 		if isRenewal {
 			// Renewal: same plan, user picks periods, full price.
-			unitPrice = plan.PricePerPeriod
+			unitPrice = plan.PriceCNYFen
 			amount = unitPrice * int64(periods)
-		} else if activePlan.PricePerPeriod == 0 {
+		} else if activePlan.PriceCNYFen == 0 {
 			// Free → paid: user picks periods, full price.
-			unitPrice = plan.PricePerPeriod
+			unitPrice = plan.PriceCNYFen
 			amount = unitPrice * int64(periods)
 		} else {
 			// Paid → paid upgrade: credit remaining value of current subscription.
@@ -163,9 +163,9 @@ func handleCreateOrder(st *store.Store, payClient billing.PaymentClient, billing
 			var remainingValue int64
 			if totalDuration > 0 && usedDuration < totalDuration {
 				fraction := float64(totalDuration-usedDuration) / float64(totalDuration)
-				remainingValue = int64(math.Round(fraction * float64(activePlan.PricePerPeriod)))
+				remainingValue = int64(math.Round(fraction * float64(activePlan.PriceCNYFen)))
 			}
-			unitPrice = plan.PricePerPeriod - remainingValue
+			unitPrice = plan.PriceCNYFen - remainingValue
 			if unitPrice < 0 {
 				unitPrice = 0
 			}
