@@ -321,10 +321,10 @@ func seedPendingPayment(t *testing.T, st *store.Store, tenantID, channel string,
 func seedPaidPayment(t *testing.T, st *store.Store, tenantID, channel string, amount int64) string {
 	t.Helper()
 	orderID := seedPendingPayment(t, st, tenantID, channel, amount)
-	if _, err := st.MarkPaymentPaid(orderID, "cs_seed", `{}`, time.Now()); err != nil {
+	if _, err := st.MarkPaymentPaid(tenantID, orderID, "cs_seed", `{}`, time.Now()); err != nil {
 		t.Fatalf("seed paid: %v", err)
 	}
-	if err := st.MarkCallbackSuccess(orderID); err != nil {
+	if err := st.MarkCallbackSuccess(tenantID, orderID); err != nil {
 		t.Fatalf("seed callback success: %v", err)
 	}
 	return orderID

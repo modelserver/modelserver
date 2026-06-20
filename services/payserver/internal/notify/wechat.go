@@ -83,7 +83,7 @@ func (h *WeChatNotifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	// Phase 1: mark as paid (if not already)
 	if payment.Status == "pending" {
 		rawNotify, _ := json.Marshal(tx)
-		updated, err := h.store.MarkPaymentPaid(orderID, tradeNo, string(rawNotify), paidAt)
+		updated, err := h.store.MarkPaymentPaid(payment.TenantID, orderID, tradeNo, string(rawNotify), paidAt)
 		if err != nil {
 			h.logger.Error("wechat notify: mark paid failed", "order_id", orderID, "error", err)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -109,7 +109,9 @@ func (h *WeChatNotifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	if t == nil || !t.IsActive {
 		h.logger.Warn("wechat notify: tenant missing or inactive; skipping callback",
 			"order_id", orderID, "tenant_id", payment.TenantID)
-		h.store.MarkCallbackFailed(orderID)
+		if err := h.store.MarkCallbackFailed(payment.TenantID, orderID); err != nil {
+			h.logger.Warn("wechat notify: mark callback failed", "order_id", orderID, "err", err)
+		}
 		return
 	}
 
@@ -126,8 +128,8 @@ func (h *WeChatNotifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	if err := h.callback.Send(cbCtx, target, payload); err != nil {
 		h.logger.Warn("wechat notify: callback failed, will retry",
 			"order_id", orderID, "tenant_id", t.ID, "error", err)
-		h.store.IncrCallbackRetries(orderID)
+		h.store.IncrCallbackRetries(payment.TenantID, orderID)
 		return
 	}
-	h.store.MarkCallbackSuccess(orderID)
+	h.store.MarkCallbackSuccess(payment.TenantID, orderID)
 }

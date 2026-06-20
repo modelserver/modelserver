@@ -80,7 +80,7 @@ func (w *Worker) processPending(ctx context.Context) {
 
 		if p.CallbackRetries >= MaxRetries {
 			w.logger.Error("compensate: max retries reached", "order_id", p.OrderID)
-			w.store.MarkCallbackFailed(p.OrderID)
+			w.store.MarkCallbackFailed(p.TenantID, p.OrderID)
 			continue
 		}
 
@@ -93,7 +93,7 @@ func (w *Worker) processPending(ctx context.Context) {
 		if t == nil || !t.IsActive {
 			w.logger.Warn("compensate: tenant missing or inactive; marking failed",
 				"payment_id", p.ID, "tenant_id", p.TenantID)
-			if err := w.store.MarkCallbackFailed(p.OrderID); err != nil {
+			if err := w.store.MarkCallbackFailed(p.TenantID, p.OrderID); err != nil {
 				w.logger.Error("compensate: mark failed", "order_id", p.OrderID, "error", err)
 			}
 			continue
@@ -113,10 +113,10 @@ func (w *Worker) processPending(ctx context.Context) {
 		if err := w.callback.Send(ctx, target, payload); err != nil {
 			w.logger.Warn("compensate: callback failed; retrying later",
 				"order_id", p.OrderID, "tenant_id", t.ID, "error", err)
-			w.store.IncrCallbackRetries(p.OrderID)
+			w.store.IncrCallbackRetries(p.TenantID, p.OrderID)
 			continue
 		}
-		w.store.MarkCallbackSuccess(p.OrderID)
+		w.store.MarkCallbackSuccess(p.TenantID, p.OrderID)
 	}
 }
 

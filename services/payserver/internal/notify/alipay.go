@@ -91,7 +91,7 @@ func (h *AlipayNotifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	// Phase 1: mark as paid
 	if payment.Status == "pending" {
 		rawNotify, _ := json.Marshal(r.PostForm)
-		updated, err := h.store.MarkPaymentPaid(orderID, tradeNo, string(rawNotify), paidAt)
+		updated, err := h.store.MarkPaymentPaid(payment.TenantID, orderID, tradeNo, string(rawNotify), paidAt)
 		if err != nil {
 			h.logger.Error("alipay notify: mark paid failed", "order_id", orderID, "error", err)
 			http.Error(w, "fail", http.StatusInternalServerError)
@@ -116,7 +116,9 @@ func (h *AlipayNotifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	if t == nil || !t.IsActive {
 		h.logger.Warn("alipay notify: tenant missing or inactive; skipping callback",
 			"order_id", orderID, "tenant_id", payment.TenantID)
-		h.store.MarkCallbackFailed(orderID)
+		if err := h.store.MarkCallbackFailed(payment.TenantID, orderID); err != nil {
+			h.logger.Warn("alipay notify: mark callback failed", "order_id", orderID, "err", err)
+		}
 		return
 	}
 
@@ -133,10 +135,10 @@ func (h *AlipayNotifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	if err := h.callback.Send(cbCtx, target, payload); err != nil {
 		h.logger.Warn("alipay notify: callback failed, will retry",
 			"order_id", orderID, "tenant_id", t.ID, "error", err)
-		h.store.IncrCallbackRetries(orderID)
+		h.store.IncrCallbackRetries(payment.TenantID, orderID)
 		return
 	}
-	h.store.MarkCallbackSuccess(orderID)
+	h.store.MarkCallbackSuccess(payment.TenantID, orderID)
 }
 
 // parseYuanToFen converts "20.00" to 2000. Returns an error on empty or invalid input.

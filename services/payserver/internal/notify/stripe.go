@@ -112,7 +112,7 @@ func (h *StripeNotifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	// Phase 1: mark payment as paid (CAS on status='pending').
 	if payment.Status == "pending" {
 		rawNotify, _ := json.Marshal(sess)
-		updated, err := h.store.MarkPaymentPaid(orderID, tradeNo, string(rawNotify), paidAt)
+		updated, err := h.store.MarkPaymentPaid(payment.TenantID, orderID, tradeNo, string(rawNotify), paidAt)
 		if err != nil {
 			h.logger.Error("stripe notify: mark paid failed",
 				"order_id", orderID, "channel", "stripe",
@@ -148,7 +148,9 @@ func (h *StripeNotifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			"order_id", orderID, "tenant_id", payment.TenantID, "event_id", event.ID)
 		// Mark failed: a deleted/disabled tenant will never accept callbacks.
 		// Compensate worker should not retry forever.
-		h.store.MarkCallbackFailed(orderID)
+		if err := h.store.MarkCallbackFailed(payment.TenantID, orderID); err != nil {
+			h.logger.Warn("stripe notify: mark callback failed", "order_id", orderID, "err", err)
+		}
 		return
 	}
 
@@ -165,8 +167,8 @@ func (h *StripeNotifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	if err := h.callback.Send(cbCtx, target, payload); err != nil {
 		h.logger.Warn("stripe notify: callback failed, will retry",
 			"order_id", orderID, "tenant_id", t.ID, "event_id", event.ID, "error", err)
-		h.store.IncrCallbackRetries(orderID)
+		h.store.IncrCallbackRetries(payment.TenantID, orderID)
 		return
 	}
-	h.store.MarkCallbackSuccess(orderID)
+	h.store.MarkCallbackSuccess(payment.TenantID, orderID)
 }

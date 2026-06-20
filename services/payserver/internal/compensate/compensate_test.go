@@ -61,7 +61,7 @@ func TestCompensateWorker(t *testing.T) {
 
 	// Mark as paid with a timestamp.
 	paidAt := time.Now()
-	_, err = st.MarkPaymentPaid(orderID, "cs_test", `{}`, paidAt)
+	_, err = st.MarkPaymentPaid(tenantID, orderID, "cs_test", `{}`, paidAt)
 	if err != nil {
 		t.Fatalf("mark paid: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestCompensateWorker_InactiveTenant(t *testing.T) {
 
 	// Mark as paid.
 	paidAt := time.Now()
-	_, err = st.MarkPaymentPaid(orderID, "cs_test", `{}`, paidAt)
+	_, err = st.MarkPaymentPaid(tenantID, orderID, "cs_test", `{}`, paidAt)
 	if err != nil {
 		t.Fatalf("mark paid: %v", err)
 	}

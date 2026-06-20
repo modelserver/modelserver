@@ -105,36 +105,40 @@ func (s *Store) GetPaymentByID(id string) (*Payment, error) {
 
 // MarkPaymentPaid atomically marks a pending payment as paid.
 // Returns true if the row was actually updated (i.e., it was pending).
-func (s *Store) MarkPaymentPaid(orderID string, tradeNo string, rawNotify string, paidAt time.Time) (bool, error) {
+// The tenantID guard prevents a tenant-A caller from mutating a tenant-B
+// payment if order_id collisions ever arose (defense in depth — the
+// payments.order_id UNIQUE constraint makes collisions impossible today,
+// but the guard is load-bearing if the schema ever changes).
+func (s *Store) MarkPaymentPaid(tenantID, orderID, tradeNo, rawNotify string, paidAt time.Time) (bool, error) {
 	result, err := s.pool.Exec(context.Background(), `
 		UPDATE payments
 		SET status = 'paid', trade_no = $1, raw_notify = $2, paid_at = $3, updated_at = NOW()
-		WHERE order_id = $4 AND status = 'pending'`,
-		tradeNo, rawNotify, paidAt, orderID)
+		WHERE order_id = $4 AND tenant_id = $5 AND status = 'pending'`,
+		tradeNo, rawNotify, paidAt, orderID, tenantID)
 	if err != nil {
 		return false, err
 	}
 	return result.RowsAffected() > 0, nil
 }
 
-func (s *Store) MarkCallbackSuccess(orderID string) error {
+func (s *Store) MarkCallbackSuccess(tenantID, orderID string) error {
 	_, err := s.pool.Exec(context.Background(), `
 		UPDATE payments SET callback_status = 'success', updated_at = NOW()
-		WHERE order_id = $1`, orderID)
+		WHERE order_id = $1 AND tenant_id = $2`, orderID, tenantID)
 	return err
 }
 
-func (s *Store) IncrCallbackRetries(orderID string) error {
+func (s *Store) IncrCallbackRetries(tenantID, orderID string) error {
 	_, err := s.pool.Exec(context.Background(), `
 		UPDATE payments SET callback_retries = callback_retries + 1, updated_at = NOW()
-		WHERE order_id = $1`, orderID)
+		WHERE order_id = $1 AND tenant_id = $2`, orderID, tenantID)
 	return err
 }
 
-func (s *Store) MarkCallbackFailed(orderID string) error {
+func (s *Store) MarkCallbackFailed(tenantID, orderID string) error {
 	_, err := s.pool.Exec(context.Background(), `
 		UPDATE payments SET callback_status = 'failed', updated_at = NOW()
-		WHERE order_id = $1`, orderID)
+		WHERE order_id = $1 AND tenant_id = $2`, orderID, tenantID)
 	return err
 }
 
