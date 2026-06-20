@@ -122,12 +122,25 @@ type CORSConfig struct {
 }
 
 // BillingConfig holds settings for the billing and payment integration.
+//
+// The payserver bearer token is split into two fields:
+//   - PaymentTenantID: the default-tenant UUID returned by payserver's
+//     migration 002 (operator queries it: `SELECT id FROM tenants WHERE name='default'`).
+//   - PaymentAPIKey: the plaintext secret matching what payserver hashed
+//     into tenants.secret_hash during bootstrap (the value the operator
+//     set as PAYSERVER_DEFAULT_TENANT_SECRET).
+//
+// The HTTP client joins them as `Bearer <tenant_id>:<secret>` at request
+// time. Splitting them in config (vs storing the joined string) keeps
+// secret rotation to a single field and lets secret-manager tooling tag
+// only PaymentAPIKey as sensitive.
 type BillingConfig struct {
-	WebhookSecret string `yaml:"webhook_secret"  mapstructure:"webhook_secret"`
-	PaymentAPIURL string `yaml:"payment_api_url"  mapstructure:"payment_api_url"`
-	PaymentAPIKey string `yaml:"payment_api_key"  mapstructure:"payment_api_key"`
-	NotifyURL     string `yaml:"notify_url"       mapstructure:"notify_url"`
-	ReturnURL     string `yaml:"return_url"       mapstructure:"return_url"`
+	WebhookSecret   string `yaml:"webhook_secret"     mapstructure:"webhook_secret"`
+	PaymentAPIURL   string `yaml:"payment_api_url"    mapstructure:"payment_api_url"`
+	PaymentTenantID string `yaml:"payment_tenant_id"  mapstructure:"payment_tenant_id"`
+	PaymentAPIKey   string `yaml:"payment_api_key"    mapstructure:"payment_api_key"`
+	NotifyURL       string `yaml:"notify_url"         mapstructure:"notify_url"`
+	ReturnURL       string `yaml:"return_url"         mapstructure:"return_url"`
 }
 
 // ExtraUsageConfig controls the extra-usage subsystem. `Enabled` is the
@@ -232,6 +245,7 @@ func setDefaults(v *viper.Viper) {
 	// Billing
 	_ = v.BindEnv("billing.webhook_secret")
 	_ = v.BindEnv("billing.payment_api_url")
+	_ = v.BindEnv("billing.payment_tenant_id")
 	_ = v.BindEnv("billing.payment_api_key")
 	_ = v.BindEnv("billing.notify_url")
 	_ = v.BindEnv("billing.return_url")

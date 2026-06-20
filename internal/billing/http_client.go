@@ -11,17 +11,25 @@ import (
 )
 
 // HTTPPaymentClient implements PaymentClient using HTTP calls.
+//
+// The Bearer token sent to payserver is `<tenantID>:<apiKey>` joined at
+// request time. Both halves come from BillingConfig; payserver's
+// tenantAuthMiddleware splits on the first ':' and bcrypt-verifies the
+// secret against tenants.secret_hash.
 type HTTPPaymentClient struct {
 	baseURL    string
+	tenantID   string
 	apiKey     string
 	httpClient *http.Client
 }
 
-// NewHTTPPaymentClient creates a new HTTP-based payment client.
-func NewHTTPPaymentClient(baseURL, apiKey string) *HTTPPaymentClient {
+// NewHTTPPaymentClient creates a new HTTP-based payment client. Both
+// tenantID and apiKey are required (matching payserver's bearer format).
+func NewHTTPPaymentClient(baseURL, tenantID, apiKey string) *HTTPPaymentClient {
 	return &HTTPPaymentClient{
-		baseURL: baseURL,
-		apiKey:  apiKey,
+		baseURL:  baseURL,
+		tenantID: tenantID,
+		apiKey:   apiKey,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -40,7 +48,7 @@ func (c *HTTPPaymentClient) CreatePayment(ctx context.Context, req PaymentReques
 		return nil, fmt.Errorf("create http request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	httpReq.Header.Set("Authorization", "Bearer "+c.tenantID+":"+c.apiKey)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {

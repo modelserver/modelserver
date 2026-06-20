@@ -21,7 +21,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 	// Construct payment client if configured.
 	var payClient billing.PaymentClient
 	if cfg.Billing.PaymentAPIURL != "" {
-		payClient = billing.NewHTTPPaymentClient(cfg.Billing.PaymentAPIURL, cfg.Billing.PaymentAPIKey)
+		payClient = billing.NewHTTPPaymentClient(cfg.Billing.PaymentAPIURL, cfg.Billing.PaymentTenantID, cfg.Billing.PaymentAPIKey)
 	}
 
 	// Hoist hydraClient so it can be used both in the Hydra public endpoints
