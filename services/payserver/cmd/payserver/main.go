@@ -39,10 +39,21 @@ func main() {
 	runServer()
 }
 
+// rescueMaxTTL caps operator-supplied --ttl. Mirrors the 24h ceiling the
+// OIDC CallbackHandler uses for normal session cookies — there is no
+// legitimate reason a rescue session needs to outlive a normal one.
+const rescueMaxTTL = 24 * time.Hour
+
+// rescueMinSessionSecretChars matches the value enforced by NewOIDCAuth
+// (kept as a duplicate constant to avoid making cmd/payserver depend on
+// the server package's internal constant). If either value changes, change
+// both.
+const rescueMinSessionSecretChars = 32
+
 func runRescue(args []string) {
 	fs := flag.NewFlagSet("rescue", flag.ExitOnError)
 	email := fs.String("email", "", "operator email to encode into the session")
-	ttl := fs.Duration("ttl", time.Hour, "session lifetime")
+	ttl := fs.Duration("ttl", time.Hour, "session lifetime (max 24h)")
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
 	}
@@ -50,11 +61,26 @@ func runRescue(args []string) {
 		fmt.Fprintln(os.Stderr, "rescue: --email is required")
 		os.Exit(2)
 	}
+	if *ttl <= 0 || *ttl > rescueMaxTTL {
+		fmt.Fprintf(os.Stderr, "rescue: --ttl must be >0 and <=%s\n", rescueMaxTTL)
+		os.Exit(2)
+	}
 	secret := os.Getenv("PAYSERVER_OIDC_SESSION_SECRET")
 	if secret == "" {
 		fmt.Fprintln(os.Stderr, "rescue: PAYSERVER_OIDC_SESSION_SECRET is required")
 		os.Exit(2)
 	}
+	if len(secret) < rescueMinSessionSecretChars {
+		fmt.Fprintf(os.Stderr, "rescue: PAYSERVER_OIDC_SESSION_SECRET must be at least %d characters\n", rescueMinSessionSecretChars)
+		os.Exit(2)
+	}
+	// NOTE: rescue intentionally does NOT enforce the OIDC AllowedEmails
+	// allowlist. The rescue path is the escape hatch for when OIDC config
+	// (including the allowlist itself) is broken or locks out everyone.
+	// Restricting it to allowed_emails would defeat its purpose. Access
+	// control here is via host-level access to PAYSERVER_OIDC_SESSION_SECRET
+	// (typically SSH/kubectl exec required); the audit line below is the
+	// only on-host record of the operation.
 	sess := server.AdminSession{
 		Email:     *email,
 		Name:      *email,

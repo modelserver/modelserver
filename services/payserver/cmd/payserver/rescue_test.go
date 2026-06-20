@@ -7,16 +7,24 @@ import (
 	"testing"
 )
 
-// TestRescue_HappyPath compiles the binary and runs `admin rescue` to
-// confirm the subcommand parses args + prints a cookie line. The encoded
-// token's verifiability is already tested in internal/server.
-func TestRescue_HappyPath(t *testing.T) {
+// buildRescueBinary compiles the binary once per test for use across
+// multiple subprocess invocations of `admin rescue ...`.
+func buildRescueBinary(t *testing.T) string {
+	t.Helper()
 	bin := t.TempDir() + "/payserver-test"
 	cmd := exec.Command("go", "build", "-o", bin, ".")
 	cmd.Dir = "."
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v: %s", err, out)
 	}
+	return bin
+}
+
+// TestRescue_HappyPath confirms the subcommand parses args + prints a
+// cookie line. The encoded token's verifiability is already tested in
+// internal/server.
+func TestRescue_HappyPath(t *testing.T) {
+	bin := buildRescueBinary(t)
 	c := exec.Command(bin, "admin", "rescue", "--email", "test@example.com", "--ttl", "1h")
 	c.Env = append(os.Environ(), "PAYSERVER_OIDC_SESSION_SECRET=test-secret-32-bytes-padded-okay!")
 	out, err := c.Output()
@@ -26,5 +34,47 @@ func TestRescue_HappyPath(t *testing.T) {
 	s := string(out)
 	if !strings.Contains(s, "payserver_admin_session=") {
 		t.Errorf("output missing cookie line:\n%s", s)
+	}
+}
+
+// TestRescue_TTLExceedsMaxRejected guards the auto-review HIGH finding:
+// operator-supplied --ttl must be capped to 24h. A 1000h request must
+// exit non-zero with a message naming the limit.
+func TestRescue_TTLExceedsMaxRejected(t *testing.T) {
+	bin := buildRescueBinary(t)
+	c := exec.Command(bin, "admin", "rescue", "--email", "test@example.com", "--ttl", "1000h")
+	c.Env = append(os.Environ(), "PAYSERVER_OIDC_SESSION_SECRET=test-secret-32-bytes-padded-okay!")
+	out, err := c.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected non-zero exit on oversize ttl; stdout:\n%s", out)
+	}
+	if !strings.Contains(string(out), "--ttl must be") {
+		t.Errorf("error message missing TTL hint:\n%s", out)
+	}
+}
+
+// TestRescue_ZeroTTLRejected confirms --ttl=0 / negative is rejected.
+func TestRescue_ZeroTTLRejected(t *testing.T) {
+	bin := buildRescueBinary(t)
+	c := exec.Command(bin, "admin", "rescue", "--email", "test@example.com", "--ttl", "0")
+	c.Env = append(os.Environ(), "PAYSERVER_OIDC_SESSION_SECRET=test-secret-32-bytes-padded-okay!")
+	out, err := c.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected non-zero exit on zero ttl; stdout:\n%s", out)
+	}
+}
+
+// TestRescue_ShortSecretRejected confirms PAYSERVER_OIDC_SESSION_SECRET
+// below the 32-char minimum (matching NewOIDCAuth) is rejected.
+func TestRescue_ShortSecretRejected(t *testing.T) {
+	bin := buildRescueBinary(t)
+	c := exec.Command(bin, "admin", "rescue", "--email", "test@example.com", "--ttl", "1h")
+	c.Env = append(os.Environ(), "PAYSERVER_OIDC_SESSION_SECRET=too-short")
+	out, err := c.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected non-zero exit on short secret; stdout:\n%s", out)
+	}
+	if !strings.Contains(string(out), "at least") {
+		t.Errorf("error message missing length hint:\n%s", out)
 	}
 }
