@@ -84,6 +84,22 @@ func (w *Worker) processPending(ctx context.Context) {
 			continue
 		}
 
+		t, err := w.store.GetTenantByID(p.TenantID)
+		if err != nil {
+			w.logger.Error("compensate: tenant lookup failed; skipping this pass",
+				"payment_id", p.ID, "tenant_id", p.TenantID, "error", err)
+			continue
+		}
+		if t == nil || !t.IsActive {
+			w.logger.Warn("compensate: tenant missing or inactive; marking failed",
+				"payment_id", p.ID, "tenant_id", p.TenantID)
+			if err := w.store.MarkCallbackFailed(p.OrderID); err != nil {
+				w.logger.Error("compensate: mark failed", "order_id", p.OrderID, "error", err)
+			}
+			continue
+		}
+
+		target := notify.CallbackTarget{URL: t.CallbackURL, Secret: t.CallbackSecret}
 		payload := notify.DeliveryPayload{
 			OrderID:    p.OrderID,
 			PaymentRef: p.ID,
@@ -94,8 +110,13 @@ func (w *Worker) processPending(ctx context.Context) {
 			payload.PaidAt = p.PaidAt.Format(time.RFC3339)
 		}
 
-		// TODO(Task 8): resolve tenant + build per-call CallbackTarget before Send.
-		_ = payload // no-op until Task 8 wires per-tenant target lookup
+		if err := w.callback.Send(ctx, target, payload); err != nil {
+			w.logger.Warn("compensate: callback failed; retrying later",
+				"order_id", p.OrderID, "tenant_id", t.ID, "error", err)
+			w.store.IncrCallbackRetries(p.OrderID)
+			continue
+		}
+		w.store.MarkCallbackSuccess(p.OrderID)
 	}
 }
 
