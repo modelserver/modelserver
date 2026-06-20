@@ -31,8 +31,15 @@ func NewOIDCAuth(ctx context.Context, cfg config.OIDCConfig, logger *slog.Logger
 	if cfg.IssuerURL == "" || cfg.ClientID == "" || cfg.ClientSecret == "" || cfg.RedirectURL == "" {
 		return nil, errors.New("oidc: issuer_url, client_id, client_secret, and redirect_url are all required")
 	}
-	if cfg.SessionSecret == "" {
-		return nil, errors.New("oidc: session_secret is required (32+ random bytes)")
+	// minSessionSecretChars guards against operators using short / low-entropy
+	// values. 32 chars of base64 (the openssl rand -base64 32 recipe in our
+	// runbook) carries 24 bytes of entropy; we reject anything below that
+	// length. Treating the value as raw bytes — not enforcing it be base64-
+	// decoded — keeps the operator workflow simple while still flagging
+	// "hunter2"-class mistakes.
+	const minSessionSecretChars = 32
+	if len(cfg.SessionSecret) < minSessionSecretChars {
+		return nil, fmt.Errorf("oidc: session_secret must be at least %d characters (use `openssl rand -base64 32`)", minSessionSecretChars)
 	}
 	provider, err := oidc.NewProvider(ctx, cfg.IssuerURL)
 	if err != nil {
@@ -159,8 +166,9 @@ func (a *OIDCAuth) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var claims struct {
-		Email string `json:"email"`
-		Name  string `json:"name"`
+		Email         string `json:"email"`
+		EmailVerified *bool  `json:"email_verified"`
+		Name          string `json:"name"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
 		http.Error(w, "claims decode failed", http.StatusBadGateway)
@@ -168,6 +176,15 @@ func (a *OIDCAuth) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if claims.Email == "" {
 		http.Error(w, "no email claim in id_token", http.StatusBadGateway)
+		return
+	}
+	// Reject unverified email: without this check, an attacker who controls
+	// any MX could register the victim's email at the IdP without proving
+	// control. Missing email_verified claim is treated as not verified — the
+	// IdP must explicitly assert verification.
+	if claims.EmailVerified == nil || !*claims.EmailVerified {
+		a.logger.Warn("oidc: email not verified by IdP", "email", claims.Email)
+		http.Error(w, "email not verified", http.StatusForbidden)
 		return
 	}
 	if len(a.allowedEmails) > 0 && !a.allowedEmails[strings.ToLower(claims.Email)] {
