@@ -136,7 +136,7 @@ export function TenantsPage() {
               </div>
               <div>
                 <label className="text-sm">Callback HMAC Secret</label>
-                <input className="w-full rounded border px-2 py-1 text-sm font-mono" value={form.callback_secret}
+                <input type="password" className="w-full rounded border px-2 py-1 text-sm font-mono" value={form.callback_secret}
                   onChange={(e) => setForm({ ...form, callback_secret: e.target.value })}
                   placeholder="shared with the upstream's verifier"/>
               </div>
