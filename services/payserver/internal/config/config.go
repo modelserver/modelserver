@@ -12,8 +12,10 @@ type Config struct {
 	Server   ServerConfig   `mapstructure:"server"     yaml:"server"`
 	DB       DBConfig       `mapstructure:"db"         yaml:"db"`
 	Callback CallbackConfig `mapstructure:"callback"   yaml:"callback"`
-	APIKey   string         `mapstructure:"api_key"    yaml:"api_key"`
-	Log      LogConfig      `mapstructure:"log"        yaml:"log"`
+	// APIKey is deprecated; kept for env var compatibility during migration.
+	// Use per-tenant credentials via the admin UI instead.
+	APIKey string `mapstructure:"api_key"    yaml:"api_key"`
+	Log    LogConfig `mapstructure:"log"        yaml:"log"`
 	WeChat   WeChatConfig   `mapstructure:"wechat"     yaml:"wechat"`
 	Alipay   AlipayConfig   `mapstructure:"alipay"     yaml:"alipay"`
 	Stripe   StripeConfig   `mapstructure:"stripe"     yaml:"stripe"`

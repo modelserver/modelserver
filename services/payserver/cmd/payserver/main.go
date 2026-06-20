@@ -60,6 +60,11 @@ func main() {
 	}
 	logger := slog.New(handler).With("component", "payserver")
 
+	// Deprecation warning for old APIKey field.
+	if cfg.APIKey != "" {
+		logger.Warn("PAYSERVER_API_KEY / cfg.api_key is deprecated and ignored; manage credentials per-tenant via the admin UI")
+	}
+
 	// Database.
 	if cfg.DB.URL == "" {
 		log.Fatal("database URL is required (db.url or PAYSERVER_DB_URL)")
