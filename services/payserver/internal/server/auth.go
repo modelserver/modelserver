@@ -34,11 +34,15 @@ func tenantAuthMiddleware(st *store.Store, logger *slog.Logger) func(http.Handle
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			auth := r.Header.Get("Authorization")
-			if !strings.HasPrefix(auth, "Bearer ") {
+			// RFC 7235 requires case-insensitive matching of the auth scheme;
+			// some clients (curl --user, browser auth, language HTTP libs)
+			// send "bearer" lowercased.
+			const scheme = "Bearer "
+			if len(auth) < len(scheme) || !strings.EqualFold(auth[:len(scheme)], scheme) {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing bearer token"})
 				return
 			}
-			token := auth[7:]
+			token := auth[len(scheme):]
 			id, secret, ok := strings.Cut(token, ":")
 			if !ok {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "malformed token; expected <tenant_id>:<secret>"})

@@ -64,6 +64,26 @@ func TestRescue_ZeroTTLRejected(t *testing.T) {
 	}
 }
 
+// TestRescue_AuditLogOnStdout confirms the rescue audit record is
+// emitted on stdout as structured JSON so container log collectors
+// (which typically scrape stdout only) capture it.
+func TestRescue_AuditLogOnStdout(t *testing.T) {
+	bin := buildRescueBinary(t)
+	c := exec.Command(bin, "admin", "rescue", "--email", "audit@example.com", "--ttl", "1h")
+	c.Env = append(os.Environ(), "PAYSERVER_OIDC_SESSION_SECRET=test-secret-32-bytes-padded-okay!")
+	out, err := c.Output() // stdout only
+	if err != nil {
+		t.Fatalf("rescue exec: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, `"msg":"admin rescue session issued"`) {
+		t.Errorf("stdout missing audit msg field:\n%s", s)
+	}
+	if !strings.Contains(s, `"email":"audit@example.com"`) {
+		t.Errorf("stdout missing audit email field:\n%s", s)
+	}
+}
+
 // TestRescue_ShortSecretRejected confirms PAYSERVER_OIDC_SESSION_SECRET
 // below the 32-char minimum (matching NewOIDCAuth) is rejected.
 func TestRescue_ShortSecretRejected(t *testing.T) {

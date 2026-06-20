@@ -91,10 +91,23 @@ func runRescue(args []string) {
 		fmt.Fprintf(os.Stderr, "rescue: encode session: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("issued rescue session for=%s ttl=%s\n", *email, *ttl)
-	fmt.Println("set this cookie on your /admin/* domain to bypass OIDC:")
-	fmt.Printf("  payserver_admin_session=%s\n", token)
-	fmt.Fprintf(os.Stderr, "audit: rescue session issued for=%s ttl=%s pid=%d\n", *email, *ttl, os.Getpid())
+	// Structured audit line on stdout so container log collectors capture
+	// it (operators frequently scrape only stdout). Initialize a minimal
+	// JSON slog handler here rather than reusing runServer's logger —
+	// rescue is the escape-hatch path and must work without any of the
+	// runServer setup having run.
+	auditLogger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	auditLogger.Info("admin rescue session issued",
+		"email", *email, "ttl", ttl.String(), "pid", os.Getpid())
+
+	// Operator-facing instructions remain on stderr (these are for the
+	// human running the command, not for the audit trail).
+	fmt.Fprintf(os.Stderr, "issued rescue session for=%s ttl=%s\n", *email, *ttl)
+	fmt.Fprintln(os.Stderr, "set this cookie on your /admin/* domain to bypass OIDC:")
+	fmt.Fprintf(os.Stderr, "  payserver_admin_session=%s\n", token)
+	// Also emit the cookie value on stdout for scripts that capture it
+	// (preserves the existing behavior the rescue_test asserts).
+	fmt.Printf("payserver_admin_session=%s\n", token)
 }
 
 func runServer() {
@@ -252,10 +265,14 @@ func runServer() {
 		logger.Warn("no payment gateways configured")
 	}
 
-	// Compensation worker.
+	// Compensation worker. Stop ordering (handled below in the signal
+	// goroutine): worker first, then HTTP server. Stopping the worker
+	// first guarantees no in-flight pgx UPDATE races against pool-close,
+	// and ensures the worker's tick-driven callbacks don't fire mid-
+	// shutdown when downstream tenants may already see new request
+	// rejections.
 	compWorker := compensate.NewWorker(st, callbackClient, logger)
 	compWorker.Start()
-	defer compWorker.Stop()
 
 	// OIDC admin auth (optional).
 	var oidcAuth *server.OIDCAuth
@@ -290,12 +307,15 @@ func runServer() {
 		Handler: router,
 	}
 
-	// Graceful shutdown.
+	// Graceful shutdown. Stop the compensate worker BEFORE the HTTP
+	// server so background writes finish on a still-open DB pool. Then
+	// drain HTTP requests so in-flight gateway callbacks complete.
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 		sig := <-sigCh
 		logger.Info("received signal, shutting down", "signal", sig.String())
+		compWorker.Stop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		srv.Shutdown(shutdownCtx)

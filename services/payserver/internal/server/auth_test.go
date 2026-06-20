@@ -125,3 +125,18 @@ func TestTenantAuth_Success(t *testing.T) {
 		t.Fatalf("ctx tenant = %+v, want id=%s", ctxTenant, tt.ID)
 	}
 }
+
+// TestTenantAuth_LowercaseBearerScheme guards the RFC 7235 case-
+// insensitive scheme match. A lowercase "bearer" prefix must still
+// authenticate.
+func TestTenantAuth_LowercaseBearerScheme(t *testing.T) {
+	st := openTestStoreServer(t)
+	tt := seedTestTenant(t, st, "secret")
+	code, ctxTenant := runAuth(t, st, "bearer "+tt.ID+":secret")
+	if code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (lowercase bearer should work)", code)
+	}
+	if ctxTenant == nil || ctxTenant.ID != tt.ID {
+		t.Fatalf("ctx tenant = %+v, want id=%s", ctxTenant, tt.ID)
+	}
+}
