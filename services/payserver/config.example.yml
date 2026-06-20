@@ -5,11 +5,17 @@ db:
   url: "postgres://user:password@localhost:5432/payserver?sslmode=disable"
 
 callback:
+  # Legacy fields, consumed ONCE by migration 002 to bootstrap the
+  # "default" tenant's callback_url and callback_secret. After 002 has
+  # applied, these values are ignored — manage callbacks per-tenant
+  # through the admin UI / API.
   modelserver_url: "http://localhost:8081/api/v1/billing/webhook/delivery"
   webhook_secret: ""
   timeout: 10s
 
-api_key: "change-me"
+# Deprecated: replaced by per-tenant Authorization: Bearer <tenant_id>:<secret>
+# auth. Setting this only triggers a deprecation warning at startup.
+api_key: ""
 
 log:
   level: "info"
@@ -36,3 +42,18 @@ stripe:
   success_url: ""       # fallback; PaymentRequest.ReturnURL preferred when set
   cancel_url: ""        # fallback; defaults to success_url if empty
   default_locale: ""    # "" = auto (Stripe detects); "en" / "zh" / etc. to pin
+
+# OIDC for the /admin/* admin UI. Leave issuer_url empty to disable the
+# admin block entirely (payserver still serves /payments + /notify).
+# Recovery: if OIDC is misconfigured, run
+#   payserver admin rescue --email <ops@example.com>
+# which issues a one-hour session cookie bypassing OIDC (requires
+# PAYSERVER_OIDC_SESSION_SECRET to be set).
+oidc:
+  issuer_url: ""           # e.g. https://idp.example.com
+  client_id: ""
+  client_secret: ""
+  redirect_url: ""         # e.g. https://payserver.example.com/admin/callback
+  scopes: []               # default ["openid", "profile", "email"]
+  allowed_emails: []       # comma-separated env: PAYSERVER_OIDC_ALLOWED_EMAILS
+  session_secret: ""       # MUST be 32+ chars; openssl rand -base64 32
