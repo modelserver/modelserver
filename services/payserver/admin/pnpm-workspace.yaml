@@ -1,4 +1,5 @@
-allowBuilds:
-  esbuild: set this to true or false
+# pnpm v11 refuses to run install scripts of dependencies unless they are
+# allowlisted. esbuild requires its postinstall script to fetch the correct
+# binary for the platform; without this allow-list pnpm install fails.
 onlyBuiltDependencies:
   - esbuild
