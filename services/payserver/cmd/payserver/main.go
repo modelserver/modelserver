@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"crypto/rsa"
+	"embed"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"log/slog"
 	"net/http"
@@ -24,6 +26,9 @@ import (
 	"github.com/modelserver/modelserver/services/payserver/internal/store"
 	"github.com/modelserver/modelserver/services/payserver/internal/tenant"
 )
+
+//go:embed admin_dist
+var adminDistFS embed.FS
 
 func main() {
 	// Subcommand dispatcher: `payserver admin rescue --email <addr>`
@@ -239,6 +244,12 @@ func runServer() {
 		logger.Info("oidc enabled", "issuer", cfg.OIDC.IssuerURL)
 	}
 
+	// Admin frontend embed.
+	adminSubFS, err := fs.Sub(adminDistFS, "admin_dist")
+	if err != nil {
+		log.Fatalf("admin sub-fs: %v", err)
+	}
+
 	// HTTP server.
 	router := server.NewRouter(server.Config{
 		Store:        st,
@@ -247,6 +258,7 @@ func runServer() {
 		AlipayNotify: alipayNotify,
 		StripeNotify: stripeNotify,
 		OIDCAuth:     oidcAuth,
+		AdminDistFS:  adminSubFS,
 		Logger:       logger,
 	})
 

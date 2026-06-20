@@ -1,6 +1,8 @@
 package server
 
 import (
+	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 
@@ -19,6 +21,7 @@ type Config struct {
 	AlipayNotify *notify.AlipayNotifyHandler
 	StripeNotify *notify.StripeNotifyHandler
 	OIDCAuth     *OIDCAuth // nil = admin disabled
+	AdminDistFS  fs.FS    // nil = no admin frontend embedded
 	Logger       *slog.Logger
 }
 
@@ -74,6 +77,30 @@ func NewRouter(cfg Config) http.Handler {
 			r.Post("/stripe", cfg.StripeNotify.ServeHTTP)
 		}
 	})
+
+	// Admin SPA static assets (only when AdminDistFS is wired in).
+	if cfg.AdminDistFS != nil {
+		fileServer := http.FileServerFS(cfg.AdminDistFS)
+		r.Get("/admin/assets/*", http.StripPrefix("/admin/", fileServer).ServeHTTP)
+		r.Get("/admin/vite.svg", http.StripPrefix("/admin/", fileServer).ServeHTTP)
+
+		serveSPA := func(w http.ResponseWriter, req *http.Request) {
+			f, err := cfg.AdminDistFS.Open("index.html")
+			if err != nil {
+				http.Error(w, "admin not built", http.StatusNotFound)
+				return
+			}
+			defer f.Close()
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = io.Copy(w, f)
+		}
+		r.Get("/admin", serveSPA)
+		r.Get("/admin/", serveSPA)
+		r.Get("/admin/tenants", serveSPA)
+		r.Get("/admin/tenants/*", serveSPA)
+		r.Get("/admin/payments", serveSPA)
+		r.Get("/admin/payments/*", serveSPA)
+	}
 
 	return r
 }

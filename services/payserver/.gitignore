@@ -1,0 +1,5 @@
+admin/node_modules/
+admin/dist/
+cmd/payserver/admin_dist/*
+!cmd/payserver/admin_dist/index.html
+!cmd/payserver/admin_dist/.gitkeep
