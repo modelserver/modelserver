@@ -52,7 +52,7 @@ func newTestAlipayGateway(t *testing.T, configReturnURL string) *AlipayGateway {
 	gw, err := NewAlipayGateway(AlipayGatewayConfig{
 		AppID:               "2021000000000001",
 		PrivateKeyPath:      privPath,
-		AlipayPublicKeyPath: pubPath,
+		PublicKeyPath:       pubPath,
 		NotifyURL:           "https://config-default.example/notify",
 		ReturnURL:           configReturnURL,
 	})

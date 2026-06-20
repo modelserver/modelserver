@@ -74,7 +74,7 @@ func TestAlipaySign(t *testing.T) {
 	gw, err := NewAlipayGateway(AlipayGatewayConfig{
 		AppID:               "2021000000000001",
 		PrivateKeyPath:      privPath,
-		AlipayPublicKeyPath: pubPath,
+		PublicKeyPath:       pubPath,
 		NotifyURL:           "https://example.com/notify/alipay",
 		ReturnURL:           "https://example.com/return",
 	})
@@ -105,7 +105,7 @@ func TestAlipayPagePayQRMode(t *testing.T) {
 	gw, err := NewAlipayGateway(AlipayGatewayConfig{
 		AppID:               "2021000000000001",
 		PrivateKeyPath:      privPath,
-		AlipayPublicKeyPath: pubPath,
+		PublicKeyPath:       pubPath,
 		NotifyURL:           "https://example.com/notify/alipay",
 		ReturnURL:           "https://example.com/return",
 	})

@@ -3,5 +3,8 @@ admin/dist/
 cmd/payserver/admin_dist/*
 !cmd/payserver/admin_dist/index.html
 !cmd/payserver/admin_dist/.gitkeep
-# Local-build binary produced by `make build` or `go build ./cmd/payserver`
-payserver
+# Local-build binary produced by `make build` or `go build ./cmd/payserver`.
+# Anchored to the repo root so the pattern doesn't also swallow the
+# cmd/payserver/ source directory (a bare `payserver` matches any path
+# component named "payserver" and silently blocks `git add cmd/payserver/...`).
+/payserver

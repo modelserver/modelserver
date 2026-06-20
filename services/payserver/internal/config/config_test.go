@@ -299,3 +299,26 @@ func TestConfig_Validate_AlipayWithoutPrivateKey(t *testing.T) {
 		t.Errorf("err = %q, want mention of private_key", err)
 	}
 }
+
+// TestConfig_Validate_AlipayWithoutPublicKey pins the error string for
+// the alipay platform-public-key check. The fields are named
+// `alipay.public_key_*` (not `alipay.alipay_public_key_*`) — the prefix
+// was redundant in the `alipay.` namespace. This test ensures the error
+// message stays in sync with the field name an operator would search for.
+func TestConfig_Validate_AlipayWithoutPublicKey(t *testing.T) {
+	c := validBase()
+	c.Alipay.AppID = "alipay-app"
+	c.Alipay.PrivateKeyPEM = "fake-private-key"
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("expected error: alipay without public key")
+	}
+	if !contains(err.Error(), "alipay.public_key_path") || !contains(err.Error(), "alipay.public_key_pem") {
+		t.Errorf("err = %q, want mention of alipay.public_key_path AND alipay.public_key_pem", err)
+	}
+	// Negative: the redundant `alipay.alipay_public_key_*` form must not
+	// appear in the message (regression guard for the rename).
+	if contains(err.Error(), "alipay_public_key") {
+		t.Errorf("err = %q, must not contain the redundant `alipay_public_key` prefix", err)
+	}
+}

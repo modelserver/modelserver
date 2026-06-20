@@ -65,7 +65,7 @@ func TestAlipayNotifyVerification(t *testing.T) {
 	gw, err := gateway.NewAlipayGateway(gateway.AlipayGatewayConfig{
 		AppID:               "2021000000000001",
 		PrivateKeyPath:      privPath,
-		AlipayPublicKeyPath: pubPath,
+		PublicKeyPath:       pubPath,
 		NotifyURL:           "https://example.com/notify",
 		ReturnURL:           "https://example.com/return",
 	})

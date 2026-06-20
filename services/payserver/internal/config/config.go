@@ -57,13 +57,21 @@ type WeChatConfig struct {
 }
 
 type AlipayConfig struct {
-	AppID               string `mapstructure:"app_id"                  yaml:"app_id"`
-	PrivateKeyPath      string `mapstructure:"private_key_path"        yaml:"private_key_path"`
-	PrivateKeyPEM       string `mapstructure:"private_key_pem"         yaml:"private_key_pem"`
-	AlipayPublicKeyPath string `mapstructure:"alipay_public_key_path"  yaml:"alipay_public_key_path"`
-	AlipayPublicKeyPEM  string `mapstructure:"alipay_public_key_pem"   yaml:"alipay_public_key_pem"`
-	NotifyURL           string `mapstructure:"notify_url"              yaml:"notify_url"`
-	ReturnURL           string `mapstructure:"return_url"              yaml:"return_url"`
+	AppID          string `mapstructure:"app_id"           yaml:"app_id"`
+	PrivateKeyPath string `mapstructure:"private_key_path" yaml:"private_key_path"`
+	PrivateKeyPEM  string `mapstructure:"private_key_pem"  yaml:"private_key_pem"`
+	// PublicKeyPath / PublicKeyPEM hold the Alipay platform public key
+	// used to verify callback signatures. Named `public_key_*` (not
+	// `alipay_public_key_*`) because we're already in the `alipay`
+	// namespace — `alipay.alipay_public_key_path` would just stutter.
+	// In Alipay's signing model the merchant's own key is always private
+	// (signs outgoing requests), and the public key in this config is
+	// always Alipay's (verifies incoming callbacks), so "public" is
+	// unambiguous here.
+	PublicKeyPath string `mapstructure:"public_key_path" yaml:"public_key_path"`
+	PublicKeyPEM  string `mapstructure:"public_key_pem"  yaml:"public_key_pem"`
+	NotifyURL     string `mapstructure:"notify_url"      yaml:"notify_url"`
+	ReturnURL     string `mapstructure:"return_url"      yaml:"return_url"`
 }
 
 type StripeConfig struct {
@@ -126,8 +134,8 @@ func (c *Config) Validate() error {
 		if c.Alipay.PrivateKeyPath == "" && c.Alipay.PrivateKeyPEM == "" {
 			return fmt.Errorf("alipay.private_key_path or alipay.private_key_pem is required when alipay.app_id is set")
 		}
-		if c.Alipay.AlipayPublicKeyPath == "" && c.Alipay.AlipayPublicKeyPEM == "" {
-			return fmt.Errorf("alipay.alipay_public_key_path or alipay.alipay_public_key_pem is required when alipay.app_id is set")
+		if c.Alipay.PublicKeyPath == "" && c.Alipay.PublicKeyPEM == "" {
+			return fmt.Errorf("alipay.public_key_path or alipay.public_key_pem is required when alipay.app_id is set")
 		}
 	}
 	if c.Stripe.SecretKey != "" {
@@ -210,8 +218,8 @@ func Load(path string) (*Config, error) {
 		"alipay.app_id",
 		"alipay.private_key_path",
 		"alipay.private_key_pem",
-		"alipay.alipay_public_key_path",
-		"alipay.alipay_public_key_pem",
+		"alipay.public_key_path",
+		"alipay.public_key_pem",
 		"alipay.notify_url",
 		"alipay.return_url",
 		"stripe.secret_key",
@@ -241,7 +249,7 @@ func Load(path string) (*Config, error) {
 
 	cfg.WeChat.MchPrivateKeyPEM = normalizePEM(cfg.WeChat.MchPrivateKeyPEM, "PRIVATE KEY")
 	cfg.Alipay.PrivateKeyPEM = normalizePEM(cfg.Alipay.PrivateKeyPEM, "PRIVATE KEY")
-	cfg.Alipay.AlipayPublicKeyPEM = normalizePEM(cfg.Alipay.AlipayPublicKeyPEM, "PUBLIC KEY")
+	cfg.Alipay.PublicKeyPEM = normalizePEM(cfg.Alipay.PublicKeyPEM, "PUBLIC KEY")
 
 	return &cfg, nil
 }

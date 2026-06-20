@@ -23,8 +23,8 @@ type AlipayGatewayConfig struct {
 	AppID               string
 	PrivateKeyPath      string
 	PrivateKeyPEM       string
-	AlipayPublicKeyPath string
-	AlipayPublicKeyPEM  string
+	PublicKeyPath string
+	PublicKeyPEM  string
 	NotifyURL           string
 	ReturnURL           string
 }
@@ -48,10 +48,10 @@ func NewAlipayGateway(cfg AlipayGatewayConfig) (*AlipayGateway, error) {
 	}
 
 	var pubKey *rsa.PublicKey
-	if cfg.AlipayPublicKeyPEM != "" {
-		pubKey, err = parsePublicKey([]byte(cfg.AlipayPublicKeyPEM))
+	if cfg.PublicKeyPEM != "" {
+		pubKey, err = parsePublicKey([]byte(cfg.PublicKeyPEM))
 	} else {
-		pubKey, err = loadPublicKey(cfg.AlipayPublicKeyPath)
+		pubKey, err = loadPublicKey(cfg.PublicKeyPath)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("load alipay public key: %w", err)

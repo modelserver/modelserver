@@ -233,8 +233,8 @@ func runServer() {
 			AppID:               cfg.Alipay.AppID,
 			PrivateKeyPath:      cfg.Alipay.PrivateKeyPath,
 			PrivateKeyPEM:       cfg.Alipay.PrivateKeyPEM,
-			AlipayPublicKeyPath: cfg.Alipay.AlipayPublicKeyPath,
-			AlipayPublicKeyPEM:  cfg.Alipay.AlipayPublicKeyPEM,
+			PublicKeyPath:       cfg.Alipay.PublicKeyPath,
+			PublicKeyPEM:        cfg.Alipay.PublicKeyPEM,
 			NotifyURL:           cfg.Alipay.NotifyURL,
 			ReturnURL:           cfg.Alipay.ReturnURL,
 		})
