@@ -4,8 +4,10 @@ admin:
 	cd admin && pnpm install --frozen-lockfile && pnpm build
 
 admin_dist: admin
-	rm -rf cmd/payserver/admin_dist
-	mkdir -p cmd/payserver/admin_dist
+	# Preserve .gitkeep (tracked, needed so fresh checkouts have the dir
+	# for //go:embed to find before any build runs) while replacing the
+	# rest of the bundle output.
+	find cmd/payserver/admin_dist -mindepth 1 ! -name .gitkeep -exec rm -rf {} +
 	cp -r admin/dist/* cmd/payserver/admin_dist/
 
 build: admin_dist

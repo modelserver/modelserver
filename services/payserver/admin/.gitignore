@@ -1,3 +1,8 @@
 node_modules
 dist
 .vite
+# TS incremental build artifacts produced by `tsc -b`
+*.tsbuildinfo
+# vite.config compiled output (when bundler resolves the .ts entry)
+vite.config.d.ts
+vite.config.js
