@@ -27,13 +27,34 @@ func TestRescue_HappyPath(t *testing.T) {
 	bin := buildRescueBinary(t)
 	c := exec.Command(bin, "admin", "rescue", "--email", "test@example.com", "--ttl", "1h")
 	c.Env = append(os.Environ(), "PAYSERVER_OIDC_SESSION_SECRET=test-secret-32-bytes-padded-okay!")
-	out, err := c.Output()
+	// CombinedOutput captures both streams; the token must be present
+	// somewhere (on stderr by design) but TestRescue_TokenNotOnStdout
+	// pins the channel.
+	out, err := c.CombinedOutput()
 	if err != nil {
-		t.Fatalf("rescue exec: %v", err)
+		t.Fatalf("rescue exec: %v: %s", err, out)
 	}
 	s := string(out)
 	if !strings.Contains(s, "payserver_admin_session=") {
 		t.Errorf("output missing cookie line:\n%s", s)
+	}
+}
+
+// TestRescue_TokenNotOnStdout pins the security contract: the bearer-
+// equivalent admin session token must NOT be emitted on stdout, because
+// container log collectors typically scrape only stdout and we don't want
+// the token archived to log storage. The audit JSON record on stdout
+// must continue to NOT contain the token.
+func TestRescue_TokenNotOnStdout(t *testing.T) {
+	bin := buildRescueBinary(t)
+	c := exec.Command(bin, "admin", "rescue", "--email", "test@example.com", "--ttl", "1h")
+	c.Env = append(os.Environ(), "PAYSERVER_OIDC_SESSION_SECRET=test-secret-32-bytes-padded-okay!")
+	out, err := c.Output() // stdout only
+	if err != nil {
+		t.Fatalf("rescue exec: %v", err)
+	}
+	if strings.Contains(string(out), "payserver_admin_session=") {
+		t.Errorf("stdout must not contain the session token (it goes to stderr):\n%s", out)
 	}
 }
 

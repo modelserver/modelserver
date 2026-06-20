@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -55,13 +56,46 @@ func validateCallbackURL(raw string, allowPrivate bool) error {
 	}
 	if !allowPrivate {
 		host := u.Hostname()
+		// Strip trailing dot so "127.0.0.1." doesn't escape ParseIP.
+		host = strings.TrimSuffix(host, ".")
 		if ip := net.ParseIP(host); ip != nil {
 			if isNonRoutable(ip) {
 				return fmt.Errorf("callback URL resolves to a non-routable address")
 			}
+		} else if looksNumeric(host) {
+			// Numeric-but-not-canonical-IP forms (e.g. "0x7f000001",
+			// "2130706433", "127.1") parse as IPs in some resolvers /
+			// kernels but not net.ParseIP. Refuse them outright — a
+			// callback URL legitimately needing one of those forms is
+			// not a real production target. Catches the classic SSRF
+			// bypass via alternate IPv4 encodings.
+			return fmt.Errorf("callback URL host appears numeric but is not a canonical IP; reject")
 		}
 	}
 	return nil
+}
+
+// looksNumeric returns true when the host has the surface form of a
+// numeric IP encoding (decimal/octal/hex/dotted variants) that some
+// resolvers accept but net.ParseIP rejects. Catches "0x7f000001",
+// "2130706433", "127.1", "0177.0.0.1", etc.
+func looksNumeric(host string) bool {
+	if host == "" {
+		return false
+	}
+	// "0x..." hex form
+	if strings.HasPrefix(strings.ToLower(host), "0x") {
+		return true
+	}
+	// All chars are digits or dots → numeric encoding the resolver may
+	// reinterpret. Real hostnames contain at least one letter.
+	for _, r := range host {
+		if (r >= '0' && r <= '9') || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // isNonRoutable returns true for IPs that must not be reachable from a
@@ -98,9 +132,20 @@ type CallbackClient struct {
 	allowPrivate bool
 }
 
+// noRedirects refuses to follow redirects on webhook deliveries.
+// Webhooks are POST-with-side-effects; following a redirect from an
+// attacker-controlled tenant URL to an internal endpoint is a classic
+// SSRF bypass (the initial validateCallbackURL guard passes, then 302
+// to 169.254.169.254/...). The receiver must accept on the original
+// host or fail. ErrUseLastResponse returns the response without
+// following — the 3xx then trips the non-2xx branch below.
+func noRedirects(_ *http.Request, _ []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
 func NewCallbackClient(timeout time.Duration) *CallbackClient {
 	return &CallbackClient{
-		httpClient: &http.Client{Timeout: timeout},
+		httpClient: &http.Client{Timeout: timeout, CheckRedirect: noRedirects},
 	}
 }
 
@@ -108,7 +153,7 @@ func NewCallbackClient(timeout time.Duration) *CallbackClient {
 // allowPrivate=true only in test environments.
 func NewCallbackClientWithOpts(timeout time.Duration, allowPrivate bool) *CallbackClient {
 	return &CallbackClient{
-		httpClient:   &http.Client{Timeout: timeout},
+		httpClient:   &http.Client{Timeout: timeout, CheckRedirect: noRedirects},
 		allowPrivate: allowPrivate,
 	}
 }

@@ -100,14 +100,15 @@ func runRescue(args []string) {
 	auditLogger.Info("admin rescue session issued",
 		"email", *email, "ttl", ttl.String(), "pid", os.Getpid())
 
-	// Operator-facing instructions remain on stderr (these are for the
-	// human running the command, not for the audit trail).
+	// Operator-facing instructions + the token go to stderr only. Stdout
+	// is reserved for the structured audit record above so container log
+	// collectors (typically stdout-only) capture the audit trail without
+	// also capturing the bearer-equivalent session token. Scripts that
+	// need to scrape the token should redirect stderr (`2>&1` or capture
+	// it explicitly).
 	fmt.Fprintf(os.Stderr, "issued rescue session for=%s ttl=%s\n", *email, *ttl)
 	fmt.Fprintln(os.Stderr, "set this cookie on your /admin/* domain to bypass OIDC:")
 	fmt.Fprintf(os.Stderr, "  payserver_admin_session=%s\n", token)
-	// Also emit the cookie value on stdout for scripts that capture it
-	// (preserves the existing behavior the rescue_test asserts).
-	fmt.Printf("payserver_admin_session=%s\n", token)
 }
 
 func runServer() {

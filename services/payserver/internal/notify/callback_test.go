@@ -189,3 +189,61 @@ func TestCallback_Send_RejectsLoopbackByDefault(t *testing.T) {
 		t.Fatal("expected SSRF rejection on loopback IP")
 	}
 }
+
+// TestValidateCallbackURL_RejectsAlternateIPv4Encodings closes the SSRF
+// bypass via numeric host forms that net.ParseIP refuses but
+// some resolvers / OS stacks happily reinterpret as private IPs
+// (e.g. 0x7f000001 → 127.0.0.1; 2130706433 → 127.0.0.1; 127.1 → 127.0.0.1
+// in BSD sockets; "127.0.0.1." with trailing dot escapes ParseIP).
+func TestValidateCallbackURL_RejectsAlternateIPv4Encodings(t *testing.T) {
+	cases := []string{
+		"http://0x7f000001/cb", // hex
+		"http://2130706433/cb", // dword decimal
+		"http://127.1/cb",      // short form
+		"http://0177.0.0.1/cb", // octal-looking
+		"http://127.0.0.1./cb", // trailing dot
+	}
+	for _, raw := range cases {
+		if err := validateCallbackURL(raw, false); err == nil {
+			t.Errorf("validateCallbackURL(%q, false) = nil, want SSRF rejection", raw)
+		}
+	}
+}
+
+// TestCallback_Send_DoesNotFollowRedirects ensures a tenant URL that
+// validates clean but 302s into a private/loopback address does NOT
+// chase the redirect — webhooks must land on the registered host or
+// fail. ErrUseLastResponse trips the non-2xx branch.
+func TestCallback_Send_DoesNotFollowRedirects(t *testing.T) {
+	// Use a /target that records whether it was hit. If the client
+	// followed the redirect, the counter increments; if it correctly
+	// refused (ErrUseLastResponse), the counter stays at zero and Send
+	// reports the 302 as a non-2xx error.
+	var hits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/target", func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/cb", func(w http.ResponseWriter, r *http.Request) {
+		// Redirect within the same test server so both URLs are
+		// reachable under allowPrivate=true.
+		http.Redirect(w, r, "/target", http.StatusFound)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// allowPrivate=true so the httptest server (binds to 127.0.0.1)
+	// is reachable; the assertion is about redirect behavior, not the
+	// SSRF guard (which is covered elsewhere).
+	client := NewCallbackClientWithOpts(5*time.Second, true)
+	err := client.Send(t.Context(),
+		CallbackTarget{URL: srv.URL + "/cb", Secret: "s"},
+		DeliveryPayload{OrderID: "x"})
+	if err == nil {
+		t.Fatal("expected non-2xx error after refusing to follow redirect")
+	}
+	if hits != 0 {
+		t.Errorf("redirect target was hit %d times; client must not follow redirects", hits)
+	}
+}
