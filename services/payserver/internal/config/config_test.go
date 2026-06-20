@@ -138,3 +138,113 @@ func indexOf(haystack, needle string) int {
 	}
 	return -1
 }
+
+func validBase() Config {
+	return Config{
+		Server: ServerConfig{Addr: ":8090"},
+		DB:     DBConfig{URL: "postgres://x/y"},
+	}
+}
+
+func TestConfig_Validate_HappyPath(t *testing.T) {
+	c := validBase()
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestConfig_Validate_MissingDBURL(t *testing.T) {
+	c := validBase()
+	c.DB.URL = ""
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("expected error on missing db.url")
+	}
+	if !contains(err.Error(), "db.url") {
+		t.Errorf("err = %q, want mention of db.url", err)
+	}
+}
+
+func TestConfig_Validate_MissingServerAddr(t *testing.T) {
+	c := validBase()
+	c.Server.Addr = ""
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected error on missing server.addr")
+	}
+}
+
+func TestConfig_Validate_StripeWithoutWebhookSecret(t *testing.T) {
+	c := validBase()
+	c.Stripe.SecretKey = "sk_test_x"
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("expected error: stripe without webhook secret")
+	}
+	if !contains(err.Error(), "webhook_secret") {
+		t.Errorf("err = %q, want mention of webhook_secret", err)
+	}
+}
+
+func TestConfig_Validate_StripeWithWebhookSecret_OK(t *testing.T) {
+	c := validBase()
+	c.Stripe.SecretKey = "sk_test_x"
+	c.Stripe.WebhookSecret = "whsec_x"
+	if err := c.Validate(); err != nil {
+		t.Errorf("unexpected: %v", err)
+	}
+}
+
+func TestConfig_Validate_OIDCIssuerWithoutRedirect(t *testing.T) {
+	c := validBase()
+	c.OIDC.IssuerURL = "https://idp.example"
+	c.OIDC.ClientID = "cid"
+	c.OIDC.ClientSecret = "csec"
+	c.OIDC.SessionSecret = "thirty-two-char-session-secret--!" // 32 chars
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("expected error: oidc without redirect_url")
+	}
+	if !contains(err.Error(), "redirect_url") {
+		t.Errorf("err = %q, want mention of redirect_url", err)
+	}
+}
+
+func TestConfig_Validate_OIDCShortSessionSecret(t *testing.T) {
+	c := validBase()
+	c.OIDC.IssuerURL = "https://idp.example"
+	c.OIDC.ClientID = "cid"
+	c.OIDC.ClientSecret = "csec"
+	c.OIDC.RedirectURL = "https://x/cb"
+	c.OIDC.SessionSecret = "too-short"
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("expected error: short session_secret")
+	}
+	if !contains(err.Error(), "session_secret") {
+		t.Errorf("err = %q, want mention of session_secret", err)
+	}
+}
+
+func TestConfig_Validate_WeChatWithoutMchID(t *testing.T) {
+	c := validBase()
+	c.WeChat.AppID = "wx-app"
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("expected error: wechat without mch_id")
+	}
+	if !contains(err.Error(), "mch_id") {
+		t.Errorf("err = %q, want mention of mch_id", err)
+	}
+}
+
+func TestConfig_Validate_AlipayWithoutPrivateKey(t *testing.T) {
+	c := validBase()
+	c.Alipay.AppID = "alipay-app"
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("expected error: alipay without private key")
+	}
+	if !contains(err.Error(), "private_key") {
+		t.Errorf("err = %q, want mention of private_key", err)
+	}
+}

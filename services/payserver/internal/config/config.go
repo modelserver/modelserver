@@ -79,6 +79,69 @@ type OIDCConfig struct {
 	SessionSecret string   `mapstructure:"session_secret" yaml:"session_secret"`
 }
 
+// Validate performs fast, in-process checks of required fields so the
+// operator gets a clear single error early rather than a partial boot
+// that later fatals deep inside a gateway constructor. Should be called
+// immediately after Load.
+func (c *Config) Validate() error {
+	if c.Server.Addr == "" {
+		return fmt.Errorf("server.addr is required")
+	}
+	if c.DB.URL == "" {
+		return fmt.Errorf("db.url is required (or PAYSERVER_DB_URL)")
+	}
+
+	// Per-gateway companion checks. Detect "gateway enabled" by the same
+	// trigger field main.go uses.
+	if c.WeChat.AppID != "" {
+		if c.WeChat.MchID == "" {
+			return fmt.Errorf("wechat.mch_id is required when wechat.app_id is set")
+		}
+		if c.WeChat.MchAPIv3Key == "" {
+			return fmt.Errorf("wechat.mch_api_v3_key is required when wechat.app_id is set")
+		}
+		if c.WeChat.MchSerialNo == "" {
+			return fmt.Errorf("wechat.mch_serial_no is required when wechat.app_id is set")
+		}
+		if c.WeChat.MchPrivateKeyPath == "" && c.WeChat.MchPrivateKeyPEM == "" {
+			return fmt.Errorf("wechat.mch_private_key_path or wechat.mch_private_key_pem is required when wechat.app_id is set")
+		}
+	}
+	if c.Alipay.AppID != "" {
+		if c.Alipay.PrivateKeyPath == "" && c.Alipay.PrivateKeyPEM == "" {
+			return fmt.Errorf("alipay.private_key_path or alipay.private_key_pem is required when alipay.app_id is set")
+		}
+		if c.Alipay.AlipayPublicKeyPath == "" && c.Alipay.AlipayPublicKeyPEM == "" {
+			return fmt.Errorf("alipay.alipay_public_key_path or alipay.alipay_public_key_pem is required when alipay.app_id is set")
+		}
+	}
+	if c.Stripe.SecretKey != "" {
+		if c.Stripe.WebhookSecret == "" {
+			return fmt.Errorf("stripe.webhook_secret is required when stripe.secret_key is set")
+		}
+	}
+
+	// OIDC enabled = issuer_url set. NewOIDCAuth re-checks these (defense
+	// in depth) but surfacing the error here gives a clean message before
+	// any provider discovery network call.
+	if c.OIDC.IssuerURL != "" {
+		if c.OIDC.ClientID == "" {
+			return fmt.Errorf("oidc.client_id is required when oidc.issuer_url is set")
+		}
+		if c.OIDC.ClientSecret == "" {
+			return fmt.Errorf("oidc.client_secret is required when oidc.issuer_url is set")
+		}
+		if c.OIDC.RedirectURL == "" {
+			return fmt.Errorf("oidc.redirect_url is required when oidc.issuer_url is set")
+		}
+		const minSessionSecretChars = 32
+		if len(c.OIDC.SessionSecret) < minSessionSecretChars {
+			return fmt.Errorf("oidc.session_secret must be at least %d characters", minSessionSecretChars)
+		}
+	}
+	return nil
+}
+
 // Load reads the optional config file (path may be "") and overlays env vars
 // with the PAYSERVER_ prefix. Nested keys translate from dots/underscores:
 // PAYSERVER_DB_URL → db.url; PAYSERVER_STRIPE_SECRET_KEY → stripe.secret_key.

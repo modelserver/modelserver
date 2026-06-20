@@ -112,6 +112,9 @@ func runServer() {
 	if err != nil {
 		log.Fatalf("failed to load config: %v", err)
 	}
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("invalid config: %v", err)
+	}
 
 	// Logger.
 	var logLevel slog.Level
@@ -138,10 +141,7 @@ func runServer() {
 		logger.Warn("PAYSERVER_API_KEY / cfg.api_key is deprecated and ignored; manage credentials per-tenant via the admin UI")
 	}
 
-	// Database.
-	if cfg.DB.URL == "" {
-		log.Fatal("database URL is required (db.url or PAYSERVER_DB_URL)")
-	}
+	// Database. (db.url required check lives in cfg.Validate, called above.)
 	// Bootstrap values for migration 002 (consumed only on first apply).
 	// On subsequent boots, 002 already exists in schema_migrations so the
 	// runner skips the SQL and these values go unread.
@@ -232,11 +232,8 @@ func runServer() {
 		logger.Info("alipay gateway initialized")
 	}
 
-	// Stripe gateway.
+	// Stripe gateway. (webhook_secret presence enforced by cfg.Validate.)
 	if cfg.Stripe.SecretKey != "" {
-		if cfg.Stripe.WebhookSecret == "" {
-			log.Fatal("stripe.webhook_secret is required when stripe is enabled")
-		}
 		sg, err := gateway.NewStripeGateway(gateway.StripeGatewayConfig{
 			SecretKey:     cfg.Stripe.SecretKey,
 			SuccessURL:    cfg.Stripe.SuccessURL,
