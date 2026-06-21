@@ -149,18 +149,12 @@ type BillingConfig struct {
 // fen and is runtime-writable via admin API. The topup_* limits bound a
 // single call and a project's daily aggregate.
 type ExtraUsageConfig struct {
-	Enabled            bool  `yaml:"enabled"               mapstructure:"enabled"`
-	CreditPriceFen     int64 `yaml:"credit_price_fen"      mapstructure:"credit_price_fen"`
-	MinTopupFen        int64 `yaml:"min_topup_fen"         mapstructure:"min_topup_fen"`
-	MaxTopupFen        int64 `yaml:"max_topup_fen"         mapstructure:"max_topup_fen"`
-	DailyTopupLimitFen int64 `yaml:"daily_topup_limit_fen" mapstructure:"daily_topup_limit_fen"`
-	// NOTE: monthly_window_tz was previously a config field but was
-	// only honored by the dashboard's display helper, not the SQL
-	// queries in store/extra_usage.go (which hardcoded
-	// 'Asia/Shanghai'). A non-default value would show one boundary
-	// to the user and enforce another in the deduct path. Removed
-	// rather than half-implemented; thread a single value through
-	// the SQL parameters if multi-region support is ever needed.
+	Enabled            bool   `yaml:"enabled"              mapstructure:"enabled"`
+	CreditPriceFen     int64  `yaml:"credit_price_fen"     mapstructure:"credit_price_fen"`
+	MinTopupFen        int64  `yaml:"min_topup_fen"        mapstructure:"min_topup_fen"`
+	MaxTopupFen        int64  `yaml:"max_topup_fen"        mapstructure:"max_topup_fen"`
+	DailyTopupLimitFen int64  `yaml:"daily_topup_limit_fen" mapstructure:"daily_topup_limit_fen"`
+	MonthlyWindowTZ    string `yaml:"monthly_window_tz"    mapstructure:"monthly_window_tz"`
 }
 
 // HttpLogConfig controls HTTP body+header logging to S3-compatible storage.
@@ -264,6 +258,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("extra_usage.min_topup_fen", 1000)
 	v.SetDefault("extra_usage.max_topup_fen", 200000)
 	v.SetDefault("extra_usage.daily_topup_limit_fen", 500000)
+	v.SetDefault("extra_usage.monthly_window_tz", "Asia/Shanghai")
 
 	// HTTP logging (default: off).
 	v.SetDefault("http_log.enabled", false)
