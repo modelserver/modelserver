@@ -40,11 +40,7 @@ func handleGetExtraUsage(st *store.Store, cfg config.ExtraUsageConfig) http.Hand
 			writeError(w, http.StatusInternalServerError, "internal", "failed to load extra usage settings")
 			return
 		}
-		monthStart, err := store.MonthWindowStart(cfg.MonthlyWindowTZ)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "invalid monthly window timezone")
-			return
-		}
+		monthStart := store.MonthWindowStart()
 		spent, err := st.GetMonthlyExtraSpendFen(projectID, monthStart)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to sum monthly spend")
@@ -167,12 +163,7 @@ func handleCreateExtraUsageTopup(st *store.Store, payClient billing.PaymentClien
 		}
 
 		// Daily accumulated limit.
-		dayStart, err := store.DayWindowStart(euCfg.MonthlyWindowTZ)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "invalid daily window timezone")
-			return
-		}
-		daily, err := st.SumDailyExtraUsageTopupFen(projectID, dayStart)
+		daily, err := st.SumDailyExtraUsageTopupFen(projectID, store.DayWindowStart())
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to check daily topup cap")
 			return

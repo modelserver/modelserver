@@ -18,30 +18,25 @@ var (
 	ErrMonthlyLimitReached        = errors.New("extra usage monthly limit reached")
 )
 
-// MonthWindowStart returns the first moment of the current month in tz.
+// MonthWindowStart returns the first moment of the current month in
+// the process's local timezone (i.e. what the Go runtime resolved
+// time.Local to at startup, controlled by the standard `TZ`
+// environment variable — e.g. TZ=Asia/Shanghai).
+//
 // Single source of truth for the boundary used by the monthly-limit
 // check in DeductExtraUsage / classifyDeductFailure /
 // GetMonthlyExtraSpendFen and by the dashboard's "Period Paid" display.
-// Callers should pass the value from ExtraUsageConfig.MonthlyWindowTZ
-// (validated at startup); passing an invalid tz returns an error.
-func MonthWindowStart(tz string) (time.Time, error) {
-	loc, err := time.LoadLocation(tz)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("load timezone %q: %w", tz, err)
-	}
-	now := time.Now().In(loc)
-	return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc), nil
+// All four read the same time.Local, so they cannot disagree.
+func MonthWindowStart() time.Time {
+	now := time.Now()
+	return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.Local)
 }
 
 // DayWindowStart is the daily analogue used by SumDailyExtraUsageTopupFen.
-// Same tz contract as MonthWindowStart.
-func DayWindowStart(tz string) (time.Time, error) {
-	loc, err := time.LoadLocation(tz)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("load timezone %q: %w", tz, err)
-	}
-	now := time.Now().In(loc)
-	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc), nil
+// Same time.Local contract as MonthWindowStart.
+func DayWindowStart() time.Time {
+	now := time.Now()
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
 }
 
 // DeductExtraUsageReq carries the input for an atomic deduction.

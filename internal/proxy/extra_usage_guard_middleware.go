@@ -209,15 +209,7 @@ func ExtraUsageGuardMiddleware(cfg config.ExtraUsageConfig, st extraUsageStore, 
 			// When bypass is on, settings != nil (bypass requires a row).
 			var monthlySpent int64
 			if settings.MonthlyLimitFen > 0 {
-				monthStart, mErr := store.MonthWindowStart(cfg.MonthlyWindowTZ)
-				if mErr != nil {
-					logger.Error("extra_usage_monthwindow_failed", "error", mErr, "project_id", project.ID, "tz", cfg.MonthlyWindowTZ)
-					writeExtraUsageRejected(w, http.StatusInternalServerError, intent.Reason, guardStateRejected{
-						Message: "extra usage monthly check failed",
-					})
-					return
-				}
-				spent, err := st.GetMonthlyExtraSpendFen(project.ID, monthStart)
+				spent, err := st.GetMonthlyExtraSpendFen(project.ID, store.MonthWindowStart())
 				if err != nil {
 					logger.Error("extra_usage monthly spend query failed", "error", err, "project_id", project.ID)
 					writeExtraUsageRejected(w, http.StatusInternalServerError, intent.Reason, guardStateRejected{

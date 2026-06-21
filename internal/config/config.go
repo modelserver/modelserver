@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -150,12 +149,17 @@ type BillingConfig struct {
 // fen and is runtime-writable via admin API. The topup_* limits bound a
 // single call and a project's daily aggregate.
 type ExtraUsageConfig struct {
-	Enabled            bool   `yaml:"enabled"              mapstructure:"enabled"`
-	CreditPriceFen     int64  `yaml:"credit_price_fen"     mapstructure:"credit_price_fen"`
-	MinTopupFen        int64  `yaml:"min_topup_fen"        mapstructure:"min_topup_fen"`
-	MaxTopupFen        int64  `yaml:"max_topup_fen"        mapstructure:"max_topup_fen"`
-	DailyTopupLimitFen int64  `yaml:"daily_topup_limit_fen" mapstructure:"daily_topup_limit_fen"`
-	MonthlyWindowTZ    string `yaml:"monthly_window_tz"    mapstructure:"monthly_window_tz"`
+	Enabled            bool  `yaml:"enabled"               mapstructure:"enabled"`
+	CreditPriceFen     int64 `yaml:"credit_price_fen"      mapstructure:"credit_price_fen"`
+	MinTopupFen        int64 `yaml:"min_topup_fen"         mapstructure:"min_topup_fen"`
+	MaxTopupFen        int64 `yaml:"max_topup_fen"         mapstructure:"max_topup_fen"`
+	DailyTopupLimitFen int64 `yaml:"daily_topup_limit_fen" mapstructure:"daily_topup_limit_fen"`
+	// Monthly/daily window timezone: deliberately NOT a separate
+	// config knob. Set the standard POSIX `TZ` env var
+	// (e.g. TZ=Asia/Shanghai) on the process; Go's time.Local resolves
+	// from it at startup and store.MonthWindowStart / DayWindowStart
+	// use time.Local. Dashboard display and SQL enforcement read the
+	// same time.Local so they cannot drift.
 }
 
 // HttpLogConfig controls HTTP body+header logging to S3-compatible storage.
@@ -259,7 +263,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("extra_usage.min_topup_fen", 1000)
 	v.SetDefault("extra_usage.max_topup_fen", 200000)
 	v.SetDefault("extra_usage.daily_topup_limit_fen", 500000)
-	v.SetDefault("extra_usage.monthly_window_tz", "Asia/Shanghai")
 
 	// HTTP logging (default: off).
 	v.SetDefault("http_log.enabled", false)
@@ -302,12 +305,6 @@ func unmarshal(v *viper.Viper) (*Config, error) {
 		),
 	)); err != nil {
 		return nil, err
-	}
-	// Validate MonthlyWindowTZ at startup: an unparseable timezone
-	// would only surface later as failed deductions / dashboard errors,
-	// which is hard to debug. Fail loudly here instead.
-	if _, err := time.LoadLocation(cfg.ExtraUsage.MonthlyWindowTZ); err != nil {
-		return nil, fmt.Errorf("invalid extra_usage.monthly_window_tz %q: %w", cfg.ExtraUsage.MonthlyWindowTZ, err)
 	}
 	return &cfg, nil
 }
