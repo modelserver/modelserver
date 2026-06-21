@@ -41,6 +41,18 @@ function formatCredits(credits: number): string {
   return credits.toLocaleString("en-US");
 }
 
+/** Parse a localized payment-channel label from a description string like "channel=wechat currency=CNY". */
+function channelFromDescription(desc: string | null | undefined): string | null {
+  if (!desc) return null;
+  const match = desc.match(/channel=(\w+)/);
+  if (!match) return null;
+  const key = match[1];
+  if (key === "wechat") return "微信支付";
+  if (key === "alipay") return "支付宝";
+  if (key === "stripe") return "Stripe";
+  return key ?? null;
+}
+
 /** Format a CNY fen amount as ¥X.XX yuan. */
 function formatYuan(fen: number): string {
   return `¥${(fen / 100).toFixed(2)}`;
@@ -236,12 +248,26 @@ export function ExtraUsagePage() {
     { header: "Type", accessor: (t) => txTypeBadge(t.type) },
     {
       header: "Amount",
-      accessor: (t) => (
-        <span className={t.amount_credits < 0 ? "text-destructive" : "text-emerald-600"}>
-          {t.amount_credits < 0 ? "-" : "+"}
-          {formatCredits(Math.abs(t.amount_credits))} credits
-        </span>
-      ),
+      accessor: (t) => {
+        const creditsSpan = (
+          <span className={t.amount_credits < 0 ? "text-destructive" : "text-emerald-600"}>
+            {t.amount_credits < 0 ? "-" : "+"}
+            {formatCredits(Math.abs(t.amount_credits))} credits
+          </span>
+        );
+        if (t.type === "topup") {
+          const channel = channelFromDescription(t.description);
+          return (
+            <div className="flex flex-col">
+              {creditsSpan}
+              {channel && (
+                <span className="text-xs text-muted-foreground">{channel}</span>
+              )}
+            </div>
+          );
+        }
+        return creditsSpan;
+      },
     },
     {
       header: "Balance after",
@@ -251,10 +277,9 @@ export function ExtraUsagePage() {
     {
       header: "Description",
       accessor: (t) => {
+        // Topup rows use the Amount column for channel info; suppress here to avoid duplication.
+        if (t.type === "topup") return null;
         if (!t.description) return "—";
-        // For topup rows the description carries "channel=wechat currency=CNY"
-        // and optionally a native-currency amount. Display it as-is; the
-        // backend format is already human-readable.
         return <span className="text-xs text-muted-foreground">{t.description}</span>;
       },
     },
