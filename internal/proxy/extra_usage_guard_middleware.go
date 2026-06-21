@@ -35,10 +35,10 @@ type ExtraUsageIntent struct {
 // ExtraUsageContext is written by the guard after all checks pass. The
 // executor reads this to trigger post-request settlement.
 type ExtraUsageContext struct {
-	Reason            string
-	BalanceFenAtEntry int64
-	MonthlyLimitFen   int64
-	MonthlySpentFen   int64
+	Reason                 string
+	BalanceCreditsAtEntry  int64 // was BalanceFenAtEntry
+	MonthlyLimitCredits    int64 // was MonthlyLimitFen
+	MonthlySpentCredits    int64 // was MonthlySpentFen
 }
 
 // withExtraUsageIntent tags the context with an intent reason. Safe to call
@@ -73,7 +73,7 @@ func ExtraUsageContextFromContext(ctx context.Context) (ExtraUsageContext, bool)
 // so tests can inject a fake without spinning up Postgres.
 type extraUsageStore interface {
 	GetExtraUsageSettings(projectID string) (*types.ExtraUsageSettings, error)
-	GetMonthlyExtraSpendFen(projectID string, monthStart time.Time) (int64, error)
+	GetMonthlyExtraSpendCredits(projectID string, monthStart time.Time) (int64, error)
 	// CreateRequest mirrors *store.Store.CreateRequest so the guard can
 	// persist a row for 4xx rejections — without this, guard-level 429s are
 	// invisible in the requests table (only a Prometheus counter is bumped),
@@ -148,12 +148,12 @@ func ExtraUsageGuardMiddleware(cfg config.ExtraUsageConfig, st extraUsageStore, 
 					recordExtraUsageResult(intent.Reason, "rejected")
 					return
 				}
-				if settings.BalanceFen <= 0 {
+				if settings.BalanceCredits <= 0 {
 					msg := rejectedMessage(intent.Reason, "balance_depleted")
 					writeExtraUsageRejected(w, http.StatusTooManyRequests, intent.Reason, guardStateRejected{
-						Enabled:    true,
-						BalanceFen: settings.BalanceFen,
-						Message:    msg,
+						Enabled:        true,
+						BalanceCredits: settings.BalanceCredits,
+						Message:        msg,
 					})
 					emitGuardRejection(logger, st, r, intent.Reason, "balance_depleted", msg)
 					recordExtraUsageResult(intent.Reason, "rejected")
@@ -177,9 +177,9 @@ func ExtraUsageGuardMiddleware(cfg config.ExtraUsageConfig, st extraUsageStore, 
 						"reason", "credit_price_unset", "project_id", project.ID)
 					msg := rejectedMessage(intent.Reason, "model_unpriced")
 					writeExtraUsageRejected(w, http.StatusTooManyRequests, intent.Reason, guardStateRejected{
-						Enabled:    true,
-						BalanceFen: settings.BalanceFen,
-						Message:    msg,
+						Enabled:        true,
+						BalanceCredits: settings.BalanceCredits,
+						Message:        msg,
 					})
 					emitGuardRejection(logger, st, r, intent.Reason, "model_unpriced_credit_price_unset", msg)
 					recordExtraUsageResult(intent.Reason, "rejected")
@@ -195,9 +195,9 @@ func ExtraUsageGuardMiddleware(cfg config.ExtraUsageConfig, st extraUsageStore, 
 						"project_id", project.ID, "model", modelName)
 					msg := rejectedMessage(intent.Reason, "model_unpriced")
 					writeExtraUsageRejected(w, http.StatusTooManyRequests, intent.Reason, guardStateRejected{
-						Enabled:    true,
-						BalanceFen: settings.BalanceFen,
-						Message:    msg,
+						Enabled:        true,
+						BalanceCredits: settings.BalanceCredits,
+						Message:        msg,
 					})
 					emitGuardRejection(logger, st, r, intent.Reason, "model_unpriced_missing_default_rate", msg)
 					recordExtraUsageResult(intent.Reason, "rejected")
@@ -208,8 +208,8 @@ func ExtraUsageGuardMiddleware(cfg config.ExtraUsageConfig, st extraUsageStore, 
 			// Monthly-limit check: runs for both bypass and normal paths.
 			// When bypass is on, settings != nil (bypass requires a row).
 			var monthlySpent int64
-			if settings.MonthlyLimitFen > 0 {
-				spent, err := st.GetMonthlyExtraSpendFen(project.ID, store.MonthWindowStart())
+			if settings.MonthlyLimitCredits > 0 {
+				spent, err := st.GetMonthlyExtraSpendCredits(project.ID, store.MonthWindowStart())
 				if err != nil {
 					logger.Error("extra_usage monthly spend query failed", "error", err, "project_id", project.ID)
 					writeExtraUsageRejected(w, http.StatusInternalServerError, intent.Reason, guardStateRejected{
@@ -217,12 +217,12 @@ func ExtraUsageGuardMiddleware(cfg config.ExtraUsageConfig, st extraUsageStore, 
 					})
 					return
 				}
-				if spent >= settings.MonthlyLimitFen {
+				if spent >= settings.MonthlyLimitCredits {
 					msg := rejectedMessage(intent.Reason, "monthly_limit")
 					writeExtraUsageRejected(w, http.StatusTooManyRequests, intent.Reason, guardStateRejected{
-						Enabled:    true,
-						BalanceFen: settings.BalanceFen,
-						Message:    msg,
+						Enabled:        true,
+						BalanceCredits: settings.BalanceCredits,
+						Message:        msg,
 					})
 					emitGuardRejection(logger, st, r, intent.Reason, "monthly_limit", msg)
 					recordExtraUsageResult(intent.Reason, "rejected")
@@ -232,10 +232,10 @@ func ExtraUsageGuardMiddleware(cfg config.ExtraUsageConfig, st extraUsageStore, 
 			}
 
 			ctx := withExtraUsageContext(r.Context(), ExtraUsageContext{
-				Reason:            intent.Reason,
-				BalanceFenAtEntry: settings.BalanceFen,
-				MonthlyLimitFen:   settings.MonthlyLimitFen,
-				MonthlySpentFen:   monthlySpent,
+				Reason:                intent.Reason,
+				BalanceCreditsAtEntry: settings.BalanceCredits,
+				MonthlyLimitCredits:   settings.MonthlyLimitCredits,
+				MonthlySpentCredits:   monthlySpent,
 			})
 			result := "allowed"
 			if bypass {
@@ -248,9 +248,9 @@ func ExtraUsageGuardMiddleware(cfg config.ExtraUsageConfig, st extraUsageStore, 
 }
 
 type guardStateRejected struct {
-	Enabled    bool
-	BalanceFen int64
-	Message    string
+	Enabled        bool
+	BalanceCredits int64 // was BalanceFen
+	Message        string
 }
 
 // writeExtraUsageRejected renders a 429 (typically) response with descriptive
@@ -260,7 +260,7 @@ func writeExtraUsageRejected(w http.ResponseWriter, status int, reason string, s
 	w.Header().Set("X-Extra-Usage-Required", "true")
 	w.Header().Set("X-Extra-Usage-Reason", reason)
 	w.Header().Set("X-Extra-Usage-Enabled", strconv.FormatBool(st.Enabled))
-	w.Header().Set("X-Extra-Usage-Balance-Fen", strconv.FormatInt(st.BalanceFen, 10))
+	w.Header().Set("X-Extra-Usage-Balance-Credits", strconv.FormatInt(st.BalanceCredits, 10))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	body := map[string]interface{}{

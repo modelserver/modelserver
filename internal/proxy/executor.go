@@ -73,12 +73,12 @@ type RequestContext struct {
 	// Execute() from the inbound r.Context so the deferred streaming callback
 	// (which fires after r is gone) can still settle. The remaining fields
 	// are outputs populated by settleExtraUsage.
-	HasExtraUsageCtx          bool
-	ExtraUsageCtx             ExtraUsageContext
-	IsExtraUsage              bool
-	ExtraUsageCostFen         int64
-	ExtraUsageReason          string
-	ExtraUsageBalanceAfterFen int64
+	HasExtraUsageCtx             bool
+	ExtraUsageCtx                ExtraUsageContext
+	IsExtraUsage                 bool
+	ExtraUsageCostCredits        int64 // was ExtraUsageCostFen
+	ExtraUsageReason             string
+	ExtraUsageBalanceAfterCredits int64 // was ExtraUsageBalanceAfterFen
 
 	// HTTP logging state. HttpLogEnabled is set by the handler based on
 	// model publisher. The Captured* fields are populated by Execute()
@@ -539,14 +539,14 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 				if reqCtx.RequestID != "" {
 					duration := time.Since(startTime).Milliseconds()
 					failReq := types.Request{
-						OAuthGrantID:      reqCtx.OAuthGrantID,
-						Status:            types.RequestStatusError,
-						LatencyMs:         duration,
-						ErrorMessage:      "claudecode OAuth refresh failed",
-						ClientIP:          reqCtx.ClientIP,
-						IsExtraUsage:      reqCtx.IsExtraUsage,
-						ExtraUsageCostFen: reqCtx.ExtraUsageCostFen,
-						ExtraUsageReason:  reqCtx.ExtraUsageReason,
+						OAuthGrantID:          reqCtx.OAuthGrantID,
+						Status:                types.RequestStatusError,
+						LatencyMs:             duration,
+						ErrorMessage:          "claudecode OAuth refresh failed",
+						ClientIP:              reqCtx.ClientIP,
+						IsExtraUsage:          reqCtx.IsExtraUsage,
+						ExtraUsageCostCredits: reqCtx.ExtraUsageCostCredits,
+						ExtraUsageReason:      reqCtx.ExtraUsageReason,
 					}
 					go func() {
 						if err := e.store.CompleteRequest(reqCtx.RequestID, &failReq); err != nil {
@@ -610,14 +610,14 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 				if reqCtx.RequestID != "" {
 					duration := time.Since(startTime).Milliseconds()
 					failReq := types.Request{
-						OAuthGrantID:      reqCtx.OAuthGrantID,
-						Status:            types.RequestStatusError,
-						LatencyMs:         duration,
-						ErrorMessage:      "codex OAuth refresh failed",
-						ClientIP:          reqCtx.ClientIP,
-						IsExtraUsage:      reqCtx.IsExtraUsage,
-						ExtraUsageCostFen: reqCtx.ExtraUsageCostFen,
-						ExtraUsageReason:  reqCtx.ExtraUsageReason,
+						OAuthGrantID:          reqCtx.OAuthGrantID,
+						Status:                types.RequestStatusError,
+						LatencyMs:             duration,
+						ErrorMessage:          "codex OAuth refresh failed",
+						ClientIP:              reqCtx.ClientIP,
+						IsExtraUsage:          reqCtx.IsExtraUsage,
+						ExtraUsageCostCredits: reqCtx.ExtraUsageCostCredits,
+						ExtraUsageReason:      reqCtx.ExtraUsageReason,
 					}
 					go func() {
 						if err := e.store.CompleteRequest(reqCtx.RequestID, &failReq); err != nil {
@@ -769,14 +769,14 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 	if reqCtx.RequestID != "" {
 		duration := time.Since(startTime).Milliseconds()
 		req := types.Request{
-			OAuthGrantID:      reqCtx.OAuthGrantID,
-			Status:            types.RequestStatusError,
-			LatencyMs:         duration,
-			ErrorMessage:      "all upstreams exhausted",
-			ClientIP:          reqCtx.ClientIP,
-			IsExtraUsage:      reqCtx.IsExtraUsage,
-			ExtraUsageCostFen: reqCtx.ExtraUsageCostFen,
-			ExtraUsageReason:  reqCtx.ExtraUsageReason,
+			OAuthGrantID:          reqCtx.OAuthGrantID,
+			Status:                types.RequestStatusError,
+			LatencyMs:             duration,
+			ErrorMessage:          "all upstreams exhausted",
+			ClientIP:              reqCtx.ClientIP,
+			IsExtraUsage:          reqCtx.IsExtraUsage,
+			ExtraUsageCostCredits: reqCtx.ExtraUsageCostCredits,
+			ExtraUsageReason:      reqCtx.ExtraUsageReason,
 		}
 		go func() {
 			if err := e.store.CompleteRequest(reqCtx.RequestID, &req); err != nil {
@@ -911,22 +911,22 @@ func (e *Executor) commitErrorResponse(
 
 	// Record the error request.
 	req := types.Request{
-		ProjectID:         reqCtx.Project.ID,
-		APIKeyID:          reqCtx.APIKeyID,
-		OAuthGrantID:      reqCtx.OAuthGrantID,
-		UpstreamID:        candidate.Upstream.ID,
-		TraceID:           reqCtx.TraceID,
-		Provider:          candidate.Upstream.Provider,
-		RequestKind:       reqCtx.RequestKind,
-		Model:             reqCtx.Model,
-		Streaming:         reqCtx.IsStream,
-		Status:            status,
-		LatencyMs:         duration,
-		ErrorMessage:      string(errBody),
-		ClientIP:          reqCtx.ClientIP,
-		IsExtraUsage:      reqCtx.IsExtraUsage,
-		ExtraUsageCostFen: reqCtx.ExtraUsageCostFen,
-		ExtraUsageReason:  reqCtx.ExtraUsageReason,
+		ProjectID:             reqCtx.Project.ID,
+		APIKeyID:              reqCtx.APIKeyID,
+		OAuthGrantID:          reqCtx.OAuthGrantID,
+		UpstreamID:            candidate.Upstream.ID,
+		TraceID:               reqCtx.TraceID,
+		Provider:              candidate.Upstream.Provider,
+		RequestKind:           reqCtx.RequestKind,
+		Model:                 reqCtx.Model,
+		Streaming:             reqCtx.IsStream,
+		Status:                status,
+		LatencyMs:             duration,
+		ErrorMessage:          string(errBody),
+		ClientIP:              reqCtx.ClientIP,
+		IsExtraUsage:          reqCtx.IsExtraUsage,
+		ExtraUsageCostCredits: reqCtx.ExtraUsageCostCredits,
+		ExtraUsageReason:      reqCtx.ExtraUsageReason,
 	}
 	if reqCtx.RequestID != "" {
 		go func() {
@@ -1080,28 +1080,28 @@ func (e *Executor) completeStreamingRequest(
 	e.settleExtraUsage(context.Background(), reqCtx, usage)
 
 	req := types.Request{
-		ProjectID:           reqCtx.Project.ID,
-		APIKeyID:            reqCtx.APIKeyID,
-		OAuthGrantID:        reqCtx.OAuthGrantID,
-		UpstreamID:          candidate.Upstream.ID,
-		TraceID:             reqCtx.TraceID,
-		MsgID:               metrics.MsgID,
-		Provider:            candidate.Upstream.Provider,
-		RequestKind:         reqCtx.RequestKind,
-		Model:               model,
-		Streaming:           true,
-		Status:              types.RequestStatusSuccess,
-		InputTokens:         metrics.InputTokens,
-		OutputTokens:        metrics.OutputTokens,
-		CacheCreationTokens: metrics.CacheCreationTokens,
-		CacheReadTokens:     metrics.CacheReadTokens,
-		CreditsConsumed:     credits,
-		LatencyMs:           duration,
-		TTFTMs:              metrics.TTFTMs,
-		ClientIP:            reqCtx.ClientIP,
-		IsExtraUsage:        reqCtx.IsExtraUsage,
-		ExtraUsageCostFen:   reqCtx.ExtraUsageCostFen,
-		ExtraUsageReason:    reqCtx.ExtraUsageReason,
+		ProjectID:             reqCtx.Project.ID,
+		APIKeyID:              reqCtx.APIKeyID,
+		OAuthGrantID:          reqCtx.OAuthGrantID,
+		UpstreamID:            candidate.Upstream.ID,
+		TraceID:               reqCtx.TraceID,
+		MsgID:                 metrics.MsgID,
+		Provider:              candidate.Upstream.Provider,
+		RequestKind:           reqCtx.RequestKind,
+		Model:                 model,
+		Streaming:             true,
+		Status:                types.RequestStatusSuccess,
+		InputTokens:           metrics.InputTokens,
+		OutputTokens:          metrics.OutputTokens,
+		CacheCreationTokens:   metrics.CacheCreationTokens,
+		CacheReadTokens:       metrics.CacheReadTokens,
+		CreditsConsumed:       credits,
+		LatencyMs:             duration,
+		TTFTMs:                metrics.TTFTMs,
+		ClientIP:              reqCtx.ClientIP,
+		IsExtraUsage:          reqCtx.IsExtraUsage,
+		ExtraUsageCostCredits: reqCtx.ExtraUsageCostCredits,
+		ExtraUsageReason:      reqCtx.ExtraUsageReason,
 	}
 	if reqCtx.RequestID != "" {
 		go func() {
@@ -1165,27 +1165,27 @@ func (e *Executor) completeImageStreamingRequest(
 	}
 
 	req := types.Request{
-		ProjectID:           reqCtx.Project.ID,
-		APIKeyID:            reqCtx.APIKeyID,
-		OAuthGrantID:        reqCtx.OAuthGrantID,
-		UpstreamID:          candidate.Upstream.ID,
-		TraceID:             reqCtx.TraceID,
-		Provider:            candidate.Upstream.Provider,
-		RequestKind:         reqCtx.RequestKind,
-		Model:               model,
-		Streaming:           true,
-		Status:              types.RequestStatusSuccess,
-		InputTokens:         tokenUsage.InputTokens,
-		OutputTokens:        tokenUsage.OutputTokens,
-		CacheCreationTokens: tokenUsage.CacheCreationTokens,
-		CacheReadTokens:     tokenUsage.CacheReadTokens,
-		CreditsConsumed:     credits,
-		LatencyMs:           duration,
-		TTFTMs:              ttftMs,
-		ClientIP:            reqCtx.ClientIP,
-		IsExtraUsage:        reqCtx.IsExtraUsage,
-		ExtraUsageCostFen:   reqCtx.ExtraUsageCostFen,
-		ExtraUsageReason:    reqCtx.ExtraUsageReason,
+		ProjectID:             reqCtx.Project.ID,
+		APIKeyID:              reqCtx.APIKeyID,
+		OAuthGrantID:          reqCtx.OAuthGrantID,
+		UpstreamID:            candidate.Upstream.ID,
+		TraceID:               reqCtx.TraceID,
+		Provider:              candidate.Upstream.Provider,
+		RequestKind:           reqCtx.RequestKind,
+		Model:                 model,
+		Streaming:             true,
+		Status:                types.RequestStatusSuccess,
+		InputTokens:           tokenUsage.InputTokens,
+		OutputTokens:          tokenUsage.OutputTokens,
+		CacheCreationTokens:   tokenUsage.CacheCreationTokens,
+		CacheReadTokens:       tokenUsage.CacheReadTokens,
+		CreditsConsumed:       credits,
+		LatencyMs:             duration,
+		TTFTMs:                ttftMs,
+		ClientIP:              reqCtx.ClientIP,
+		IsExtraUsage:          reqCtx.IsExtraUsage,
+		ExtraUsageCostCredits: reqCtx.ExtraUsageCostCredits,
+		ExtraUsageReason:      reqCtx.ExtraUsageReason,
 	}
 	if usagePresent {
 		req.Metadata = imageUsageMetadata(usage)
@@ -1309,27 +1309,27 @@ func (e *Executor) commitNonStreamingResponse(
 	}
 
 	req := types.Request{
-		ProjectID:           reqCtx.Project.ID,
-		APIKeyID:            reqCtx.APIKeyID,
-		OAuthGrantID:        reqCtx.OAuthGrantID,
-		UpstreamID:          candidate.Upstream.ID,
-		TraceID:             reqCtx.TraceID,
-		MsgID:               respMetrics.MsgID,
-		Provider:            candidate.Upstream.Provider,
-		RequestKind:         reqCtx.RequestKind,
-		Model:               model,
-		Streaming:           false,
-		Status:              types.RequestStatusSuccess,
-		InputTokens:         respMetrics.InputTokens,
-		OutputTokens:        respMetrics.OutputTokens,
-		CacheCreationTokens: respMetrics.CacheCreationTokens,
-		CacheReadTokens:     respMetrics.CacheReadTokens,
-		CreditsConsumed:     credits,
-		LatencyMs:           duration,
-		ClientIP:            reqCtx.ClientIP,
-		IsExtraUsage:        reqCtx.IsExtraUsage,
-		ExtraUsageCostFen:   reqCtx.ExtraUsageCostFen,
-		ExtraUsageReason:    reqCtx.ExtraUsageReason,
+		ProjectID:             reqCtx.Project.ID,
+		APIKeyID:              reqCtx.APIKeyID,
+		OAuthGrantID:          reqCtx.OAuthGrantID,
+		UpstreamID:            candidate.Upstream.ID,
+		TraceID:               reqCtx.TraceID,
+		MsgID:                 respMetrics.MsgID,
+		Provider:              candidate.Upstream.Provider,
+		RequestKind:           reqCtx.RequestKind,
+		Model:                 model,
+		Streaming:             false,
+		Status:                types.RequestStatusSuccess,
+		InputTokens:           respMetrics.InputTokens,
+		OutputTokens:          respMetrics.OutputTokens,
+		CacheCreationTokens:   respMetrics.CacheCreationTokens,
+		CacheReadTokens:       respMetrics.CacheReadTokens,
+		CreditsConsumed:       credits,
+		LatencyMs:             duration,
+		ClientIP:              reqCtx.ClientIP,
+		IsExtraUsage:          reqCtx.IsExtraUsage,
+		ExtraUsageCostCredits: reqCtx.ExtraUsageCostCredits,
+		ExtraUsageReason:      reqCtx.ExtraUsageReason,
 	}
 	if reqCtx.RequestID != "" {
 		go func() {
@@ -1429,26 +1429,26 @@ func (e *Executor) commitImageNonStreamingResponseBody(
 	}
 
 	req := types.Request{
-		ProjectID:           reqCtx.Project.ID,
-		APIKeyID:            reqCtx.APIKeyID,
-		OAuthGrantID:        reqCtx.OAuthGrantID,
-		UpstreamID:          candidate.Upstream.ID,
-		TraceID:             reqCtx.TraceID,
-		Provider:            candidate.Upstream.Provider,
-		RequestKind:         reqCtx.RequestKind,
-		Model:               model,
-		Streaming:           false,
-		Status:              types.RequestStatusSuccess,
-		InputTokens:         tokenUsage.InputTokens,
-		OutputTokens:        tokenUsage.OutputTokens,
-		CacheCreationTokens: tokenUsage.CacheCreationTokens,
-		CacheReadTokens:     tokenUsage.CacheReadTokens,
-		CreditsConsumed:     credits,
-		LatencyMs:           duration,
-		ClientIP:            reqCtx.ClientIP,
-		IsExtraUsage:        reqCtx.IsExtraUsage,
-		ExtraUsageCostFen:   reqCtx.ExtraUsageCostFen,
-		ExtraUsageReason:    reqCtx.ExtraUsageReason,
+		ProjectID:             reqCtx.Project.ID,
+		APIKeyID:              reqCtx.APIKeyID,
+		OAuthGrantID:          reqCtx.OAuthGrantID,
+		UpstreamID:            candidate.Upstream.ID,
+		TraceID:               reqCtx.TraceID,
+		Provider:              candidate.Upstream.Provider,
+		RequestKind:           reqCtx.RequestKind,
+		Model:                 model,
+		Streaming:             false,
+		Status:                types.RequestStatusSuccess,
+		InputTokens:           tokenUsage.InputTokens,
+		OutputTokens:          tokenUsage.OutputTokens,
+		CacheCreationTokens:   tokenUsage.CacheCreationTokens,
+		CacheReadTokens:       tokenUsage.CacheReadTokens,
+		CreditsConsumed:       credits,
+		LatencyMs:             duration,
+		ClientIP:              reqCtx.ClientIP,
+		IsExtraUsage:          reqCtx.IsExtraUsage,
+		ExtraUsageCostCredits: reqCtx.ExtraUsageCostCredits,
+		ExtraUsageReason:      reqCtx.ExtraUsageReason,
 	}
 	if imgMetrics.UsagePresent {
 		req.Metadata = imageUsageMetadata(imgMetrics.Usage)
@@ -1602,17 +1602,15 @@ func imageUsageMetadata(u ImageTokenUsage) map[string]string {
 	}
 }
 
-// computeExtraUsageCostFen converts a TokenUsage to CNY fen using the
-// catalog's DefaultCreditRate. Rate is sourced from the catalog (not the
-// plan override) per spec §4.1 — extra usage is always priced at official
-// API rates. Returns (cost_fen, credits_used, err). Cost is ceil so
-// sub-fen fractions round up to 1.
-func computeExtraUsageCostFen(m *types.Model, u types.TokenUsage, creditPriceFen int64) (int64, float64, error) {
+// computeExtraUsageCostCredits converts a TokenUsage to credits using the
+// catalog's DefaultCreditRate. Extra-usage cost is always priced at official
+// API rates (the plan-override credit rate is NOT used) — see spec §4.1.
+// Returns (credits, err). Credits round UP so sub-credit fractions don't
+// undercharge. The creditPriceFen conversion step has been removed: credits
+// is the natural output of tokens × rate.
+func computeExtraUsageCostCredits(m *types.Model, u types.TokenUsage) (int64, error) {
 	if m == nil || m.DefaultCreditRate == nil {
-		return 0, 0, ErrMissingDefaultCreditRate
-	}
-	if creditPriceFen <= 0 {
-		return 0, 0, fmt.Errorf("extra usage: credit_price_fen must be > 0")
+		return 0, ErrMissingDefaultCreditRate
 	}
 	rate := types.ApplyLongContextCreditRate(*m.DefaultCreditRate, u.InputTokens+u.CacheCreationTokens+u.CacheReadTokens)
 	credits := rate.InputRate*float64(u.InputTokens) +
@@ -1620,13 +1618,9 @@ func computeExtraUsageCostFen(m *types.Model, u types.TokenUsage, creditPriceFen
 		rate.CacheCreationRate*float64(u.CacheCreationTokens) +
 		rate.CacheReadRate*float64(u.CacheReadTokens)
 	if credits <= 0 {
-		return 0, credits, nil
+		return 0, nil
 	}
-	cost := int64(math.Ceil(credits * float64(creditPriceFen) / 1_000_000))
-	if cost < 1 {
-		cost = 1
-	}
-	return cost, credits, nil
+	return int64(math.Ceil(credits)), nil
 }
 
 // settleExtraUsage charges the per-project balance when the request was
@@ -1655,7 +1649,7 @@ func (e *Executor) settleExtraUsage(ctx context.Context, rc *RequestContext, usa
 		return
 	}
 
-	costFen, credits, err := computeExtraUsageCostFen(rc.ModelRef, usage, e.extraUsageCfg.CreditPriceFen)
+	costCredits, err := computeExtraUsageCostCredits(rc.ModelRef, usage)
 	if err != nil {
 		modelName := rc.Model
 		if rc.ModelRef != nil {
@@ -1666,19 +1660,19 @@ func (e *Executor) settleExtraUsage(ctx context.Context, rc *RequestContext, usa
 		metrics.IncExtraUsageMissingRate(modelName)
 		return
 	}
-	rc.ExtraUsageCostFen = costFen
+	rc.ExtraUsageCostCredits = costCredits
 
 	newBal, err := e.store.DeductExtraUsage(store.DeductExtraUsageReq{
 		ProjectID:        rc.ProjectID,
-		AmountFen:        costFen,
+		AmountCredits:    costCredits,
 		RequestID:        rc.RequestID,
 		Reason:           euCtx.Reason,
-		Description:      fmt.Sprintf("%s | credits=%.2f | model=%s", euCtx.Reason, credits, rc.Model),
+		Description:      fmt.Sprintf("%s | credits=%d | model=%s", euCtx.Reason, costCredits, rc.Model),
 		MonthWindowStart: store.MonthWindowStart(),
 	})
 	switch {
 	case err == nil:
-		rc.ExtraUsageBalanceAfterFen = newBal
+		rc.ExtraUsageBalanceAfterCredits = newBal
 		outcome := "ok"
 		if newBal < 0 {
 			outcome = "overdraft"
@@ -1687,12 +1681,12 @@ func (e *Executor) settleExtraUsage(ctx context.Context, rc *RequestContext, usa
 		metrics.SetExtraUsageBalance(rc.ProjectID, newBal)
 	case errors.Is(err, store.ErrInsufficientBalance):
 		e.logger.Warn("extra_usage_underdraft",
-			"project_id", rc.ProjectID, "cost_fen", costFen)
+			"project_id", rc.ProjectID, "cost_credits", costCredits)
 		metrics.IncExtraUsageDeduction("insufficient")
 		metrics.IncExtraUsageUnderdraft(rc.ProjectID)
 	case errors.Is(err, store.ErrMonthlyLimitReached):
 		e.logger.Warn("extra_usage_monthly_limit_at_settle",
-			"project_id", rc.ProjectID, "cost_fen", costFen)
+			"project_id", rc.ProjectID, "cost_credits", costCredits)
 		metrics.IncExtraUsageDeduction("monthly_limit")
 	case errors.Is(err, store.ErrExtraUsageNotEnabled):
 		e.logger.Warn("extra_usage_disabled_at_settle",
@@ -1720,7 +1714,7 @@ func (e *Executor) settleImageExtraUsage(ctx context.Context, rc *RequestContext
 		return
 	}
 
-	costFen, credits, err := computeImageExtraUsageCostFen(rc.ModelRef, usage, e.extraUsageCfg.CreditPriceFen)
+	costCredits, err := computeImageExtraUsageCostCredits(rc.ModelRef, usage)
 	if err != nil {
 		modelName := rc.Model
 		if rc.ModelRef != nil {
@@ -1736,19 +1730,19 @@ func (e *Executor) settleImageExtraUsage(ctx context.Context, rc *RequestContext
 			"project_id", rc.ProjectID, "model", modelName, "error", err)
 		return
 	}
-	rc.ExtraUsageCostFen = costFen
+	rc.ExtraUsageCostCredits = costCredits
 
 	newBal, err := e.store.DeductExtraUsage(store.DeductExtraUsageReq{
 		ProjectID:        rc.ProjectID,
-		AmountFen:        costFen,
+		AmountCredits:    costCredits,
 		RequestID:        rc.RequestID,
 		Reason:           euCtx.Reason,
-		Description:      fmt.Sprintf("%s | credits=%.2f | model=%s | kind=%s", euCtx.Reason, credits, rc.Model, rc.RequestKind),
+		Description:      fmt.Sprintf("%s | credits=%d | model=%s | kind=%s", euCtx.Reason, costCredits, rc.Model, rc.RequestKind),
 		MonthWindowStart: store.MonthWindowStart(),
 	})
 	switch {
 	case err == nil:
-		rc.ExtraUsageBalanceAfterFen = newBal
+		rc.ExtraUsageBalanceAfterCredits = newBal
 		outcome := "ok"
 		if newBal < 0 {
 			outcome = "overdraft"
@@ -1757,12 +1751,12 @@ func (e *Executor) settleImageExtraUsage(ctx context.Context, rc *RequestContext
 		metrics.SetExtraUsageBalance(rc.ProjectID, newBal)
 	case errors.Is(err, store.ErrInsufficientBalance):
 		e.logger.Warn("extra_usage_underdraft",
-			"project_id", rc.ProjectID, "cost_fen", costFen)
+			"project_id", rc.ProjectID, "cost_credits", costCredits)
 		metrics.IncExtraUsageDeduction("insufficient")
 		metrics.IncExtraUsageUnderdraft(rc.ProjectID)
 	case errors.Is(err, store.ErrMonthlyLimitReached):
 		e.logger.Warn("extra_usage_monthly_limit_at_settle",
-			"project_id", rc.ProjectID, "cost_fen", costFen)
+			"project_id", rc.ProjectID, "cost_credits", costCredits)
 		metrics.IncExtraUsageDeduction("monthly_limit")
 	case errors.Is(err, store.ErrExtraUsageNotEnabled):
 		e.logger.Warn("extra_usage_disabled_at_settle",
@@ -1785,10 +1779,10 @@ func writeExtraUsageSuccessHeaders(w http.ResponseWriter, rc *RequestContext) {
 	if rc.ExtraUsageReason != "" {
 		w.Header().Set("X-Extra-Usage-Reason", rc.ExtraUsageReason)
 	}
-	if rc.ExtraUsageCostFen > 0 {
-		w.Header().Set("X-Extra-Usage-Cost-Fen", strconv.FormatInt(rc.ExtraUsageCostFen, 10))
+	if rc.ExtraUsageCostCredits > 0 {
+		w.Header().Set("X-Extra-Usage-Cost-Credits", strconv.FormatInt(rc.ExtraUsageCostCredits, 10))
 	}
-	w.Header().Set("X-Extra-Usage-Balance-Fen", strconv.FormatInt(rc.ExtraUsageBalanceAfterFen, 10))
+	w.Header().Set("X-Extra-Usage-Balance-Credits", strconv.FormatInt(rc.ExtraUsageBalanceAfterCredits, 10))
 }
 
 // sanitizeOutboundHeaders returns a new header map containing only headers

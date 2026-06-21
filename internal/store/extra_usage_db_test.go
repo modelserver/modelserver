@@ -43,33 +43,33 @@ func seedUserAndProject(t *testing.T, st *Store) (string, string) {
 	return userID, projectID
 }
 
-// TestBalanceFenCheckDropped asserts that migration 022 actually dropped
-// the CHECK (balance_fen >= 0) constraint — a negative balance must insert
-// successfully.
-func TestBalanceFenCheckDropped(t *testing.T) {
+// TestBalanceCreditsCheckDropped asserts that migration 022 actually dropped
+// the CHECK (balance_credits >= 0) constraint — a negative balance must insert
+// successfully. (Columns were renamed from _fen to _credits in migration 052.)
+func TestBalanceCreditsCheckDropped(t *testing.T) {
 	st := openTestStore(t)
 	_, projectID := seedUserAndProject(t, st)
 
 	_, err := st.pool.Exec(context.Background(), `
-		INSERT INTO extra_usage_settings (project_id, balance_fen)
+		INSERT INTO extra_usage_settings (project_id, balance_credits)
 		VALUES ($1, -1)`, projectID)
 	if err != nil {
 		t.Fatalf("negative balance INSERT must succeed after migration 022, got: %v", err)
 	}
 }
 
-// TestBalanceAfterFenCheckDropped asserts the same for the ledger's
-// balance_after_fen CHECK.
-func TestBalanceAfterFenCheckDropped(t *testing.T) {
+// TestBalanceAfterCreditsCheckDropped asserts the same for the ledger's
+// balance_after_credits CHECK.
+func TestBalanceAfterCreditsCheckDropped(t *testing.T) {
 	st := openTestStore(t)
 	_, projectID := seedUserAndProject(t, st)
 
 	_, err := st.pool.Exec(context.Background(), `
 		INSERT INTO extra_usage_transactions
-		  (project_id, type, amount_fen, balance_after_fen)
+		  (project_id, type, amount_credits, balance_after_credits)
 		VALUES ($1, 'deduction', -100, -50)`, projectID)
 	if err != nil {
-		t.Fatalf("negative balance_after_fen INSERT must succeed, got: %v", err)
+		t.Fatalf("negative balance_after_credits INSERT must succeed, got: %v", err)
 	}
 }
 
@@ -91,13 +91,13 @@ func TestSetExtraUsageBypassAndDeduct(t *testing.T) {
 	if settings.Enabled {
 		t.Fatalf("Enabled=true on fresh bypass row, want false")
 	}
-	if settings.BalanceFen != 0 {
-		t.Fatalf("BalanceFen=%d, want 0", settings.BalanceFen)
+	if settings.BalanceCredits != 0 {
+		t.Fatalf("BalanceCredits=%d, want 0", settings.BalanceCredits)
 	}
 
 	newBal, err := st.DeductExtraUsage(DeductExtraUsageReq{
 		ProjectID:        projectID,
-		AmountFen:        100,
+		AmountCredits:    100,
 		Reason:           "rate_limited",
 		MonthWindowStart: MonthWindowStart(),
 	})
@@ -113,7 +113,7 @@ func TestSetExtraUsageBypassAndDeduct(t *testing.T) {
 	}
 	_, err = st.DeductExtraUsage(DeductExtraUsageReq{
 		ProjectID:        projectID,
-		AmountFen:        10,
+		AmountCredits:    10,
 		Reason:           "rate_limited",
 		MonthWindowStart: MonthWindowStart(),
 	})

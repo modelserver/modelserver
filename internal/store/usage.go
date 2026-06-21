@@ -574,22 +574,22 @@ func (s *Store) GetPerModelTokenSums(projectID string, since, until time.Time) (
 	return out, rows.Err()
 }
 
-// GetExtraUsageSpendInWindow returns the total fen actually deducted
+// GetExtraUsageSpendInWindow returns the total credits actually deducted
 // from the project's extra-usage balance in [since, until).
 //
 // Source of truth is the extra_usage_transactions ledger (type='deduction'),
-// NOT requests.extra_usage_cost_fen. Those two diverge when settle fails:
+// NOT requests.extra_usage_cost_credits. Those two diverge when settle fails:
 // the request row records the would-have-charged amount even when the
 // ledger insert errors out, so summing the requests column reports
 // "intended spend" rather than actual spend. The dashboard's "Period
 // Paid" needs actual spend.
 //
-// amount_fen is negative for deductions; negate to return a positive fen
-// amount.
+// amount_credits is negative for deductions; negate to return a positive
+// credits amount.
 func (s *Store) GetExtraUsageSpendInWindow(projectID string, since, until time.Time) (int64, error) {
 	var total int64
 	err := s.pool.QueryRow(context.Background(), `
-		SELECT COALESCE(SUM(-amount_fen), 0)::bigint
+		SELECT COALESCE(SUM(-amount_credits), 0)::bigint
 		FROM extra_usage_transactions
 		WHERE project_id = $1
 		  AND type = 'deduction'

@@ -56,25 +56,25 @@ type Request struct {
 	SelectionMs float64            `json:"selection_ms,omitempty"`
 	Metadata    map[string]string  `json:"metadata,omitempty"`
 	// Extra-usage attribution.
-	//   IsExtraUsage      — set when the extra-usage guard approved this
-	//                       request (i.e. the user was over their
-	//                       subscription quota at the time). True even
-	//                       on upstream failures and on settle's early
-	//                       returns, so "how many requests overflowed"
-	//                       remains accurate. Stamped in Executor.Execute
-	//                       when ExtraUsageContext is captured from ctx.
-	//   ExtraUsageCostFen — would-have-charged cost in fen, computed and
-	//                       set by settleExtraUsage on the success path.
-	//                       Stays 0 when settle bails (no tokens, missing
-	//                       rate, etc.). For "actually deducted from
-	//                       balance" SUM the extra_usage_transactions
-	//                       ledger instead — see Store.GetExtraUsageSpendInWindow.
-	//   ExtraUsageReason  — guard intent reason (rate_limited /
-	//                       client-restriction). Stamped alongside
-	//                       IsExtraUsage in Executor.Execute.
-	IsExtraUsage      bool   `json:"is_extra_usage,omitempty"`
-	ExtraUsageCostFen int64  `json:"extra_usage_cost_fen,omitempty"`
-	ExtraUsageReason  string `json:"extra_usage_reason,omitempty"`
+	//   IsExtraUsage          — set when the extra-usage guard approved this
+	//                           request (i.e. the user was over their
+	//                           subscription quota at the time). True even
+	//                           on upstream failures and on settle's early
+	//                           returns, so "how many requests overflowed"
+	//                           remains accurate. Stamped in Executor.Execute
+	//                           when ExtraUsageContext is captured from ctx.
+	//   ExtraUsageCostCredits — would-have-charged cost in credits, computed
+	//                           and set by settleExtraUsage on the success path.
+	//                           Stays 0 when settle bails (no tokens, missing
+	//                           rate, etc.). For "actually deducted from
+	//                           balance" SUM the extra_usage_transactions
+	//                           ledger instead — see Store.GetExtraUsageSpendInWindow.
+	//   ExtraUsageReason      — guard intent reason (rate_limited /
+	//                           client-restriction). Stamped alongside
+	//                           IsExtraUsage in Executor.Execute.
+	IsExtraUsage          bool   `json:"is_extra_usage,omitempty"`
+	ExtraUsageCostCredits int64  `json:"extra_usage_cost_credits,omitempty"` // was ExtraUsageCostFen
+	ExtraUsageReason      string `json:"extra_usage_reason,omitempty"`
 	HttpLogPath       string `json:"http_log_path,omitempty"`
 	CreatedAt   time.Time          `json:"created_at"`
 }

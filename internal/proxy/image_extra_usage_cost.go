@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/modelserver/modelserver/internal/types"
@@ -36,20 +35,21 @@ func computeImageCredits(m *types.Model, u ImageTokenUsage) (float64, error) {
 		r.ImageOutputRate*float64(u.ImageOutputTokens), nil
 }
 
-func computeImageExtraUsageCostFen(m *types.Model, u ImageTokenUsage, creditPriceFen int64) (int64, float64, error) {
-	if creditPriceFen <= 0 {
-		return 0, 0, fmt.Errorf("extra usage: credit_price_fen must be > 0")
-	}
+// computeImageExtraUsageCostCredits converts ImageTokenUsage to credits using
+// the catalog's DefaultImageCreditRate. Returns (credits, err). Credits round
+// UP so sub-credit fractions don't undercharge. The creditPriceFen conversion
+// step has been removed: credits is the natural output of tokens × rate.
+func computeImageExtraUsageCostCredits(m *types.Model, u ImageTokenUsage) (int64, error) {
 	credits, err := computeImageCredits(m, u)
 	if err != nil {
-		return 0, 0, err
+		return 0, err
 	}
 	if credits <= 0 {
-		return 0, credits, nil
+		return 0, nil
 	}
-	cost := int64(math.Ceil(credits * float64(creditPriceFen) / 1_000_000))
+	cost := int64(math.Ceil(credits))
 	if cost < 1 {
 		cost = 1
 	}
-	return cost, credits, nil
+	return cost, nil
 }

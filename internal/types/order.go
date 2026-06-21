@@ -14,7 +14,7 @@ const (
 
 // Order represents a purchase order for a plan or an extra-usage top-up.
 // Subscription orders carry PlanID + Periods; top-up orders leave PlanID
-// empty and carry ExtraUsageAmountFen.
+// empty and carry ExtraUsageAmountCredits.
 type Order struct {
 	ID                     string    `json:"id"`
 	ProjectID              string    `json:"project_id"`
@@ -30,7 +30,7 @@ type Order struct {
 	ExistingSubscriptionID string    `json:"existing_subscription_id,omitempty"`
 	Metadata               string    `json:"metadata,omitempty"`
 	OrderType              string    `json:"order_type"`
-	ExtraUsageAmountFen    int64     `json:"extra_usage_amount_fen,omitempty"`
+	ExtraUsageAmountCredits int64    `json:"extra_usage_amount_credits,omitempty"` // was ExtraUsageAmountFen
 	CreatedAt              time.Time `json:"created_at"`
 	UpdatedAt              time.Time `json:"updated_at"`
 }

@@ -54,25 +54,25 @@ const (
 // keyed by project_id. Created on first top-up (with enabled=false) or via
 // the dashboard; mutated by DeductExtraUsage / TopUpExtraUsage / admin PUT.
 type ExtraUsageSettings struct {
-	ProjectID          string    `json:"project_id"`
-	Enabled            bool      `json:"enabled"`
-	BalanceFen         int64     `json:"balance_fen"`
-	MonthlyLimitFen    int64     `json:"monthly_limit_fen"`
-	BypassBalanceCheck bool      `json:"bypass_balance_check"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	ProjectID           string    `json:"project_id"`
+	Enabled             bool      `json:"enabled"`
+	BalanceCredits      int64     `json:"balance_credits"`       // was BalanceFen
+	MonthlyLimitCredits int64     `json:"monthly_limit_credits"` // was MonthlyLimitFen
+	BypassBalanceCheck  bool      `json:"bypass_balance_check"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 // ExtraUsageTransaction is one immutable ledger row.
 type ExtraUsageTransaction struct {
-	ID              string    `json:"id"`
-	ProjectID       string    `json:"project_id"`
-	Type            string    `json:"type"`
-	AmountFen       int64     `json:"amount_fen"`
-	BalanceAfterFen int64     `json:"balance_after_fen"`
-	RequestID       string    `json:"request_id,omitempty"`
-	OrderID         string    `json:"order_id,omitempty"`
-	Reason          string    `json:"reason,omitempty"`
-	Description     string    `json:"description,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID                  string    `json:"id"`
+	ProjectID           string    `json:"project_id"`
+	Type                string    `json:"type"`
+	AmountCredits       int64     `json:"amount_credits"`        // was AmountFen
+	BalanceAfterCredits int64     `json:"balance_after_credits"` // was BalanceAfterFen
+	RequestID           string    `json:"request_id,omitempty"`
+	OrderID             string    `json:"order_id,omitempty"`
+	Reason              string    `json:"reason,omitempty"`
+	Description         string    `json:"description,omitempty"`
+	CreatedAt           time.Time `json:"created_at"`
 }

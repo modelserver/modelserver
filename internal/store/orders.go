@@ -19,12 +19,12 @@ func (s *Store) CreateOrder(o *types.Order) error {
 	return s.pool.QueryRow(context.Background(), `
 		INSERT INTO orders (project_id, plan_id, periods, unit_price, amount, currency,
 			status, channel, payment_ref, payment_url, existing_subscription_id, metadata,
-			order_type, extra_usage_amount_fen)
+			order_type, extra_usage_amount_credits)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id, created_at, updated_at`,
 		o.ProjectID, nullString(o.PlanID), o.Periods, o.UnitPrice, o.Amount, o.Currency,
 		o.Status, o.Channel, o.PaymentRef, o.PaymentURL, nullString(o.ExistingSubscriptionID), o.Metadata,
-		orderType, o.ExtraUsageAmountFen,
+		orderType, o.ExtraUsageAmountCredits,
 	).Scan(&o.ID, &o.CreatedAt, &o.UpdatedAt)
 }
 
@@ -35,12 +35,12 @@ func (s *Store) GetOrderByID(id string) (*types.Order, error) {
 	err := s.pool.QueryRow(context.Background(), `
 		SELECT id, project_id, plan_id, periods, unit_price, amount, currency,
 			status, channel, payment_ref, payment_url, existing_subscription_id, metadata,
-			order_type, extra_usage_amount_fen,
+			order_type, extra_usage_amount_credits,
 			created_at, updated_at
 		FROM orders WHERE id = $1`, id,
 	).Scan(&o.ID, &o.ProjectID, &planID, &o.Periods, &o.UnitPrice, &o.Amount,
 		&o.Currency, &o.Status, &o.Channel, &o.PaymentRef, &o.PaymentURL, &existSubID, &o.Metadata,
-		&o.OrderType, &o.ExtraUsageAmountFen,
+		&o.OrderType, &o.ExtraUsageAmountCredits,
 		&o.CreatedAt, &o.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
@@ -68,7 +68,7 @@ func (s *Store) ListOrdersByProject(projectID string, p types.PaginationParams) 
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, project_id, plan_id, periods, unit_price, amount, currency,
 			status, channel, payment_ref, payment_url, existing_subscription_id, metadata,
-			order_type, extra_usage_amount_fen,
+			order_type, extra_usage_amount_credits,
 			created_at, updated_at
 		FROM orders WHERE project_id = $1
 		ORDER BY created_at DESC
@@ -84,7 +84,7 @@ func (s *Store) ListOrdersByProject(projectID string, p types.PaginationParams) 
 		var planID, existSubID *string
 		if err := rows.Scan(&o.ID, &o.ProjectID, &planID, &o.Periods,
 			&o.UnitPrice, &o.Amount, &o.Currency, &o.Status, &o.Channel, &o.PaymentRef, &o.PaymentURL,
-			&existSubID, &o.Metadata, &o.OrderType, &o.ExtraUsageAmountFen, &o.CreatedAt, &o.UpdatedAt); err != nil {
+			&existSubID, &o.Metadata, &o.OrderType, &o.ExtraUsageAmountCredits, &o.CreatedAt, &o.UpdatedAt); err != nil {
 			return nil, 0, fmt.Errorf("scan order: %w", err)
 		}
 		if planID != nil {
@@ -111,15 +111,15 @@ func (s *Store) HasPayingOrder(projectID string) (bool, error) {
 	return exists, err
 }
 
-// SumDailyExtraUsageTopupFen returns the total fen (sum of paid/delivered
+// SumDailyExtraUsageTopupCredits returns the total credits (sum of paid/delivered
 // top-up orders) committed in the day containing dayStart. Callers
 // compute dayStart via store.DayWindowStart() (which reads time.Local,
 // set from the TZ env var) so the daily cap rolls over at the same
 // wall-clock moment the operator's users see as "midnight."
-func (s *Store) SumDailyExtraUsageTopupFen(projectID string, dayStart time.Time) (int64, error) {
+func (s *Store) SumDailyExtraUsageTopupCredits(projectID string, dayStart time.Time) (int64, error) {
 	var total int64
 	err := s.pool.QueryRow(context.Background(), `
-		SELECT COALESCE(SUM(extra_usage_amount_fen), 0)::bigint
+		SELECT COALESCE(SUM(extra_usage_amount_credits), 0)::bigint
 		FROM orders
 		WHERE project_id = $1
 		  AND order_type = 'extra_usage_topup'

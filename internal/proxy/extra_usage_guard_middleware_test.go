@@ -129,7 +129,7 @@ func (f *fakeExtraUsageStore) GetExtraUsageSettings(_ string) (*types.ExtraUsage
 	return f.settings, nil
 }
 
-func (f *fakeExtraUsageStore) GetMonthlyExtraSpendFen(_ string, _ time.Time) (int64, error) {
+func (f *fakeExtraUsageStore) GetMonthlyExtraSpendCredits(_ string, _ time.Time) (int64, error) {
 	return f.spent, nil
 }
 
@@ -175,7 +175,7 @@ func TestExtraUsageGuard_Bypass_EnabledFalse_BalanceZero_Allowed(t *testing.T) {
 		settings: &types.ExtraUsageSettings{
 			ProjectID:          "p1",
 			Enabled:            false,
-			BalanceFen:         0,
+			BalanceCredits:     0,
 			BypassBalanceCheck: true,
 		},
 	}
@@ -191,11 +191,11 @@ func TestExtraUsageGuard_Bypass_EnabledFalse_BalanceZero_Allowed(t *testing.T) {
 func TestExtraUsageGuard_Bypass_MonthlyLimitExceeded_Rejected(t *testing.T) {
 	st := &fakeExtraUsageStore{
 		settings: &types.ExtraUsageSettings{
-			ProjectID:          "p1",
-			Enabled:            true,
-			BalanceFen:         100000,
-			MonthlyLimitFen:    30000,
-			BypassBalanceCheck: true,
+			ProjectID:           "p1",
+			Enabled:             true,
+			BalanceCredits:      100000,
+			MonthlyLimitCredits: 30000,
+			BypassBalanceCheck:  true,
 		},
 		spent: 30000,
 	}
@@ -211,9 +211,9 @@ func TestExtraUsageGuard_Bypass_MonthlyLimitExceeded_Rejected(t *testing.T) {
 func TestExtraUsageGuard_NoBypass_BalanceZero_Rejected(t *testing.T) {
 	st := &fakeExtraUsageStore{
 		settings: &types.ExtraUsageSettings{
-			ProjectID:  "p1",
-			Enabled:    true,
-			BalanceFen: 0,
+			ProjectID:      "p1",
+			Enabled:        true,
+			BalanceCredits: 0,
 		},
 	}
 	rr, called := runGuardWithIntent(t, dummyCfg(true), st, &types.Project{ID: "p1"})
@@ -248,9 +248,9 @@ func runGuardWithModel(t *testing.T, cfg config.ExtraUsageConfig, st extraUsageS
 func TestExtraUsageGuard_NoBypass_ModelMissingDefaultRate_Rejected(t *testing.T) {
 	st := &fakeExtraUsageStore{
 		settings: &types.ExtraUsageSettings{
-			ProjectID:  "p1",
-			Enabled:    true,
-			BalanceFen: 100000,
+			ProjectID:      "p1",
+			Enabled:        true,
+			BalanceCredits: 100000,
 		},
 	}
 	// Model has no DefaultCreditRate — settle would silently no-op without
@@ -269,9 +269,9 @@ func TestExtraUsageGuard_NoBypass_ModelMissingDefaultRate_Rejected(t *testing.T)
 func TestExtraUsageGuard_NoBypass_CreditPriceUnset_Rejected(t *testing.T) {
 	st := &fakeExtraUsageStore{
 		settings: &types.ExtraUsageSettings{
-			ProjectID:  "p1",
-			Enabled:    true,
-			BalanceFen: 100000,
+			ProjectID:      "p1",
+			Enabled:        true,
+			BalanceCredits: 100000,
 		},
 	}
 	cfg := config.ExtraUsageConfig{Enabled: true, CreditPriceFen: 0}
@@ -496,9 +496,9 @@ func TestExtraUsageGuard_ClientRestriction_LogsRequestDetails(t *testing.T) {
 func TestExtraUsageGuard_NoBypass_PriceableModel_Allowed(t *testing.T) {
 	st := &fakeExtraUsageStore{
 		settings: &types.ExtraUsageSettings{
-			ProjectID:  "p1",
-			Enabled:    true,
-			BalanceFen: 100000,
+			ProjectID:      "p1",
+			Enabled:        true,
+			BalanceCredits: 100000,
 		},
 	}
 	m := &types.Model{Name: "priced", DefaultCreditRate: &types.CreditRate{InputRate: 3, OutputRate: 15}}

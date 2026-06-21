@@ -2,26 +2,25 @@ package proxy
 
 import (
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/modelserver/modelserver/internal/types"
 )
 
-func TestComputeImageExtraUsageCostFen_ImageOutputOnly(t *testing.T) {
+func TestComputeImageExtraUsageCostCredits_ImageOutputOnly(t *testing.T) {
 	m := &types.Model{DefaultImageCreditRate: &types.ImageCreditRate{ImageOutputRate: 30}}
-	cost, credits, err := computeImageExtraUsageCostFen(m, ImageTokenUsage{ImageOutputTokens: 1000, OutputTokens: 1000}, 100)
+	cost, err := computeImageExtraUsageCostCredits(m, ImageTokenUsage{ImageOutputTokens: 1000, OutputTokens: 1000})
 	if err != nil {
-		t.Fatalf("computeImageExtraUsageCostFen: %v", err)
+		t.Fatalf("computeImageExtraUsageCostCredits: %v", err)
 	}
-	if credits != 30000 {
-		t.Fatalf("credits = %v, want 30000", credits)
-	}
-	if cost != 3 {
-		t.Fatalf("cost = %d, want 3", cost)
+	// credits = 30 * 1000 = 30000; cost_credits = ceil(30000) = 30000
+	if cost != 30000 {
+		t.Fatalf("cost = %d, want 30000", cost)
 	}
 }
 
-func TestComputeImageExtraUsageCostFen_ProportionalCachedSplit(t *testing.T) {
+func TestComputeImageExtraUsageCostCredits_ProportionalCachedSplit(t *testing.T) {
 	m := &types.Model{DefaultImageCreditRate: &types.ImageCreditRate{
 		TextInputRate: 10, TextCachedInputRate: 1,
 		ImageInputRate: 20, ImageCachedInputRate: 2,
@@ -36,30 +35,32 @@ func TestComputeImageExtraUsageCostFen_ProportionalCachedSplit(t *testing.T) {
 		InputTokens:       100,
 		OutputTokens:      5,
 	}
-	_, credits, err := computeImageExtraUsageCostFen(m, u, 100)
+	cost, err := computeImageExtraUsageCostCredits(m, u)
 	if err != nil {
-		t.Fatalf("computeImageExtraUsageCostFen: %v", err)
+		t.Fatalf("computeImageExtraUsageCostCredits: %v", err)
 	}
 	// cachedText=10, cachedImage=15, billedText=30, billedImage=45
-	want := float64(10*30 + 20*45 + 1*10 + 2*15 + 30*2 + 40*3)
-	if credits != want {
-		t.Fatalf("credits = %v, want %v", credits, want)
+	wantCredits := float64(10*30 + 20*45 + 1*10 + 2*15 + 30*2 + 40*3)
+	wantCost := int64(math.Ceil(wantCredits))
+	if cost != wantCost {
+		t.Fatalf("cost = %d, want %d (%.2f raw credits)", cost, wantCost, wantCredits)
 	}
 }
 
-func TestComputeImageExtraUsageCostFen_MissingRate(t *testing.T) {
-	_, _, err := computeImageExtraUsageCostFen(&types.Model{}, ImageTokenUsage{OutputTokens: 1}, 100)
+func TestComputeImageExtraUsageCostCredits_MissingRate(t *testing.T) {
+	_, err := computeImageExtraUsageCostCredits(&types.Model{}, ImageTokenUsage{OutputTokens: 1})
 	if !errors.Is(err, ErrMissingDefaultCreditRate) {
 		t.Fatalf("err = %v, want ErrMissingDefaultCreditRate", err)
 	}
 }
 
-func TestComputeImageExtraUsageCostFen_Floor(t *testing.T) {
+func TestComputeImageExtraUsageCostCredits_Floor(t *testing.T) {
 	m := &types.Model{DefaultImageCreditRate: &types.ImageCreditRate{ImageOutputRate: 1}}
-	cost, _, err := computeImageExtraUsageCostFen(m, ImageTokenUsage{ImageOutputTokens: 1, OutputTokens: 1}, 1)
+	cost, err := computeImageExtraUsageCostCredits(m, ImageTokenUsage{ImageOutputTokens: 1, OutputTokens: 1})
 	if err != nil {
-		t.Fatalf("computeImageExtraUsageCostFen: %v", err)
+		t.Fatalf("computeImageExtraUsageCostCredits: %v", err)
 	}
+	// credits = 1 * 1 = 1; cost = ceil(1) = 1; min is 1
 	if cost != 1 {
 		t.Fatalf("cost = %d, want 1", cost)
 	}

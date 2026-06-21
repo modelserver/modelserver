@@ -53,7 +53,7 @@ func (s *Store) CompleteRequest(id string, r *types.Request) error {
 			retry_reason = $17,
 			selection_ms = $18,
 			is_extra_usage = $19,
-			extra_usage_cost_fen = $20,
+			extra_usage_cost_credits = $20,
 			extra_usage_reason = $21,
 			metadata = CASE WHEN $22::jsonb = '{}'::jsonb THEN metadata ELSE metadata || $22::jsonb END
 		WHERE id = $23`,
@@ -63,7 +63,7 @@ func (s *Store) CompleteRequest(id string, r *types.Request) error {
 		nullString(r.UpstreamID), r.Provider,
 		nullString(r.RouteID), nullString(r.GroupID),
 		r.Attempt, nullString(r.RetryReason), r.SelectionMs,
-		r.IsExtraUsage, r.ExtraUsageCostFen, r.ExtraUsageReason,
+		r.IsExtraUsage, r.ExtraUsageCostCredits, r.ExtraUsageReason,
 		metadataJSON,
 		id,
 	)

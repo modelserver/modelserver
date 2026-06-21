@@ -25,14 +25,14 @@ var (
 //
 // Single source of truth for the boundary used by the monthly-limit
 // check in DeductExtraUsage / classifyDeductFailure /
-// GetMonthlyExtraSpendFen and by the dashboard's "Period Paid" display.
+// GetMonthlyExtraSpendCredits and by the dashboard's "Period Paid" display.
 // All four read the same time.Local, so they cannot disagree.
 func MonthWindowStart() time.Time {
 	now := time.Now()
 	return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.Local)
 }
 
-// DayWindowStart is the daily analogue used by SumDailyExtraUsageTopupFen.
+// DayWindowStart is the daily analogue used by SumDailyExtraUsageTopupCredits.
 // Same time.Local contract as MonthWindowStart.
 func DayWindowStart() time.Time {
 	now := time.Now()
@@ -41,11 +41,11 @@ func DayWindowStart() time.Time {
 
 // DeductExtraUsageReq carries the input for an atomic deduction.
 type DeductExtraUsageReq struct {
-	ProjectID        string
-	AmountFen        int64
-	RequestID        string
-	Reason           string
-	Description      string
+	ProjectID     string
+	AmountCredits int64 // was AmountFen
+	RequestID     string
+	Reason        string
+	Description   string
 	// MonthWindowStart is the inclusive lower bound of the current
 	// month, in the process's local timezone (TZ env var → time.Local).
 	// Used by the monthly-limit check. Compute via store.MonthWindowStart().
@@ -54,23 +54,23 @@ type DeductExtraUsageReq struct {
 
 // TopUpExtraUsageReq carries the input for a top-up.
 type TopUpExtraUsageReq struct {
-	ProjectID   string
-	AmountFen   int64
-	OrderID     string
-	Reason      string
-	Description string
+	ProjectID     string
+	AmountCredits int64 // was AmountFen
+	OrderID       string
+	Reason        string
+	Description   string
 }
 
 // GetExtraUsageSettings returns the settings row for a project, or nil when
 // no row exists yet (project has never topped up or opened the dashboard).
 func (s *Store) GetExtraUsageSettings(projectID string) (*types.ExtraUsageSettings, error) {
 	row := s.pool.QueryRow(context.Background(), `
-		SELECT project_id, enabled, balance_fen, monthly_limit_fen,
+		SELECT project_id, enabled, balance_credits, monthly_limit_credits,
 		       bypass_balance_check, created_at, updated_at
 		FROM extra_usage_settings WHERE project_id = $1`, projectID)
 	out := &types.ExtraUsageSettings{}
-	err := row.Scan(&out.ProjectID, &out.Enabled, &out.BalanceFen,
-		&out.MonthlyLimitFen, &out.BypassBalanceCheck,
+	err := row.Scan(&out.ProjectID, &out.Enabled, &out.BalanceCredits,
+		&out.MonthlyLimitCredits, &out.BypassBalanceCheck,
 		&out.CreatedAt, &out.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
@@ -82,23 +82,23 @@ func (s *Store) GetExtraUsageSettings(projectID string) (*types.ExtraUsageSettin
 }
 
 // UpsertExtraUsageSettings creates or updates the user-controllable fields.
-// `balance_fen` is intentionally NOT writable here — it is mutated only by
+// `balance_credits` is intentionally NOT writable here — it is mutated only by
 // DeductExtraUsage / TopUpExtraUsage / admin adjust paths. Callers wanting
 // to toggle enabled or set a monthly limit go through this function.
-func (s *Store) UpsertExtraUsageSettings(projectID string, enabled bool, monthlyLimitFen int64) (*types.ExtraUsageSettings, error) {
+func (s *Store) UpsertExtraUsageSettings(projectID string, enabled bool, monthlyLimitCredits int64) (*types.ExtraUsageSettings, error) {
 	row := s.pool.QueryRow(context.Background(), `
-		INSERT INTO extra_usage_settings (project_id, enabled, monthly_limit_fen)
+		INSERT INTO extra_usage_settings (project_id, enabled, monthly_limit_credits)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (project_id) DO UPDATE
-			SET enabled           = EXCLUDED.enabled,
-			    monthly_limit_fen = EXCLUDED.monthly_limit_fen,
-			    updated_at        = NOW()
-		RETURNING project_id, enabled, balance_fen, monthly_limit_fen,
+			SET enabled               = EXCLUDED.enabled,
+			    monthly_limit_credits = EXCLUDED.monthly_limit_credits,
+			    updated_at            = NOW()
+		RETURNING project_id, enabled, balance_credits, monthly_limit_credits,
 		          bypass_balance_check, created_at, updated_at`,
-		projectID, enabled, monthlyLimitFen)
+		projectID, enabled, monthlyLimitCredits)
 	out := &types.ExtraUsageSettings{}
-	err := row.Scan(&out.ProjectID, &out.Enabled, &out.BalanceFen,
-		&out.MonthlyLimitFen, &out.BypassBalanceCheck,
+	err := row.Scan(&out.ProjectID, &out.Enabled, &out.BalanceCredits,
+		&out.MonthlyLimitCredits, &out.BypassBalanceCheck,
 		&out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("upsert extra_usage_settings: %w", err)
@@ -117,12 +117,12 @@ func (s *Store) SetExtraUsageBypass(projectID string, bypass bool) (*types.Extra
 		ON CONFLICT (project_id) DO UPDATE
 			SET bypass_balance_check = EXCLUDED.bypass_balance_check,
 			    updated_at           = NOW()
-		RETURNING project_id, enabled, balance_fen, monthly_limit_fen,
+		RETURNING project_id, enabled, balance_credits, monthly_limit_credits,
 		          bypass_balance_check, created_at, updated_at`,
 		projectID, bypass)
 	out := &types.ExtraUsageSettings{}
-	err := row.Scan(&out.ProjectID, &out.Enabled, &out.BalanceFen,
-		&out.MonthlyLimitFen, &out.BypassBalanceCheck,
+	err := row.Scan(&out.ProjectID, &out.Enabled, &out.BalanceCredits,
+		&out.MonthlyLimitCredits, &out.BypassBalanceCheck,
 		&out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("set extra_usage bypass: %w", err)
@@ -148,26 +148,26 @@ func (s *Store) DeductExtraUsage(req DeductExtraUsageReq) (int64, error) {
 	var newBalance int64
 	err = tx.QueryRow(ctx, `
 		WITH month_spend AS (
-			SELECT COALESCE(SUM(-amount_fen), 0)::bigint AS spent
+			SELECT COALESCE(SUM(-amount_credits), 0)::bigint AS spent
 			FROM extra_usage_transactions
 			WHERE project_id = $1
 			  AND type = 'deduction'
 			  AND created_at >= $3
 		)
 		UPDATE extra_usage_settings s
-		   SET balance_fen = balance_fen - $2, updated_at = NOW()
+		   SET balance_credits = balance_credits - $2, updated_at = NOW()
 		  FROM month_spend
 		 WHERE s.project_id = $1
 		   AND (s.bypass_balance_check = TRUE OR s.enabled = TRUE)
-		   AND (s.bypass_balance_check = TRUE OR s.balance_fen >= $2)
-		   AND (s.monthly_limit_fen = 0 OR month_spend.spent + $2 <= s.monthly_limit_fen)
-		RETURNING s.balance_fen`,
-		req.ProjectID, req.AmountFen, req.MonthWindowStart,
+		   AND (s.bypass_balance_check = TRUE OR s.balance_credits >= $2)
+		   AND (s.monthly_limit_credits = 0 OR month_spend.spent + $2 <= s.monthly_limit_credits)
+		RETURNING s.balance_credits`,
+		req.ProjectID, req.AmountCredits, req.MonthWindowStart,
 	).Scan(&newBalance)
 
 	if err == pgx.ErrNoRows {
 		// Distinguish enabled=false / balance too low / monthly limit hit.
-		classifyErr := classifyDeductFailure(ctx, tx, req.ProjectID, req.AmountFen, req.MonthWindowStart)
+		classifyErr := classifyDeductFailure(ctx, tx, req.ProjectID, req.AmountCredits, req.MonthWindowStart)
 		return 0, classifyErr
 	}
 	if err != nil {
@@ -182,9 +182,9 @@ func (s *Store) DeductExtraUsage(req DeductExtraUsageReq) (int64, error) {
 	// the negated int64 directly bypasses operator resolution entirely.
 	_, err = tx.Exec(ctx, `
 		INSERT INTO extra_usage_transactions
-		  (project_id, type, amount_fen, balance_after_fen, request_id, reason, description)
+		  (project_id, type, amount_credits, balance_after_credits, request_id, reason, description)
 		VALUES ($1, 'deduction', $2, $3, $4, $5, $6)`,
-		req.ProjectID, -req.AmountFen, newBalance,
+		req.ProjectID, -req.AmountCredits, newBalance,
 		nullString(req.RequestID), req.Reason, req.Description,
 	)
 	if err != nil {
@@ -204,7 +204,7 @@ func classifyDeductFailure(ctx context.Context, tx pgx.Tx, projectID string, amo
 	var enabled, bypass bool
 	var balance, monthlyLimit int64
 	err := tx.QueryRow(ctx, `
-		SELECT enabled, balance_fen, monthly_limit_fen, bypass_balance_check
+		SELECT enabled, balance_credits, monthly_limit_credits, bypass_balance_check
 		FROM extra_usage_settings
 		WHERE project_id = $1`, projectID,
 	).Scan(&enabled, &balance, &monthlyLimit, &bypass)
@@ -224,7 +224,7 @@ func classifyDeductFailure(ctx context.Context, tx pgx.Tx, projectID string, amo
 		// insufficient-balance to the caller when this query failed
 		// for unrelated reasons (lock timeout, etc.). Wrap and return.
 		if err := tx.QueryRow(ctx, `
-			SELECT COALESCE(SUM(-amount_fen), 0)::bigint
+			SELECT COALESCE(SUM(-amount_credits), 0)::bigint
 			FROM extra_usage_transactions
 			WHERE project_id = $1
 			  AND type = 'deduction'
@@ -257,7 +257,7 @@ func (s *Store) TopUpExtraUsage(req TopUpExtraUsageReq) (int64, error) {
 	if req.OrderID != "" {
 		var existing int64
 		err := tx.QueryRow(ctx, `
-			SELECT s.balance_fen
+			SELECT s.balance_credits
 			FROM extra_usage_transactions t
 			JOIN extra_usage_settings s ON s.project_id = t.project_id
 			WHERE t.order_id = $1 AND t.type = 'topup'`, req.OrderID,
@@ -273,13 +273,13 @@ func (s *Store) TopUpExtraUsage(req TopUpExtraUsageReq) (int64, error) {
 
 	var newBalance int64
 	err = tx.QueryRow(ctx, `
-		INSERT INTO extra_usage_settings (project_id, balance_fen)
+		INSERT INTO extra_usage_settings (project_id, balance_credits)
 		VALUES ($1, $2)
 		ON CONFLICT (project_id) DO UPDATE
-			SET balance_fen = extra_usage_settings.balance_fen + EXCLUDED.balance_fen,
-			    updated_at  = NOW()
-		RETURNING balance_fen`,
-		req.ProjectID, req.AmountFen,
+			SET balance_credits = extra_usage_settings.balance_credits + EXCLUDED.balance_credits,
+			    updated_at      = NOW()
+		RETURNING balance_credits`,
+		req.ProjectID, req.AmountCredits,
 	).Scan(&newBalance)
 	if err != nil {
 		return 0, fmt.Errorf("apply topup to settings: %w", err)
@@ -287,9 +287,9 @@ func (s *Store) TopUpExtraUsage(req TopUpExtraUsageReq) (int64, error) {
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO extra_usage_transactions
-		  (project_id, type, amount_fen, balance_after_fen, order_id, reason, description)
+		  (project_id, type, amount_credits, balance_after_credits, order_id, reason, description)
 		VALUES ($1, 'topup', $2, $3, $4, $5, $6)`,
-		req.ProjectID, req.AmountFen, newBalance,
+		req.ProjectID, req.AmountCredits, newBalance,
 		nullString(req.OrderID), req.Reason, req.Description,
 	)
 	if err != nil {
@@ -301,15 +301,15 @@ func (s *Store) TopUpExtraUsage(req TopUpExtraUsageReq) (int64, error) {
 	return newBalance, nil
 }
 
-// GetMonthlyExtraSpendFen returns the total spent (positive fen) in the
+// GetMonthlyExtraSpendCredits returns the total spent (positive credits) in the
 // month containing monthStart. Callers compute monthStart via
 // store.MonthWindowStart() (which reads time.Local, set from the TZ
 // env var) so the boundary matches DeductExtraUsage's atomic check
 // exactly.
-func (s *Store) GetMonthlyExtraSpendFen(projectID string, monthStart time.Time) (int64, error) {
+func (s *Store) GetMonthlyExtraSpendCredits(projectID string, monthStart time.Time) (int64, error) {
 	var spent int64
 	err := s.pool.QueryRow(context.Background(), `
-		SELECT COALESCE(SUM(-amount_fen), 0)::bigint
+		SELECT COALESCE(SUM(-amount_credits), 0)::bigint
 		FROM extra_usage_transactions
 		WHERE project_id = $1
 		  AND type = 'deduction'
@@ -344,7 +344,7 @@ func (s *Store) ListExtraUsageTransactions(projectID string, p types.PaginationP
 	limitN := len(args) - 1
 	offsetN := len(args)
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
-		SELECT id, project_id, type, amount_fen, balance_after_fen,
+		SELECT id, project_id, type, amount_credits, balance_after_credits,
 		       COALESCE(request_id::text, ''), COALESCE(order_id::text, ''),
 		       reason, description, created_at
 		FROM extra_usage_transactions
@@ -359,8 +359,8 @@ func (s *Store) ListExtraUsageTransactions(projectID string, p types.PaginationP
 	var out []types.ExtraUsageTransaction
 	for rows.Next() {
 		var t types.ExtraUsageTransaction
-		if err := rows.Scan(&t.ID, &t.ProjectID, &t.Type, &t.AmountFen,
-			&t.BalanceAfterFen, &t.RequestID, &t.OrderID,
+		if err := rows.Scan(&t.ID, &t.ProjectID, &t.Type, &t.AmountCredits,
+			&t.BalanceAfterCredits, &t.RequestID, &t.OrderID,
 			&t.Reason, &t.Description, &t.CreatedAt); err != nil {
 			return nil, 0, fmt.Errorf("scan transaction: %w", err)
 		}
@@ -372,7 +372,7 @@ func (s *Store) ListExtraUsageTransactions(projectID string, p types.PaginationP
 // ListExtraUsageSettings returns every settings row (admin overview).
 func (s *Store) ListExtraUsageSettings() ([]types.ExtraUsageSettings, error) {
 	rows, err := s.pool.Query(context.Background(), `
-		SELECT project_id, enabled, balance_fen, monthly_limit_fen,
+		SELECT project_id, enabled, balance_credits, monthly_limit_credits,
 		       bypass_balance_check, created_at, updated_at
 		FROM extra_usage_settings
 		ORDER BY updated_at DESC`)
@@ -384,8 +384,8 @@ func (s *Store) ListExtraUsageSettings() ([]types.ExtraUsageSettings, error) {
 	var out []types.ExtraUsageSettings
 	for rows.Next() {
 		var s types.ExtraUsageSettings
-		if err := rows.Scan(&s.ProjectID, &s.Enabled, &s.BalanceFen,
-			&s.MonthlyLimitFen, &s.BypassBalanceCheck,
+		if err := rows.Scan(&s.ProjectID, &s.Enabled, &s.BalanceCredits,
+			&s.MonthlyLimitCredits, &s.BypassBalanceCheck,
 			&s.CreatedAt, &s.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan settings: %w", err)
 		}
@@ -399,7 +399,7 @@ func (s *Store) ListExtraUsageSettings() ([]types.ExtraUsageSettings, error) {
 func (s *Store) SumRecentExtraUsageSpendFen(projectID string, lookbackDays int) (int64, error) {
 	var spent int64
 	err := s.pool.QueryRow(context.Background(), fmt.Sprintf(`
-		SELECT COALESCE(SUM(-amount_fen), 0)::bigint
+		SELECT COALESCE(SUM(-amount_credits), 0)::bigint
 		FROM extra_usage_transactions
 		WHERE project_id = $1
 		  AND type = 'deduction'

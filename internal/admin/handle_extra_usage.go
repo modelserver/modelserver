@@ -17,17 +17,17 @@ import (
 
 // extraUsageGetResponse packs settings + derived counters for the dashboard.
 type extraUsageGetResponse struct {
-	Enabled            bool      `json:"enabled"`
-	BalanceFen         int64     `json:"balance_fen"`
-	MonthlyLimitFen    int64     `json:"monthly_limit_fen"`
-	MonthlySpentFen    int64     `json:"monthly_spent_fen"`
-	MonthlyWindowStart string    `json:"monthly_window_start"`
-	CreditPriceFen     int64     `json:"credit_price_fen"`
-	MinTopupFen        int64     `json:"min_topup_fen"`
-	MaxTopupFen        int64     `json:"max_topup_fen"`
-	DailyTopupLimitFen int64     `json:"daily_topup_limit_fen"`
-	BypassBalanceCheck bool      `json:"bypass_balance_check"`
-	UpdatedAt          time.Time `json:"updated_at,omitempty"`
+	Enabled             bool      `json:"enabled"`
+	BalanceCredits      int64     `json:"balance_credits"`
+	MonthlyLimitCredits int64     `json:"monthly_limit_credits"`
+	MonthlySpentCredits int64     `json:"monthly_spent_credits"`
+	MonthlyWindowStart  string    `json:"monthly_window_start"`
+	CreditPriceFen      int64     `json:"credit_price_fen"`
+	MinTopupFen         int64     `json:"min_topup_fen"`
+	MaxTopupFen         int64     `json:"max_topup_fen"`
+	DailyTopupLimitFen  int64     `json:"daily_topup_limit_fen"`
+	BypassBalanceCheck  bool      `json:"bypass_balance_check"`
+	UpdatedAt           time.Time `json:"updated_at,omitempty"`
 }
 
 // handleGetExtraUsage returns the project's extra-usage state + policy
@@ -41,7 +41,7 @@ func handleGetExtraUsage(st *store.Store, cfg config.ExtraUsageConfig) http.Hand
 			return
 		}
 		monthStart := store.MonthWindowStart()
-		spent, err := st.GetMonthlyExtraSpendFen(projectID, monthStart)
+		spent, err := st.GetMonthlyExtraSpendCredits(projectID, monthStart)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to sum monthly spend")
 			return
@@ -55,12 +55,12 @@ func handleGetExtraUsage(st *store.Store, cfg config.ExtraUsageConfig) http.Hand
 		}
 		if settings != nil {
 			resp.Enabled = settings.Enabled
-			resp.BalanceFen = settings.BalanceFen
-			resp.MonthlyLimitFen = settings.MonthlyLimitFen
+			resp.BalanceCredits = settings.BalanceCredits
+			resp.MonthlyLimitCredits = settings.MonthlyLimitCredits
 			resp.BypassBalanceCheck = settings.BypassBalanceCheck
 			resp.UpdatedAt = settings.UpdatedAt
 		}
-		resp.MonthlySpentFen = spent
+		resp.MonthlySpentCredits = spent
 		writeData(w, http.StatusOK, resp)
 	}
 }
@@ -77,8 +77,8 @@ func handleUpdateExtraUsage(st *store.Store) http.HandlerFunc {
 		}
 		projectID := chi.URLParam(r, "projectID")
 		var body struct {
-			Enabled         *bool  `json:"enabled"`
-			MonthlyLimitFen *int64 `json:"monthly_limit_fen"`
+			Enabled             *bool  `json:"enabled"`
+			MonthlyLimitCredits *int64 `json:"monthly_limit_credits"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
@@ -95,17 +95,17 @@ func handleUpdateExtraUsage(st *store.Store) http.HandlerFunc {
 		var monthlyLimit int64
 		if existing != nil {
 			enabled = existing.Enabled
-			monthlyLimit = existing.MonthlyLimitFen
+			monthlyLimit = existing.MonthlyLimitCredits
 		}
 		if body.Enabled != nil {
 			enabled = *body.Enabled
 		}
-		if body.MonthlyLimitFen != nil {
-			if *body.MonthlyLimitFen < 0 {
-				writeError(w, http.StatusBadRequest, "bad_request", "monthly_limit_fen must be >= 0")
+		if body.MonthlyLimitCredits != nil {
+			if *body.MonthlyLimitCredits < 0 {
+				writeError(w, http.StatusBadRequest, "bad_request", "monthly_limit_credits must be >= 0")
 				return
 			}
-			monthlyLimit = *body.MonthlyLimitFen
+			monthlyLimit = *body.MonthlyLimitCredits
 		}
 
 		out, err := st.UpsertExtraUsageSettings(projectID, enabled, monthlyLimit)
@@ -163,7 +163,7 @@ func handleCreateExtraUsageTopup(st *store.Store, payClient billing.PaymentClien
 		}
 
 		// Daily accumulated limit.
-		daily, err := st.SumDailyExtraUsageTopupFen(projectID, store.DayWindowStart())
+		daily, err := st.SumDailyExtraUsageTopupCredits(projectID, store.DayWindowStart())
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to check daily topup cap")
 			return
@@ -175,16 +175,16 @@ func handleCreateExtraUsageTopup(st *store.Store, payClient billing.PaymentClien
 		}
 
 		order := &types.Order{
-			ProjectID:           projectID,
-			Periods:             1,
-			UnitPrice:           body.AmountFen,
-			Amount:              body.AmountFen,
-			Currency:            "CNY",
-			Status:              types.OrderStatusPending,
-			Channel:             body.Channel,
-			Metadata:            "{}",
-			OrderType:           types.OrderTypeExtraUsageTopup,
-			ExtraUsageAmountFen: body.AmountFen,
+			ProjectID:               projectID,
+			Periods:                 1,
+			UnitPrice:               body.AmountFen,
+			Amount:                  body.AmountFen,
+			Currency:                "CNY",
+			Status:                  types.OrderStatusPending,
+			Channel:                 body.Channel,
+			Metadata:                "{}",
+			OrderType:               types.OrderTypeExtraUsageTopup,
+			ExtraUsageAmountCredits: body.AmountFen,
 		}
 		if err := st.CreateOrder(order); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to create order: "+err.Error())
@@ -285,10 +285,10 @@ func handleAdminExtraUsageDirectTopup(st *store.Store) http.HandlerFunc {
 			return
 		}
 		bal, err := st.TopUpExtraUsage(store.TopUpExtraUsageReq{
-			ProjectID:   projectID,
-			AmountFen:   body.AmountFen,
-			Reason:      types.ExtraUsageReasonAdminAdjust,
-			Description: body.Description,
+			ProjectID:     projectID,
+			AmountCredits: body.AmountFen,
+			Reason:        types.ExtraUsageReasonAdminAdjust,
+			Description:   body.Description,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to top up: "+err.Error())
@@ -296,8 +296,8 @@ func handleAdminExtraUsageDirectTopup(st *store.Store) http.HandlerFunc {
 		}
 		metrics.SetExtraUsageBalance(projectID, bal)
 		writeData(w, http.StatusOK, map[string]interface{}{
-			"project_id":  projectID,
-			"balance_fen": bal,
+			"project_id":      projectID,
+			"balance_credits": bal,
 		})
 	}
 }
@@ -309,15 +309,15 @@ func deliverExtraUsageTopupOrder(st *store.Store, order *types.Order) (int64, er
 	if order.OrderType != types.OrderTypeExtraUsageTopup {
 		return 0, errors.New("not an extra-usage topup order")
 	}
-	if order.ExtraUsageAmountFen <= 0 {
+	if order.ExtraUsageAmountCredits <= 0 {
 		return 0, errors.New("topup order has zero amount")
 	}
 	bal, err := st.TopUpExtraUsage(store.TopUpExtraUsageReq{
-		ProjectID:   order.ProjectID,
-		AmountFen:   order.ExtraUsageAmountFen,
-		OrderID:     order.ID,
-		Reason:      types.ExtraUsageReasonUserTopup,
-		Description: fmt.Sprintf("order=%s channel=%s", order.ID, order.Channel),
+		ProjectID:     order.ProjectID,
+		AmountCredits: order.ExtraUsageAmountCredits,
+		OrderID:       order.ID,
+		Reason:        types.ExtraUsageReasonUserTopup,
+		Description:   fmt.Sprintf("order=%s channel=%s", order.ID, order.Channel),
 	})
 	if err != nil {
 		return 0, fmt.Errorf("apply topup: %w", err)
