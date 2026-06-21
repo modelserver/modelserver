@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/modelserver/modelserver/internal/types"
 )
 
@@ -410,4 +411,86 @@ func (s *Store) SumRecentExtraUsageSpendCredits(projectID string, lookbackDays i
 		return 0, fmt.Errorf("sum recent spend: %w", err)
 	}
 	return spent, nil
+}
+
+// RefundExtraUsageTopup reverses a previously-applied topup by inserting a
+// 'refund' ledger row with the negated credits and decrementing the
+// project's balance. The refund credits value mirrors what the original
+// topup added: any subsequent unit-price changes don't affect the reversal
+// amount.
+//
+// Idempotent: the uniq_eut_refund_order partial unique index causes the
+// INSERT to fail with PG unique-violation on retry; this method maps that
+// to a no-op return (current balance, nil error). A caller that wants to
+// distinguish "already refunded" from "newly refunded" can compare the
+// returned balance with a prior read.
+//
+// Balance may go negative if the user spent the credits before the refund
+// landed. The extra-usage guard's BalanceCredits <= 0 check rejects further
+// requests until rectified via TopUp or admin_adjust.
+func (s *Store) RefundExtraUsageTopup(orderID string) (int64, error) {
+	ctx := context.Background()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Locate the original topup row.
+	var (
+		projectID   string
+		creditsOrig int64
+	)
+	err = tx.QueryRow(ctx, `
+		SELECT project_id, amount_credits
+		FROM extra_usage_transactions
+		WHERE order_id = $1 AND type = 'topup'`, orderID,
+	).Scan(&projectID, &creditsOrig)
+	if err == pgx.ErrNoRows {
+		return 0, fmt.Errorf("refund: no topup for order %s", orderID)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("refund: lookup topup: %w", err)
+	}
+
+	// Decrement balance (allow negative — no CHECK constraint after PR migration 022 dropped them).
+	var newBalance int64
+	err = tx.QueryRow(ctx, `
+		UPDATE extra_usage_settings
+		   SET balance_credits = balance_credits - $1, updated_at = NOW()
+		 WHERE project_id = $2
+		 RETURNING balance_credits`,
+		creditsOrig, projectID,
+	).Scan(&newBalance)
+	if err != nil {
+		return 0, fmt.Errorf("refund: decrement balance: %w", err)
+	}
+
+	// Insert refund ledger row. Negate the credits in Go (per the PR #52
+	// lesson — SQL `-$N` triggers SQLSTATE 42725 on untyped params).
+	_, err = tx.Exec(ctx, `
+		INSERT INTO extra_usage_transactions
+		  (project_id, type, amount_credits, balance_after_credits, order_id, reason, description)
+		VALUES ($1, 'refund', $2, $3, $4, $5, $6)`,
+		projectID, -creditsOrig, newBalance, orderID,
+		types.ExtraUsageReasonAdminRefund,
+		fmt.Sprintf("refund of topup order %s (credits=%d)", orderID, creditsOrig),
+	)
+	if err != nil {
+		// Check for the partial-unique-index violation (idempotent re-run).
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			// Already refunded — roll back the balance decrement and report current.
+			tx.Rollback(ctx)
+			var curBalance int64
+			_ = s.pool.QueryRow(ctx, `SELECT balance_credits FROM extra_usage_settings WHERE project_id = $1`, projectID).Scan(&curBalance)
+			return curBalance, nil
+		}
+		return 0, fmt.Errorf("refund: insert ledger row: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("refund: commit tx: %w", err)
+	}
+	return newBalance, nil
 }
