@@ -405,7 +405,7 @@ func deliverExtraUsageTopupOrder(st *store.Store, order *types.Order) (int64, er
 		AmountCredits: order.ExtraUsageAmountCredits,
 		OrderID:       order.ID,
 		Reason:        types.ExtraUsageReasonUserTopup,
-		Description:   fmt.Sprintf("order=%s channel=%s", order.ID, order.Channel),
+		Description:   fmt.Sprintf("order=%s channel=%s currency=%s", order.ID, order.Channel, order.Currency),
 	})
 	if err != nil {
 		return 0, fmt.Errorf("apply topup: %w", err)
