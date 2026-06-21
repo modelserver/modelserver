@@ -155,6 +155,9 @@ func handleListExtraUsageTransactions(st *store.Store) http.HandlerFunc {
 // provider, and returns the payment URL. Owners/Maintainers only —
 // allowing Developers/Viewers to mint payment intents would let any
 // member trigger billing the Owner did not authorize.
+//
+// Request body: exactly one of amount_fen (CNY channels) or amount_cents
+// (Stripe) must be present. Both or neither → 400.
 func handleCreateExtraUsageTopup(st *store.Store, payClient billing.PaymentClient, billingCfg config.BillingConfig, euCfg config.ExtraUsageConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !requireRole(w, r, types.RoleOwner, types.RoleMaintainer) {
@@ -163,35 +166,87 @@ func handleCreateExtraUsageTopup(st *store.Store, payClient billing.PaymentClien
 		projectID := chi.URLParam(r, "projectID")
 
 		var body struct {
-			AmountFen int64  `json:"amount_fen"`
-			Channel   string `json:"channel"`
+			Channel     string `json:"channel"`
+			AmountFen   *int64 `json:"amount_fen,omitempty"`
+			AmountCents *int64 `json:"amount_cents,omitempty"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
 			return
 		}
-		if body.AmountFen < euCfg.MinTopupCNYFen {
+
+		var (
+			credits       int64
+			currency      string
+			paymentAmount int64
+		)
+		switch body.Channel {
+		case "wechat", "alipay":
+			if body.AmountFen == nil {
+				writeError(w, http.StatusBadRequest, "bad_request",
+					"amount_fen is required for channel="+body.Channel)
+				return
+			}
+			if body.AmountCents != nil {
+				writeError(w, http.StatusBadRequest, "bad_request",
+					"amount_cents is not valid for channel="+body.Channel)
+				return
+			}
+			amt := *body.AmountFen
+			if amt < euCfg.MinTopupCNYFen {
+				writeError(w, http.StatusBadRequest, "bad_request",
+					fmt.Sprintf("amount_fen must be >= %d", euCfg.MinTopupCNYFen))
+				return
+			}
+			if amt > euCfg.MaxTopupCNYFen {
+				writeError(w, http.StatusBadRequest, "bad_request",
+					fmt.Sprintf("amount_fen must be <= %d", euCfg.MaxTopupCNYFen))
+				return
+			}
+			credits = (amt * 1_000_000) / euCfg.CreditPriceCNYFen
+			currency = "CNY"
+			paymentAmount = amt
+
+		case "stripe":
+			if body.AmountCents == nil {
+				writeError(w, http.StatusBadRequest, "bad_request",
+					"amount_cents is required for channel=stripe")
+				return
+			}
+			if body.AmountFen != nil {
+				writeError(w, http.StatusBadRequest, "bad_request",
+					"amount_fen is not valid for channel=stripe")
+				return
+			}
+			amt := *body.AmountCents
+			if amt < euCfg.MinTopupUSDCents {
+				writeError(w, http.StatusBadRequest, "bad_request",
+					fmt.Sprintf("amount_cents must be >= %d", euCfg.MinTopupUSDCents))
+				return
+			}
+			if amt > euCfg.MaxTopupUSDCents {
+				writeError(w, http.StatusBadRequest, "bad_request",
+					fmt.Sprintf("amount_cents must be <= %d", euCfg.MaxTopupUSDCents))
+				return
+			}
+			credits = (amt * 1_000_000) / euCfg.CreditPriceUSDCents
+			currency = "USD"
+			paymentAmount = amt
+
+		default:
 			writeError(w, http.StatusBadRequest, "bad_request",
-				fmt.Sprintf("amount_fen must be >= %d", euCfg.MinTopupCNYFen))
-			return
-		}
-		if body.AmountFen > euCfg.MaxTopupCNYFen {
-			writeError(w, http.StatusBadRequest, "bad_request",
-				fmt.Sprintf("amount_fen must be <= %d", euCfg.MaxTopupCNYFen))
+				"channel must be one of: wechat, alipay, stripe")
 			return
 		}
 
-		// Daily accumulated limit.
-		daily, err := st.SumDailyExtraUsageTopupCredits(projectID, store.DayWindowStart())
+		// Daily cap is currency-agnostic; always expressed in credits.
+		dayStart := store.DayWindowStart()
+		todayCredits, err := st.SumDailyExtraUsageTopupCredits(projectID, dayStart)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to check daily topup cap")
 			return
 		}
-		// Convert the requested fen amount to credits-equivalent for the cap
-		// comparison. Topup credits = amount_fen × 1M / credit_price_cny_fen
-		// (matches the conversion the delivery handler will apply later).
-		creditsRequested := (body.AmountFen * 1_000_000) / euCfg.CreditPriceCNYFen
-		if euCfg.DailyTopupLimitCredits > 0 && daily+creditsRequested > euCfg.DailyTopupLimitCredits {
+		if euCfg.DailyTopupLimitCredits > 0 && todayCredits+credits > euCfg.DailyTopupLimitCredits {
 			writeError(w, http.StatusConflict, "daily_topup_limit",
 				fmt.Sprintf("daily topup limit %d credits reached", euCfg.DailyTopupLimitCredits))
 			return
@@ -200,14 +255,14 @@ func handleCreateExtraUsageTopup(st *store.Store, payClient billing.PaymentClien
 		order := &types.Order{
 			ProjectID:               projectID,
 			Periods:                 1,
-			UnitPrice:               body.AmountFen,
-			Amount:                  body.AmountFen,
-			Currency:                "CNY",
+			UnitPrice:               paymentAmount,
+			Amount:                  paymentAmount,
+			Currency:                currency,
 			Status:                  types.OrderStatusPending,
 			Channel:                 body.Channel,
 			Metadata:                "{}",
 			OrderType:               types.OrderTypeExtraUsageTopup,
-			ExtraUsageAmountCredits: creditsRequested,
+			ExtraUsageAmountCredits: credits,
 		}
 		if err := st.CreateOrder(order); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to create order: "+err.Error())
@@ -221,27 +276,34 @@ func handleCreateExtraUsageTopup(st *store.Store, payClient billing.PaymentClien
 		}
 		payResp, err := payClient.CreatePayment(r.Context(), billing.PaymentRequest{
 			OrderID:     order.ID,
-			ProductName: fmt.Sprintf("extra-usage topup ¥%.2f", float64(body.AmountFen)/100),
+			ProductName: fmt.Sprintf("extra-usage topup %d credits", credits),
 			Channel:     body.Channel,
-			Currency:    order.Currency,
-			Amount:      order.Amount,
+			Currency:    currency,
+			Amount:      paymentAmount,
 			NotifyURL:   billingCfg.NotifyURL,
 			ReturnURL:   billingCfg.ReturnURL,
 		})
 		if err != nil {
 			_ = st.UpdateOrderStatus(order.ID, types.OrderStatusFailed)
-			writeError(w, http.StatusBadGateway, "payment_error", "failed to create payment")
+			writeError(w, http.StatusServiceUnavailable, "payment_provider_error", err.Error())
 			return
 		}
 		if err := st.UpdateOrderPayment(order.ID, payResp.PaymentRef, payResp.PaymentURL, types.OrderStatusPaying); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to update order payment")
 			return
 		}
-		order.PaymentRef = payResp.PaymentRef
-		order.PaymentURL = payResp.PaymentURL
-		order.Status = types.OrderStatusPaying
 
-		writeData(w, http.StatusCreated, order)
+		metrics.IncExtraUsageTopup(body.Channel)
+
+		writeData(w, http.StatusCreated, map[string]any{
+			"order_id":    order.ID,
+			"channel":     body.Channel,
+			"currency":    currency,
+			"amount":      paymentAmount,
+			"credits":     credits,
+			"payment_url": payResp.PaymentURL,
+			"payment_ref": payResp.PaymentRef,
+		})
 	}
 }
 

@@ -98,30 +98,53 @@ func TestCreateTopup_OrderStoresCreditsNotFen(t *testing.T) {
 		t.Fatalf("expected 201 Created, got %d; body=%s", rr.Code, rr.Body.String())
 	}
 
-	// Decode the returned order.
+	// Decode the returned topup response (flattened map, not the full order struct).
 	var resp struct {
-		Data types.Order `json:"data"`
+		Data struct {
+			OrderID    string  `json:"order_id"`
+			Channel    string  `json:"channel"`
+			Currency   string  `json:"currency"`
+			Amount     float64 `json:"amount"`
+			Credits    int64   `json:"credits"`
+			PaymentURL string  `json:"payment_url"`
+			PaymentRef string  `json:"payment_ref"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v; raw=%s", err, rr.Body.String())
 	}
-	order := resp.Data
 
 	// Payment-side fields must stay in fen (CNY).
-	if order.Amount != 1000 {
-		t.Errorf("Amount = %d, want 1000 (fen)", order.Amount)
+	if resp.Data.Amount != 1000 {
+		t.Errorf("amount = %g, want 1000 (fen)", resp.Data.Amount)
 	}
-	if order.Currency != "CNY" {
-		t.Errorf("Currency = %q, want CNY", order.Currency)
+	if resp.Data.Currency != "CNY" {
+		t.Errorf("currency = %q, want CNY", resp.Data.Currency)
 	}
 
-	// The critical invariant: ExtraUsageAmountCredits must be credits,
+	// The critical invariant: credits in the response must be credits,
 	// not fen. With CreditPriceCNYFen=5438 and amount_fen=1000:
 	//   credits = (1000 × 1_000_000) / 5438 = 183_891
 	// If the bug is present, the field will equal 1000 (fen stored as credits).
 	const wantCredits int64 = 183_891
+	if resp.Data.Credits != wantCredits {
+		t.Errorf("credits = %d, want %d\n"+
+			"  (bug: storing fen=%g instead of credits=%d in response)",
+			resp.Data.Credits, wantCredits, resp.Data.Amount, wantCredits)
+	}
+
+	// Verify the order was persisted with the correct credits value.
+	if resp.Data.OrderID == "" {
+		t.Fatal("order_id missing from response")
+	}
+
+	// Fetch the order from the DB to confirm ExtraUsageAmountCredits was stored correctly.
+	order, err := st.GetOrderByID(resp.Data.OrderID)
+	if err != nil || order == nil {
+		t.Fatalf("GetOrderByID(%s): err=%v order=%v", resp.Data.OrderID, err, order)
+	}
 	if order.ExtraUsageAmountCredits != wantCredits {
-		t.Errorf("ExtraUsageAmountCredits = %d, want %d\n"+
+		t.Errorf("DB order.ExtraUsageAmountCredits = %d, want %d\n"+
 			"  (bug: storing fen=%d instead of credits=%d in ExtraUsageAmountCredits)",
 			order.ExtraUsageAmountCredits, wantCredits, order.Amount, wantCredits)
 	}
