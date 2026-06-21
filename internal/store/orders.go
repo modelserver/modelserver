@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/modelserver/modelserver/internal/types"
@@ -111,9 +112,11 @@ func (s *Store) HasPayingOrder(projectID string) (bool, error) {
 }
 
 // SumDailyExtraUsageTopupFen returns the total fen (sum of paid/delivered
-// top-up orders) committed today (Asia/Shanghai). Used to enforce the
-// daily_topup_limit_fen config.
-func (s *Store) SumDailyExtraUsageTopupFen(projectID string) (int64, error) {
+// top-up orders) committed in the day containing dayStart. Callers
+// compute dayStart via store.DayWindowStart() (which reads time.Local,
+// set from the TZ env var) so the daily cap rolls over at the same
+// wall-clock moment the operator's users see as "midnight."
+func (s *Store) SumDailyExtraUsageTopupFen(projectID string, dayStart time.Time) (int64, error) {
 	var total int64
 	err := s.pool.QueryRow(context.Background(), `
 		SELECT COALESCE(SUM(extra_usage_amount_fen), 0)::bigint
@@ -121,9 +124,8 @@ func (s *Store) SumDailyExtraUsageTopupFen(projectID string) (int64, error) {
 		WHERE project_id = $1
 		  AND order_type = 'extra_usage_topup'
 		  AND status IN ('paying','paid','delivered')
-		  AND created_at >= (date_trunc('day', NOW() AT TIME ZONE 'Asia/Shanghai')
-		                   AT TIME ZONE 'Asia/Shanghai')`,
-		projectID,
+		  AND created_at >= $2`,
+		projectID, dayStart,
 	).Scan(&total)
 	if err != nil {
 		return 0, fmt.Errorf("sum daily topup: %w", err)

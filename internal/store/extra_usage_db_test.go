@@ -96,9 +96,10 @@ func TestSetExtraUsageBypassAndDeduct(t *testing.T) {
 	}
 
 	newBal, err := st.DeductExtraUsage(DeductExtraUsageReq{
-		ProjectID: projectID,
-		AmountFen: 100,
-		Reason:    "rate_limited",
+		ProjectID:        projectID,
+		AmountFen:        100,
+		Reason:           "rate_limited",
+		MonthWindowStart: MonthWindowStart(),
 	})
 	if err != nil {
 		t.Fatalf("DeductExtraUsage under bypass: %v", err)
@@ -111,9 +112,10 @@ func TestSetExtraUsageBypassAndDeduct(t *testing.T) {
 		t.Fatalf("SetExtraUsageBypass(false): %v", err)
 	}
 	_, err = st.DeductExtraUsage(DeductExtraUsageReq{
-		ProjectID: projectID,
-		AmountFen: 10,
-		Reason:    "rate_limited",
+		ProjectID:        projectID,
+		AmountFen:        10,
+		Reason:           "rate_limited",
+		MonthWindowStart: MonthWindowStart(),
 	})
 	if err == nil {
 		t.Fatalf("deduct after bypass off must fail (balance=-100), got nil")

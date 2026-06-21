@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/modelserver/modelserver/internal/types"
@@ -17,13 +18,38 @@ var (
 	ErrMonthlyLimitReached        = errors.New("extra usage monthly limit reached")
 )
 
+// MonthWindowStart returns the first moment of the current month in
+// the process's local timezone (i.e. what the Go runtime resolved
+// time.Local to at startup, controlled by the standard `TZ`
+// environment variable — e.g. TZ=Asia/Shanghai).
+//
+// Single source of truth for the boundary used by the monthly-limit
+// check in DeductExtraUsage / classifyDeductFailure /
+// GetMonthlyExtraSpendFen and by the dashboard's "Period Paid" display.
+// All four read the same time.Local, so they cannot disagree.
+func MonthWindowStart() time.Time {
+	now := time.Now()
+	return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.Local)
+}
+
+// DayWindowStart is the daily analogue used by SumDailyExtraUsageTopupFen.
+// Same time.Local contract as MonthWindowStart.
+func DayWindowStart() time.Time {
+	now := time.Now()
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+}
+
 // DeductExtraUsageReq carries the input for an atomic deduction.
 type DeductExtraUsageReq struct {
-	ProjectID   string
-	AmountFen   int64
-	RequestID   string
-	Reason      string
-	Description string
+	ProjectID        string
+	AmountFen        int64
+	RequestID        string
+	Reason           string
+	Description      string
+	// MonthWindowStart is the inclusive lower bound of the current
+	// month, in the process's local timezone (TZ env var → time.Local).
+	// Used by the monthly-limit check. Compute via store.MonthWindowStart().
+	MonthWindowStart time.Time
 }
 
 // TopUpExtraUsageReq carries the input for a top-up.
@@ -126,8 +152,7 @@ func (s *Store) DeductExtraUsage(req DeductExtraUsageReq) (int64, error) {
 			FROM extra_usage_transactions
 			WHERE project_id = $1
 			  AND type = 'deduction'
-			  AND created_at >= (date_trunc('month', NOW() AT TIME ZONE 'Asia/Shanghai')
-			                   AT TIME ZONE 'Asia/Shanghai')
+			  AND created_at >= $3
 		)
 		UPDATE extra_usage_settings s
 		   SET balance_fen = balance_fen - $2, updated_at = NOW()
@@ -137,12 +162,12 @@ func (s *Store) DeductExtraUsage(req DeductExtraUsageReq) (int64, error) {
 		   AND (s.bypass_balance_check = TRUE OR s.balance_fen >= $2)
 		   AND (s.monthly_limit_fen = 0 OR month_spend.spent + $2 <= s.monthly_limit_fen)
 		RETURNING s.balance_fen`,
-		req.ProjectID, req.AmountFen,
+		req.ProjectID, req.AmountFen, req.MonthWindowStart,
 	).Scan(&newBalance)
 
 	if err == pgx.ErrNoRows {
 		// Distinguish enabled=false / balance too low / monthly limit hit.
-		classifyErr := classifyDeductFailure(ctx, tx, req.ProjectID, req.AmountFen)
+		classifyErr := classifyDeductFailure(ctx, tx, req.ProjectID, req.AmountFen, req.MonthWindowStart)
 		return 0, classifyErr
 	}
 	if err != nil {
@@ -175,7 +200,7 @@ func (s *Store) DeductExtraUsage(req DeductExtraUsageReq) (int64, error) {
 // produce a specific sentinel error instead of a generic "not updated" signal.
 // The re-query is tolerant: if any step errors, we fall back to the balance
 // error (the common case) rather than leak a confusing low-level error.
-func classifyDeductFailure(ctx context.Context, tx pgx.Tx, projectID string, amount int64) error {
+func classifyDeductFailure(ctx context.Context, tx pgx.Tx, projectID string, amount int64, monthStart time.Time) error {
 	var enabled, bypass bool
 	var balance, monthlyLimit int64
 	err := tx.QueryRow(ctx, `
@@ -194,15 +219,20 @@ func classifyDeductFailure(ctx context.Context, tx pgx.Tx, projectID string, amo
 	}
 	if monthlyLimit > 0 {
 		var spent int64
-		_ = tx.QueryRow(ctx, `
+		// Capture the err — silently discarding it (the previous
+		// behavior with `_ = …`) made monthly-limit hits look like
+		// insufficient-balance to the caller when this query failed
+		// for unrelated reasons (lock timeout, etc.). Wrap and return.
+		if err := tx.QueryRow(ctx, `
 			SELECT COALESCE(SUM(-amount_fen), 0)::bigint
 			FROM extra_usage_transactions
 			WHERE project_id = $1
 			  AND type = 'deduction'
-			  AND created_at >= (date_trunc('month', NOW() AT TIME ZONE 'Asia/Shanghai')
-			                   AT TIME ZONE 'Asia/Shanghai')`,
-			projectID,
-		).Scan(&spent)
+			  AND created_at >= $2`,
+			projectID, monthStart,
+		).Scan(&spent); err != nil {
+			return fmt.Errorf("classify deduct failure: month spend lookup: %w", err)
+		}
 		if spent+amount > monthlyLimit {
 			return ErrMonthlyLimitReached
 		}
@@ -272,18 +302,19 @@ func (s *Store) TopUpExtraUsage(req TopUpExtraUsageReq) (int64, error) {
 }
 
 // GetMonthlyExtraSpendFen returns the total spent (positive fen) in the
-// current Asia/Shanghai month. Uses the same CTE as DeductExtraUsage so the
-// boundary matches the atomic check.
-func (s *Store) GetMonthlyExtraSpendFen(projectID string) (int64, error) {
+// month containing monthStart. Callers compute monthStart via
+// store.MonthWindowStart() (which reads time.Local, set from the TZ
+// env var) so the boundary matches DeductExtraUsage's atomic check
+// exactly.
+func (s *Store) GetMonthlyExtraSpendFen(projectID string, monthStart time.Time) (int64, error) {
 	var spent int64
 	err := s.pool.QueryRow(context.Background(), `
 		SELECT COALESCE(SUM(-amount_fen), 0)::bigint
 		FROM extra_usage_transactions
 		WHERE project_id = $1
 		  AND type = 'deduction'
-		  AND created_at >= (date_trunc('month', NOW() AT TIME ZONE 'Asia/Shanghai')
-		                   AT TIME ZONE 'Asia/Shanghai')`,
-		projectID,
+		  AND created_at >= $2`,
+		projectID, monthStart,
 	).Scan(&spent)
 	if err != nil {
 		return 0, fmt.Errorf("sum monthly spend: %w", err)

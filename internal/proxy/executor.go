@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/modelserver/modelserver/internal/collector"
 	"github.com/modelserver/modelserver/internal/config"
 	"github.com/modelserver/modelserver/internal/httplog"
@@ -26,6 +28,19 @@ import (
 	"github.com/modelserver/modelserver/internal/types"
 	"github.com/tidwall/sjson"
 )
+
+// deductionErrLabel maps a non-sentinel deduction error to a metric
+// label. When the underlying error is a Postgres error, we surface its
+// SQLSTATE so distinct failure modes (e.g. 42725 / 23505) show up as
+// separate buckets — the previous "err" catch-all hid the
+// SQLSTATE=42725 ledger-insert bug for ~30 days in production.
+func deductionErrLabel(err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code != "" {
+		return "err:" + pgErr.Code
+	}
+	return "err"
+}
 
 // ErrMissingDefaultCreditRate is returned when an extra-usage settle attempt
 // finds no DefaultCreditRate on the resolved catalog model. We log + skip
@@ -161,9 +176,21 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 	// Capture extra-usage context from the inbound request context onto
 	// reqCtx so the deferred streaming callback (which fires after r is
 	// gone) still has what it needs for settlement.
+	//
+	// Stamp IsExtraUsage and ExtraUsageReason here, immediately after
+	// the guard approves — NOT inside settleExtraUsage. settle runs only
+	// on the success path after token usage is parsed; if the upstream
+	// fails, the response parse fails, or settle takes one of its
+	// early-return paths (zero usage, missing default rate), the
+	// attribution would otherwise be lost — the requests row would look
+	// like a normal subscription request even though the user consumed
+	// an extra-usage guard slot. extra_usage_cost_fen stays 0 in the
+	// lost-attribution case: only settle knows the actual cost.
 	if euCtx, has := ExtraUsageContextFromContext(r.Context()); has {
 		reqCtx.HasExtraUsageCtx = true
 		reqCtx.ExtraUsageCtx = euCtx
+		reqCtx.IsExtraUsage = true
+		reqCtx.ExtraUsageReason = euCtx.Reason
 	}
 
 	// 1. Match the request to an upstream group.
@@ -512,11 +539,14 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 				if reqCtx.RequestID != "" {
 					duration := time.Since(startTime).Milliseconds()
 					failReq := types.Request{
-						OAuthGrantID: reqCtx.OAuthGrantID,
-						Status:       types.RequestStatusError,
-						LatencyMs:    duration,
-						ErrorMessage: "claudecode OAuth refresh failed",
-						ClientIP:     reqCtx.ClientIP,
+						OAuthGrantID:      reqCtx.OAuthGrantID,
+						Status:            types.RequestStatusError,
+						LatencyMs:         duration,
+						ErrorMessage:      "claudecode OAuth refresh failed",
+						ClientIP:          reqCtx.ClientIP,
+						IsExtraUsage:      reqCtx.IsExtraUsage,
+						ExtraUsageCostFen: reqCtx.ExtraUsageCostFen,
+						ExtraUsageReason:  reqCtx.ExtraUsageReason,
 					}
 					go func() {
 						if err := e.store.CompleteRequest(reqCtx.RequestID, &failReq); err != nil {
@@ -580,11 +610,14 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 				if reqCtx.RequestID != "" {
 					duration := time.Since(startTime).Milliseconds()
 					failReq := types.Request{
-						OAuthGrantID: reqCtx.OAuthGrantID,
-						Status:       types.RequestStatusError,
-						LatencyMs:    duration,
-						ErrorMessage: "codex OAuth refresh failed",
-						ClientIP:     reqCtx.ClientIP,
+						OAuthGrantID:      reqCtx.OAuthGrantID,
+						Status:            types.RequestStatusError,
+						LatencyMs:         duration,
+						ErrorMessage:      "codex OAuth refresh failed",
+						ClientIP:          reqCtx.ClientIP,
+						IsExtraUsage:      reqCtx.IsExtraUsage,
+						ExtraUsageCostFen: reqCtx.ExtraUsageCostFen,
+						ExtraUsageReason:  reqCtx.ExtraUsageReason,
 					}
 					go func() {
 						if err := e.store.CompleteRequest(reqCtx.RequestID, &failReq); err != nil {
@@ -736,11 +769,14 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 	if reqCtx.RequestID != "" {
 		duration := time.Since(startTime).Milliseconds()
 		req := types.Request{
-			OAuthGrantID: reqCtx.OAuthGrantID,
-			Status:       types.RequestStatusError,
-			LatencyMs:    duration,
-			ErrorMessage: "all upstreams exhausted",
-			ClientIP:     reqCtx.ClientIP,
+			OAuthGrantID:      reqCtx.OAuthGrantID,
+			Status:            types.RequestStatusError,
+			LatencyMs:         duration,
+			ErrorMessage:      "all upstreams exhausted",
+			ClientIP:          reqCtx.ClientIP,
+			IsExtraUsage:      reqCtx.IsExtraUsage,
+			ExtraUsageCostFen: reqCtx.ExtraUsageCostFen,
+			ExtraUsageReason:  reqCtx.ExtraUsageReason,
 		}
 		go func() {
 			if err := e.store.CompleteRequest(reqCtx.RequestID, &req); err != nil {
@@ -875,19 +911,22 @@ func (e *Executor) commitErrorResponse(
 
 	// Record the error request.
 	req := types.Request{
-		ProjectID:    reqCtx.Project.ID,
-		APIKeyID:     reqCtx.APIKeyID,
-		OAuthGrantID: reqCtx.OAuthGrantID,
-		UpstreamID:   candidate.Upstream.ID,
-		TraceID:      reqCtx.TraceID,
-		Provider:     candidate.Upstream.Provider,
-		RequestKind:  reqCtx.RequestKind,
-		Model:        reqCtx.Model,
-		Streaming:    reqCtx.IsStream,
-		Status:       status,
-		LatencyMs:    duration,
-		ErrorMessage: string(errBody),
-		ClientIP:     reqCtx.ClientIP,
+		ProjectID:         reqCtx.Project.ID,
+		APIKeyID:          reqCtx.APIKeyID,
+		OAuthGrantID:      reqCtx.OAuthGrantID,
+		UpstreamID:        candidate.Upstream.ID,
+		TraceID:           reqCtx.TraceID,
+		Provider:          candidate.Upstream.Provider,
+		RequestKind:       reqCtx.RequestKind,
+		Model:             reqCtx.Model,
+		Streaming:         reqCtx.IsStream,
+		Status:            status,
+		LatencyMs:         duration,
+		ErrorMessage:      string(errBody),
+		ClientIP:          reqCtx.ClientIP,
+		IsExtraUsage:      reqCtx.IsExtraUsage,
+		ExtraUsageCostFen: reqCtx.ExtraUsageCostFen,
+		ExtraUsageReason:  reqCtx.ExtraUsageReason,
 	}
 	if reqCtx.RequestID != "" {
 		go func() {
@@ -1604,9 +1643,9 @@ func (e *Executor) settleExtraUsage(ctx context.Context, rc *RequestContext, usa
 		return
 	}
 	euCtx := rc.ExtraUsageCtx
-
-	rc.IsExtraUsage = true
-	rc.ExtraUsageReason = euCtx.Reason
+	// IsExtraUsage and ExtraUsageReason are stamped in Execute on guard
+	// approval, NOT here — so they survive early returns / failures
+	// below. settle is responsible only for cost compute + ledger debit.
 
 	if usage.InputTokens+usage.OutputTokens+usage.CacheCreationTokens+usage.CacheReadTokens == 0 {
 		// Provider returned no usage — don't synthesise a charge.
@@ -1630,11 +1669,12 @@ func (e *Executor) settleExtraUsage(ctx context.Context, rc *RequestContext, usa
 	rc.ExtraUsageCostFen = costFen
 
 	newBal, err := e.store.DeductExtraUsage(store.DeductExtraUsageReq{
-		ProjectID:   rc.ProjectID,
-		AmountFen:   costFen,
-		RequestID:   rc.RequestID,
-		Reason:      euCtx.Reason,
-		Description: fmt.Sprintf("%s | credits=%.2f | model=%s", euCtx.Reason, credits, rc.Model),
+		ProjectID:        rc.ProjectID,
+		AmountFen:        costFen,
+		RequestID:        rc.RequestID,
+		Reason:           euCtx.Reason,
+		Description:      fmt.Sprintf("%s | credits=%.2f | model=%s", euCtx.Reason, credits, rc.Model),
+		MonthWindowStart: store.MonthWindowStart(),
 	})
 	switch {
 	case err == nil:
@@ -1661,7 +1701,7 @@ func (e *Executor) settleExtraUsage(ctx context.Context, rc *RequestContext, usa
 	default:
 		e.logger.Error("extra_usage_deduction_failed",
 			"project_id", rc.ProjectID, "error", err)
-		metrics.IncExtraUsageDeduction("err")
+		metrics.IncExtraUsageDeduction(deductionErrLabel(err))
 	}
 }
 
@@ -1670,9 +1710,8 @@ func (e *Executor) settleImageExtraUsage(ctx context.Context, rc *RequestContext
 		return
 	}
 	euCtx := rc.ExtraUsageCtx
-
-	rc.IsExtraUsage = true
-	rc.ExtraUsageReason = euCtx.Reason
+	// IsExtraUsage / ExtraUsageReason stamped in Execute; see the
+	// settleExtraUsage comment.
 
 	if usage.InputTokens+usage.OutputTokens == 0 {
 		e.logger.Warn("extra_usage_settle_no_usage",
@@ -1700,11 +1739,12 @@ func (e *Executor) settleImageExtraUsage(ctx context.Context, rc *RequestContext
 	rc.ExtraUsageCostFen = costFen
 
 	newBal, err := e.store.DeductExtraUsage(store.DeductExtraUsageReq{
-		ProjectID:   rc.ProjectID,
-		AmountFen:   costFen,
-		RequestID:   rc.RequestID,
-		Reason:      euCtx.Reason,
-		Description: fmt.Sprintf("%s | credits=%.2f | model=%s | kind=%s", euCtx.Reason, credits, rc.Model, rc.RequestKind),
+		ProjectID:        rc.ProjectID,
+		AmountFen:        costFen,
+		RequestID:        rc.RequestID,
+		Reason:           euCtx.Reason,
+		Description:      fmt.Sprintf("%s | credits=%.2f | model=%s | kind=%s", euCtx.Reason, credits, rc.Model, rc.RequestKind),
+		MonthWindowStart: store.MonthWindowStart(),
 	})
 	switch {
 	case err == nil:
@@ -1731,7 +1771,7 @@ func (e *Executor) settleImageExtraUsage(ctx context.Context, rc *RequestContext
 	default:
 		e.logger.Error("extra_usage_deduction_failed",
 			"project_id", rc.ProjectID, "error", err)
-		metrics.IncExtraUsageDeduction("err")
+		metrics.IncExtraUsageDeduction(deductionErrLabel(err))
 	}
 }
 

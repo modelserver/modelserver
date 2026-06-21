@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tidwall/gjson"
 
 	"github.com/modelserver/modelserver/internal/config"
 	"github.com/modelserver/modelserver/internal/metrics"
+	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
 
@@ -71,7 +73,7 @@ func ExtraUsageContextFromContext(ctx context.Context) (ExtraUsageContext, bool)
 // so tests can inject a fake without spinning up Postgres.
 type extraUsageStore interface {
 	GetExtraUsageSettings(projectID string) (*types.ExtraUsageSettings, error)
-	GetMonthlyExtraSpendFen(projectID string) (int64, error)
+	GetMonthlyExtraSpendFen(projectID string, monthStart time.Time) (int64, error)
 	// CreateRequest mirrors *store.Store.CreateRequest so the guard can
 	// persist a row for 4xx rejections — without this, guard-level 429s are
 	// invisible in the requests table (only a Prometheus counter is bumped),
@@ -207,7 +209,7 @@ func ExtraUsageGuardMiddleware(cfg config.ExtraUsageConfig, st extraUsageStore, 
 			// When bypass is on, settings != nil (bypass requires a row).
 			var monthlySpent int64
 			if settings.MonthlyLimitFen > 0 {
-				spent, err := st.GetMonthlyExtraSpendFen(project.ID)
+				spent, err := st.GetMonthlyExtraSpendFen(project.ID, store.MonthWindowStart())
 				if err != nil {
 					logger.Error("extra_usage monthly spend query failed", "error", err, "project_id", project.ID)
 					writeExtraUsageRejected(w, http.StatusInternalServerError, intent.Reason, guardStateRejected{

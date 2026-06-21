@@ -129,7 +129,7 @@ func (f *fakeExtraUsageStore) GetExtraUsageSettings(_ string) (*types.ExtraUsage
 	return f.settings, nil
 }
 
-func (f *fakeExtraUsageStore) GetMonthlyExtraSpendFen(_ string) (int64, error) {
+func (f *fakeExtraUsageStore) GetMonthlyExtraSpendFen(_ string, _ time.Time) (int64, error) {
 	return f.spent, nil
 }
 
