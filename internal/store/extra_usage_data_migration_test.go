@@ -37,6 +37,13 @@ func TestExtraUsageDataMigration_HappyPath(t *testing.T) {
 		VALUES ($1, 'topup', 2000, 2000)`, projectID); err != nil {
 		t.Fatalf("seed topup tx: %v", err)
 	}
+	// Seed a deduction row to verify negative amounts are converted correctly.
+	// PR #52 confirmed deduction rows store negative amount_credits.
+	if _, err := st.pool.Exec(ctx, `
+		INSERT INTO extra_usage_transactions (project_id, type, amount_credits, balance_after_credits)
+		VALUES ($1, 'deduction', -500, 1500)`, projectID); err != nil {
+		t.Fatalf("seed deduction: %v", err)
+	}
 
 	// Wipe any audit row from a prior run so the converter actually runs.
 	if _, err := st.pool.Exec(ctx, `TRUNCATE extra_usage_credit_migration_audit`); err != nil {
@@ -56,6 +63,42 @@ func TestExtraUsageDataMigration_HappyPath(t *testing.T) {
 	}
 	if got != 367782 {
 		t.Errorf("balance_credits = %d, want 367782", got)
+	}
+
+	// Assert the topup transaction row was converted correctly.
+	// 2000 fen × 1_000_000 / 5438 = 367_782 (integer division, same as balance)
+	var gotAmount, gotBalanceAfter int64
+	err = st.pool.QueryRow(ctx, `
+		SELECT amount_credits, balance_after_credits
+		FROM extra_usage_transactions
+		WHERE project_id = $1 AND type = 'topup'
+		LIMIT 1`, projectID).Scan(&gotAmount, &gotBalanceAfter)
+	if err != nil {
+		t.Fatalf("read transaction: %v", err)
+	}
+	if gotAmount != 367782 {
+		t.Errorf("amount_credits = %d, want 367782", gotAmount)
+	}
+	if gotBalanceAfter != 367782 {
+		t.Errorf("balance_after_credits = %d, want 367782", gotBalanceAfter)
+	}
+
+	// Assert the deduction row was converted correctly (negative amount).
+	// -500 fen × 1_000_000 / 5438 = -91_945 (integer div; truncation toward zero in pg)
+	// 1500 × 1_000_000 / 5438 = 275_836
+	var negAmount, negBalanceAfter int64
+	err = st.pool.QueryRow(ctx, `
+		SELECT amount_credits, balance_after_credits
+		FROM extra_usage_transactions
+		WHERE project_id = $1 AND type = 'deduction'`, projectID).Scan(&negAmount, &negBalanceAfter)
+	if err != nil {
+		t.Fatalf("read deduction tx: %v", err)
+	}
+	if negAmount != -91945 {
+		t.Errorf("deduction amount_credits = %d, want -91945", negAmount)
+	}
+	if negBalanceAfter != 275836 {
+		t.Errorf("deduction balance_after_credits = %d, want 275836", negBalanceAfter)
 	}
 
 	// Audit row written.
