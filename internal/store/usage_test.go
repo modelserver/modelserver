@@ -64,10 +64,10 @@ func TestGetPerModelTokenSums(t *testing.T) {
 
 // TestGetExtraUsageSpendInWindow pins the contract: the function SUMs
 // the extra_usage_transactions ledger (type='deduction'), NOT
-// requests.extra_usage_cost_fen. That distinction is load-bearing —
+// requests.extra_usage_cost_credits. That distinction is load-bearing —
 // see the PR #52 / PR #54 history: the two sources can diverge when
 // settle fails, and "Period Paid" must reflect actually-charged money,
-// not would-have-charged money. Inserting into requests.cost_fen here
+// not would-have-charged money. Inserting into requests.extra_usage_cost_credits here
 // (the old test's data shape) must NOT influence the result.
 func TestGetExtraUsageSpendInWindow(t *testing.T) {
 	st := openTestStore(t)
@@ -76,15 +76,15 @@ func TestGetExtraUsageSpendInWindow(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 
-	// Inject ledger rows. amount_fen is stored negative for deductions
+	// Inject ledger rows. amount_credits is stored negative for deductions
 	// (the source-of-truth sign convention); the SUM negates it back.
-	// balance_after_fen is required NOT NULL but its exact value doesn't
+	// balance_after_credits is required NOT NULL but its exact value doesn't
 	// matter for this test — pick something nonzero.
 	insertDeduction := func(amountFen int64, at time.Time) {
 		t.Helper()
 		_, err := st.pool.Exec(ctx, `
 			INSERT INTO extra_usage_transactions
-			  (project_id, type, amount_fen, balance_after_fen, created_at)
+			  (project_id, type, amount_credits, balance_after_credits, created_at)
 			VALUES ($1, 'deduction', $2, 0, $3)`,
 			projectID, -amountFen, at)
 		if err != nil {
@@ -95,7 +95,7 @@ func TestGetExtraUsageSpendInWindow(t *testing.T) {
 		t.Helper()
 		_, err := st.pool.Exec(ctx, `
 			INSERT INTO extra_usage_transactions
-			  (project_id, type, amount_fen, balance_after_fen, created_at)
+			  (project_id, type, amount_credits, balance_after_credits, created_at)
 			VALUES ($1, $2, $3, 0, $4)`,
 			projectID, txType, amountFen, at)
 		if err != nil {
@@ -114,7 +114,7 @@ func TestGetExtraUsageSpendInWindow(t *testing.T) {
 	_, err := st.pool.Exec(ctx, `
 		INSERT INTO requests (project_id, model, status, input_tokens, output_tokens,
 			cache_creation_tokens, cache_read_tokens, credits_consumed,
-			is_extra_usage, extra_usage_cost_fen, created_at)
+			is_extra_usage, extra_usage_cost_credits, created_at)
 		VALUES ($1, 'claude-sonnet-4-6', 'success', 0, 0, 0, 0, 0, true, 99999, $2)`,
 		projectID, now.Add(-1*time.Hour))
 	if err != nil {

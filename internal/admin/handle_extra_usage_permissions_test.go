@@ -30,7 +30,7 @@ func TestUpdateExtraUsage_DeveloperForbidden(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPut,
 		"/projects/proj-1/extra-usage",
-		bytes.NewBufferString(`{"enabled": true, "monthly_limit_fen": 100000}`))
+		bytes.NewBufferString(`{"enabled": true, "monthly_limit_credits": 100000}`))
 	dev := &types.ProjectMember{UserID: "u-dev", ProjectID: "proj-1", Role: types.RoleDeveloper}
 	req = req.WithContext(context.WithValue(req.Context(), ctxMember, dev))
 

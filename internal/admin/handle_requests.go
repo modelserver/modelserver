@@ -94,7 +94,7 @@ func handleListAllRequests(st *store.Store) http.HandlerFunc {
 	}
 }
 
-func handleGetUsage(st *store.Store, catalog modelcatalog.Catalog, creditPriceFen int64) http.HandlerFunc {
+func handleGetUsage(st *store.Store, catalog modelcatalog.Catalog, creditPriceCNYFen int64) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "projectID")
 		q := r.URL.Query()
@@ -206,7 +206,7 @@ func handleGetUsage(st *store.Store, catalog modelcatalog.Catalog, creditPriceFe
 				if sub != nil {
 					activeCurrency = sub.Currency
 				}
-				cb := billing.ComputeCostBreakdown(sums, extraCredits, catalog, creditPriceFen,
+				cb := billing.ComputeCostBreakdown(sums, extraCredits, catalog, creditPriceCNYFen,
 					sub, plan, since, until, activeCurrency)
 				overview["cost_breakdown"] = cb
 			}
