@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { QRCodeSVG } from "qrcode.react";
-import { ExternalLink, Loader2, Zap } from "lucide-react";
+import { Loader2, Zap } from "lucide-react";
 
 import { useCurrentProject } from "@/hooks/useCurrentProject";
 import {
@@ -34,7 +34,20 @@ import type { Order } from "@/api/types";
 
 type PaymentChannel = "wechat" | "alipay" | "stripe";
 
+interface PaymentResult {
+  order: Order;
+  channel: PaymentChannel;
+}
+
 const TX_PAGE_SIZE = 20;
+
+// Module-scope so the array reference is stable across renders — matches the
+// pattern in SubscriptionPage.tsx so the two payment dialogs stay in sync.
+const CHANNEL_OPTIONS = [
+  { value: "wechat" as const, label: "WeChat Pay", currency: "CNY" as const },
+  { value: "alipay" as const, label: "Alipay",     currency: "CNY" as const },
+  { value: "stripe" as const, label: "Stripe",     currency: "USD" as const },
+];
 
 /** Format a credits integer with thousands separators. */
 function formatCredits(credits: number): string {
@@ -120,28 +133,42 @@ export function ExtraUsagePage() {
     TX_PAGE_SIZE,
   );
 
-  // Top-up dialog state.
+  // Top-up dialog state. dialogStep mirrors SubscriptionPage's form|paying
+  // state machine so the dialog explicitly transitions between collecting
+  // input and showing the payment artifact; without it the form fields and
+  // QR code render simultaneously which is the inconsistency this page is
+  // being aligned to fix.
   const [topupOpen, setTopupOpen] = useState(false);
   const [topupAmount, setTopupAmount] = useState("50");
   const [topupChannel, setTopupChannel] = useState<PaymentChannel>("wechat");
-  const [paymentOrder, setPaymentOrder] = useState<Order | null>(null);
-  const { data: statusData } = useExtraUsageTopupStatus(
-    projectId,
-    paymentOrder?.id ?? null,
-  );
+  const [paymentResult, setPaymentResult] = useState<PaymentResult | null>(null);
+  const [dialogStep, setDialogStep] = useState<"form" | "paying">("form");
+
+  // Poll status only while we're in the paying step — matches the subscription
+  // flow's discipline of not polling stale order ids after the dialog closes.
+  const pollingOrderId =
+    dialogStep === "paying" ? paymentResult?.order.id ?? null : null;
+  const { data: statusData } = useExtraUsageTopupStatus(projectId, pollingOrderId);
+
+  function closeDialog() {
+    setTopupOpen(false);
+    setPaymentResult(null);
+    setDialogStep("form");
+    setTopupAmount("50");
+    setTopupChannel("wechat");
+  }
 
   useEffect(() => {
     if (!statusData?.data) return;
     const s = statusData.data.status;
     if (s === "delivered") {
       toast.success("Top-up successful");
-      setPaymentOrder(null);
-      setTopupOpen(false);
+      closeDialog();
       qc.invalidateQueries({ queryKey: ["extra-usage", projectId] });
       qc.invalidateQueries({ queryKey: ["extra-usage-transactions", projectId] });
     } else if (s === "failed" || s === "cancelled") {
       toast.error(`Payment ${s}`);
-      setPaymentOrder(null);
+      closeDialog();
     }
   }, [statusData]);
 
@@ -223,11 +250,25 @@ export function ExtraUsagePage() {
         resp = await topup.mutateAsync({ channel: topupChannel, amount_fen: fen });
       }
 
-      if (resp.data.payment_url) {
-        setPaymentOrder(resp.data);
+      const order = resp.data;
+      if (topupChannel === "stripe") {
+        // Stripe payment_url is a hosted Checkout page — must be a full-page
+        // redirect, NOT a QR code (its long https URL is not a scannable
+        // payment intent). Matches SubscriptionPage's Stripe branch.
+        if (!order.payment_url) {
+          toast.error("Stripe checkout URL missing");
+          return;
+        }
+        window.location.href = order.payment_url;
+        return; // unreachable on success
+      }
+
+      if (order.payment_url) {
+        setPaymentResult({ order, channel: topupChannel });
+        setDialogStep("paying");
       } else {
         toast.success("Order created");
-        setTopupOpen(false);
+        closeDialog();
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Top-up failed");
@@ -449,116 +490,137 @@ export function ExtraUsagePage() {
       </Card>
 
       {/* Topup dialog */}
-      <Dialog
-        open={topupOpen}
-        onOpenChange={(open) => {
-          if (!open) {
-            setTopupOpen(false);
-            setPaymentOrder(null);
-          }
-        }}
-      >
-        <DialogContent>
+      <Dialog open={topupOpen} onOpenChange={(open) => !open && closeDialog()}>
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Top up extra usage balance</DialogTitle>
             <DialogDescription>
-              Payment is billed at official API prices.
-              {topupMinMax && ` ${topupMinMax} per top-up.`}
+              {dialogStep === "paying"
+                ? "Complete your payment to credit the wallet."
+                : `Payment is billed at official API prices.${topupMinMax ? ` ${topupMinMax} per top-up.` : ""}`}
             </DialogDescription>
           </DialogHeader>
 
-          {!paymentOrder && (
-            <div className="space-y-4">
-              {/* Channel selector */}
-              <div>
-                <Label>Payment channel</Label>
-                <div className="mt-1 flex gap-2">
-                  <Button
-                    variant={topupChannel === "wechat" ? "default" : "outline"}
-                    onClick={() => handleChannelChange("wechat")}
-                  >
-                    WeChat Pay
-                  </Button>
-                  <Button
-                    variant={topupChannel === "alipay" ? "default" : "outline"}
-                    onClick={() => handleChannelChange("alipay")}
-                  >
-                    Alipay
-                  </Button>
-                  <Button
-                    variant={topupChannel === "stripe" ? "default" : "outline"}
-                    onClick={() => handleChannelChange("stripe")}
-                  >
-                    Stripe
-                  </Button>
+          {dialogStep === "form" && (
+            <>
+              <div className="space-y-4 py-4">
+                {/* Payment channel selector — matches SubscriptionPage layout
+                    (3-col grid, w-full buttons, "Payment Method" label) so
+                    the two payment dialogs look identical. No currency lock
+                    here — credits is a single-wallet design, any channel
+                    tops up the same balance. */}
+                <div className="space-y-2">
+                  <Label>Payment Method</Label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {CHANNEL_OPTIONS.map((opt) => (
+                      <Button
+                        key={opt.value}
+                        type="button"
+                        variant={topupChannel === opt.value ? "default" : "outline"}
+                        className="w-full"
+                        onClick={() => handleChannelChange(opt.value)}
+                      >
+                        {opt.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Amount input — label and currency symbol swap based on channel */}
+                <div className="space-y-2">
+                  <Label htmlFor="topup-amount">
+                    Amount ({topupChannel === "stripe" ? "$" : "¥"})
+                  </Label>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                      {topupChannel === "stripe" ? "$" : "¥"}
+                    </span>
+                    <Input
+                      id="topup-amount"
+                      type="number"
+                      min="0"
+                      step={topupChannel === "stripe" ? "0.01" : "1"}
+                      className="pl-7"
+                      value={topupAmount}
+                      onChange={(e) => setTopupAmount(e.target.value)}
+                    />
+                  </div>
+                  {topupCreditsPreview !== null && (
+                    <p className="text-xs text-muted-foreground">
+                      ≈ {formatCredits(topupCreditsPreview)} credits
+                    </p>
+                  )}
+                  {topupMinMax && (
+                    <p className="text-xs text-muted-foreground">{topupMinMax}</p>
+                  )}
                 </div>
               </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={closeDialog}>
+                  Cancel
+                </Button>
+                <Button onClick={handleCreateTopup} disabled={topup.isPending}>
+                  {topup.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Pay
+                </Button>
+              </DialogFooter>
+            </>
+          )}
 
-              {/* Amount input — label and currency symbol swap based on channel */}
-              <div>
-                <Label htmlFor="topup-amount">
-                  Amount ({topupChannel === "stripe" ? "$" : "¥"})
-                </Label>
-                <div className="relative mt-1">
-                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                    {topupChannel === "stripe" ? "$" : "¥"}
-                  </span>
-                  <Input
-                    id="topup-amount"
-                    type="number"
-                    min="0"
-                    step={topupChannel === "stripe" ? "0.01" : "1"}
-                    className="pl-7"
-                    value={topupAmount}
-                    onChange={(e) => setTopupAmount(e.target.value)}
-                  />
-                </div>
-                {topupCreditsPreview !== null && (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    ≈ {formatCredits(topupCreditsPreview)} credits
-                  </p>
+          {dialogStep === "paying" && paymentResult && (
+            <>
+              <div className="space-y-4 py-4">
+                {paymentResult.order.payment_url && paymentResult.channel === "wechat" && (
+                  <div className="flex flex-col items-center gap-3">
+                    <p className="text-sm text-muted-foreground">
+                      Scan the QR code with WeChat to pay
+                    </p>
+                    <div className="rounded-lg border p-4 bg-white">
+                      <QRCodeSVG value={paymentResult.order.payment_url} size={200} />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Amount: {paymentResult.order.currency === "USD"
+                        ? formatUSD(paymentResult.order.amount)
+                        : formatYuan(paymentResult.order.amount)}
+                    </p>
+                  </div>
                 )}
-                {topupMinMax && (
-                  <p className="mt-0.5 text-xs text-muted-foreground">{topupMinMax}</p>
+                {paymentResult.order.payment_url && paymentResult.channel === "alipay" && (
+                  <div className="flex flex-col items-center gap-3">
+                    <p className="text-sm text-muted-foreground">
+                      Scan the QR code with Alipay to pay
+                    </p>
+                    <div className="rounded-lg border overflow-hidden bg-white">
+                      <iframe
+                        src={paymentResult.order.payment_url}
+                        className="border-0"
+                        style={{ width: 200, height: 200 }}
+                        scrolling="no"
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Amount: {paymentResult.order.currency === "USD"
+                        ? formatUSD(paymentResult.order.amount)
+                        : formatYuan(paymentResult.order.amount)}
+                    </p>
+                  </div>
                 )}
               </div>
-            </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={closeDialog}>
+                  Close
+                </Button>
+                <Button
+                  onClick={() => {
+                    topup.reset();
+                    closeDialog();
+                  }}
+                >
+                  Payment Complete
+                </Button>
+              </DialogFooter>
+            </>
           )}
-
-          {paymentOrder?.payment_url && (
-            <div className="flex flex-col items-center space-y-3">
-              <QRCodeSVG value={paymentOrder.payment_url} size={180} />
-              <p className="text-center text-sm text-muted-foreground">
-                {topupChannel === "wechat"
-                  ? "Scan to pay with WeChat."
-                  : topupChannel === "alipay"
-                    ? "Scan to pay with Alipay."
-                    : "Complete payment via Stripe."}
-              </p>
-              <a
-                className="inline-flex items-center text-sm text-primary"
-                href={paymentOrder.payment_url}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Open payment page
-                <ExternalLink className="ml-1 h-3 w-3" />
-              </a>
-            </div>
-          )}
-
-          <DialogFooter>
-            {!paymentOrder ? (
-              <Button onClick={handleCreateTopup} disabled={topup.isPending}>
-                {topup.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Continue to payment
-              </Button>
-            ) : (
-              <Button variant="outline" onClick={() => setPaymentOrder(null)}>
-                Back
-              </Button>
-            )}
-          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
