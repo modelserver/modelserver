@@ -194,7 +194,7 @@ func handleCreateExtraUsageTopup(st *store.Store, payClient billing.PaymentClien
 			Channel:                 body.Channel,
 			Metadata:                "{}",
 			OrderType:               types.OrderTypeExtraUsageTopup,
-			ExtraUsageAmountCredits: body.AmountFen,
+			ExtraUsageAmountCredits: creditsRequested,
 		}
 		if err := st.CreateOrder(order); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to create order: "+err.Error())
