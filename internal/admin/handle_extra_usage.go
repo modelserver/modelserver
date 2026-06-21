@@ -64,10 +64,16 @@ func handleGetExtraUsage(st *store.Store, cfg config.ExtraUsageConfig) http.Hand
 	}
 }
 
-// handleUpdateExtraUsage lets the project owner toggle `enabled` or change
-// the monthly limit. Balance is intentionally NOT writable here.
+// handleUpdateExtraUsage lets project owners/maintainers toggle `enabled`
+// or change the monthly limit. Balance is intentionally NOT writable
+// here. Developers and Viewers must NOT be able to enable extra usage
+// or raise the monthly cap — that would let any project member spend
+// the project's money post-quota.
 func handleUpdateExtraUsage(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireRole(w, r, types.RoleOwner, types.RoleMaintainer) {
+			return
+		}
 		projectID := chi.URLParam(r, "projectID")
 		var body struct {
 			Enabled         *bool  `json:"enabled"`
@@ -126,9 +132,14 @@ func handleListExtraUsageTransactions(st *store.Store) http.HandlerFunc {
 }
 
 // handleCreateExtraUsageTopup creates a topup order, calls the payment
-// provider, and returns the payment URL.
+// provider, and returns the payment URL. Owners/Maintainers only —
+// allowing Developers/Viewers to mint payment intents would let any
+// member trigger billing the Owner did not authorize.
 func handleCreateExtraUsageTopup(st *store.Store, payClient billing.PaymentClient, billingCfg config.BillingConfig, euCfg config.ExtraUsageConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireRole(w, r, types.RoleOwner, types.RoleMaintainer) {
+			return
+		}
 		projectID := chi.URLParam(r, "projectID")
 
 		var body struct {
