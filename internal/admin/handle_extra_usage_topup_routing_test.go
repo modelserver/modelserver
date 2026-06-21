@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,9 +102,11 @@ func TestCreateTopup_UnknownChannel_Rejected(t *testing.T) {
 	}
 }
 
-// TestCreateTopup_WechatWithCents_Rejected ensures that supplying amount_cents
-// for a CNY channel is a 400.
-func TestCreateTopup_WechatWithCents_Rejected(t *testing.T) {
+// TestCreateTopup_WechatMissingFen_WithCents_Rejected verifies that supplying
+// amount_cents WITHOUT amount_fen for a CNY channel yields 400 "amount_fen is
+// required". (The cross-field guard for amount_cents fires only after amount_fen
+// is present; see TestCreateTopup_WechatWithBothAmounts_Rejected for that path.)
+func TestCreateTopup_WechatMissingFen_WithCents_Rejected(t *testing.T) {
 	h := buildTopupRouter(
 		handleCreateExtraUsageTopup(nil, nil, testBillingCfg(), testEUCfg()),
 	)
@@ -117,8 +120,9 @@ func TestCreateTopup_WechatWithCents_Rejected(t *testing.T) {
 	mustErrorCode(t, rr, "bad_request")
 }
 
-// TestCreateTopup_AlipayWithCents_Rejected is the same guard for alipay.
-func TestCreateTopup_AlipayWithCents_Rejected(t *testing.T) {
+// TestCreateTopup_AlipayMissingFen_WithCents_Rejected is the same missing-fen
+// guard for alipay.
+func TestCreateTopup_AlipayMissingFen_WithCents_Rejected(t *testing.T) {
 	h := buildTopupRouter(
 		handleCreateExtraUsageTopup(nil, nil, testBillingCfg(), testEUCfg()),
 	)
@@ -128,6 +132,49 @@ func TestCreateTopup_AlipayWithCents_Rejected(t *testing.T) {
 	})
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body = %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestCreateTopup_WechatWithBothAmounts_Rejected verifies that supplying BOTH
+// amount_fen AND amount_cents for a CNY channel triggers the cross-field
+// contamination guard ("amount_cents is not valid for channel=wechat"), not the
+// missing-fen guard.
+func TestCreateTopup_WechatWithBothAmounts_Rejected(t *testing.T) {
+	h := buildTopupRouter(
+		handleCreateExtraUsageTopup(nil, nil, testBillingCfg(), testEUCfg()),
+	)
+	rr := postTopup(t, h, "proj-x", map[string]any{
+		"channel":      "wechat",
+		"amount_fen":   1000,
+		"amount_cents": 100,
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", rr.Code, rr.Body.String())
+	}
+	mustErrorCode(t, rr, "bad_request")
+	if !strings.Contains(rr.Body.String(), "amount_cents is not valid") {
+		t.Errorf("error message should reference cross-field rejection; got %s", rr.Body.String())
+	}
+}
+
+// TestCreateTopup_StripeWithBothAmounts_Rejected verifies that supplying BOTH
+// amount_cents AND amount_fen for a USD channel triggers the cross-field
+// contamination guard ("amount_fen is not valid for channel=stripe").
+func TestCreateTopup_StripeWithBothAmounts_Rejected(t *testing.T) {
+	h := buildTopupRouter(
+		handleCreateExtraUsageTopup(nil, nil, testBillingCfg(), testEUCfg()),
+	)
+	rr := postTopup(t, h, "proj-x", map[string]any{
+		"channel":      "stripe",
+		"amount_cents": 100,
+		"amount_fen":   500,
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", rr.Code, rr.Body.String())
+	}
+	mustErrorCode(t, rr, "bad_request")
+	if !strings.Contains(rr.Body.String(), "amount_fen is not valid") {
+		t.Errorf("error message should reference cross-field rejection; got %s", rr.Body.String())
 	}
 }
 

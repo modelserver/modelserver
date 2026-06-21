@@ -76,7 +76,8 @@ var (
 	extraUsageUnderdraftTotal       = newCounter("extra_usage_underdraft_total", "deduction attempts that failed due to race with zero balance")
 	extraUsageMissingRateTotal      = newCounter("extra_usage_missing_rate_total", "settle attempts aborted because model.DefaultCreditRate was nil")
 	extraUsageMissingPublisherTotal = newCounter("extra_usage_missing_publisher_total", "subscription eligibility saw model.publisher = ''")
-	extraUsageTopupsTotal           = newCounter("extra_usage_topups_total", "topup webhook deliveries")
+	extraUsageTopupsDeliveredTotal  = newCounter("extra_usage_topups_delivered_total", "successfully delivered topup webhooks (credits applied to wallet)")
+	extraUsageTopupsIntentTotal     = newCounter("extra_usage_topups_intent_total", "topup intent creations (before payment is confirmed); pair with extra_usage_topups_delivered_total to derive abandonment rate")
 	extraUsageBalanceFen            = newCounter("extra_usage_balance_fen", "per-project extra-usage balance in fen")
 	imageStreamEventTooLargeTotal   = newCounter("image_stream_event_too_large_total", "image SSE events that exceeded parser buffer limit")
 	encryptedReasoningRetryTotal    = newCounter("encrypted_reasoning_retry_total", "Responses-API retries triggered by invalid_encrypted_content, by outcome")
@@ -87,7 +88,8 @@ var (
 		extraUsageUnderdraftTotal,
 		extraUsageMissingRateTotal,
 		extraUsageMissingPublisherTotal,
-		extraUsageTopupsTotal,
+		extraUsageTopupsDeliveredTotal,
+		extraUsageTopupsIntentTotal,
 		extraUsageBalanceFen,
 		imageStreamEventTooLargeTotal,
 		encryptedReasoningRetryTotal,
@@ -134,9 +136,16 @@ func IncExtraUsageMissingPublisher(model string) {
 	extraUsageMissingPublisherTotal.inc(1, labelPair{"model", quote(model)})
 }
 
-// IncExtraUsageTopup records one successful topup via webhook.
-func IncExtraUsageTopup(channel string) {
-	extraUsageTopupsTotal.inc(1, labelPair{"channel", quote(channel)})
+// IncExtraUsageTopupDelivered records one successfully-delivered topup webhook
+// (credits have been applied to the project wallet).
+func IncExtraUsageTopupDelivered(channel string) {
+	extraUsageTopupsDeliveredTotal.inc(1, labelPair{"channel", quote(channel)})
+}
+
+// IncExtraUsageTopupIntent records one topup intent creation (before payment is
+// confirmed); pair with IncExtraUsageTopupDelivered to derive abandonment rate.
+func IncExtraUsageTopupIntent(channel string) {
+	extraUsageTopupsIntentTotal.inc(1, labelPair{"channel", quote(channel)})
 }
 
 // SetExtraUsageBalance stores a project's current balance. Called from write

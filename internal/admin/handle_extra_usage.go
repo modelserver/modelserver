@@ -284,8 +284,11 @@ func handleCreateExtraUsageTopup(st *store.Store, payClient billing.PaymentClien
 			ReturnURL:   billingCfg.ReturnURL,
 		})
 		if err != nil {
+			slog.Default().Error("payment provider create failed",
+				"order_id", order.ID, "channel", body.Channel, "err", err)
 			_ = st.UpdateOrderStatus(order.ID, types.OrderStatusFailed)
-			writeError(w, http.StatusServiceUnavailable, "payment_provider_error", err.Error())
+			writeError(w, http.StatusServiceUnavailable, "payment_provider_error",
+				"payment provider is unavailable")
 			return
 		}
 		if err := st.UpdateOrderPayment(order.ID, payResp.PaymentRef, payResp.PaymentURL, types.OrderStatusPaying); err != nil {
@@ -293,7 +296,7 @@ func handleCreateExtraUsageTopup(st *store.Store, payClient billing.PaymentClien
 			return
 		}
 
-		metrics.IncExtraUsageTopup(body.Channel)
+		metrics.IncExtraUsageTopupIntent(body.Channel)
 
 		writeData(w, http.StatusCreated, map[string]any{
 			"order_id":    order.ID,
@@ -412,7 +415,7 @@ func deliverExtraUsageTopupOrder(st *store.Store, order *types.Order) (int64, er
 		// webhook/delivery will mark the status.
 		return bal, fmt.Errorf("topup applied but mark delivered failed: %w", err)
 	}
-	metrics.IncExtraUsageTopup(order.Channel)
+	metrics.IncExtraUsageTopupDelivered(order.Channel)
 	metrics.SetExtraUsageBalance(order.ProjectID, bal)
 	return bal, nil
 }
