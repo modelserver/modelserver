@@ -46,7 +46,7 @@ func handleGetExtraUsage(st *store.Store, cfg config.ExtraUsageConfig) http.Hand
 			return
 		}
 		resp := extraUsageGetResponse{
-			MonthlyWindowStart: monthWindowStart(cfg.MonthlyWindowTZ).Format(time.RFC3339),
+			MonthlyWindowStart: monthWindowStart().Format(time.RFC3339),
 			CreditPriceFen:     cfg.CreditPriceFen,
 			MinTopupFen:        cfg.MinTopupFen,
 			MaxTopupFen:        cfg.MaxTopupFen,
@@ -368,13 +368,19 @@ func handleAdminExtraUsageSetBypass(st *store.Store) http.HandlerFunc {
 	}
 }
 
-// monthWindowStart returns the start of the current month in the configured
-// timezone (default Asia/Shanghai). Only used to tell the dashboard when the
-// window resets — the store uses its own SQL-side computation.
-func monthWindowStart(tzName string) time.Time {
-	loc, err := time.LoadLocation(tzName)
+// monthWindowStart returns the start of the current month in
+// Asia/Shanghai. The store's SQL queries (see DeductExtraUsage,
+// GetMonthlyExtraSpendFen) hardcode the same timezone — these must
+// match or the dashboard would display one boundary while the
+// monthly-limit enforcement used another.
+func monthWindowStart() time.Time {
+	loc, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
-		loc, _ = time.LoadLocation("Asia/Shanghai")
+		// Fall back to UTC; the store's SQL is also Asia/Shanghai, so
+		// the dashboard display would slightly disagree with enforcement
+		// in this degraded path. tzdb missing is an ops failure worth
+		// logging by the caller — here we just don't panic.
+		loc = time.UTC
 	}
 	now := time.Now().In(loc)
 	return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc)
