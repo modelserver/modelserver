@@ -78,7 +78,7 @@ var (
 	extraUsageMissingPublisherTotal = newCounter("extra_usage_missing_publisher_total", "subscription eligibility saw model.publisher = ''")
 	extraUsageTopupsDeliveredTotal  = newCounter("extra_usage_topups_delivered_total", "successfully delivered topup webhooks (credits applied to wallet)")
 	extraUsageTopupsIntentTotal     = newCounter("extra_usage_topups_intent_total", "topup intent creations (before payment is confirmed); pair with extra_usage_topups_delivered_total to derive abandonment rate")
-	extraUsageBalanceFen            = newCounter("extra_usage_balance_fen", "per-project extra-usage balance in fen")
+	extraUsageBalanceCredits        = newCounter("extra_usage_balance_credits", "per-project extra-usage balance in credits")
 	imageStreamEventTooLargeTotal   = newCounter("image_stream_event_too_large_total", "image SSE events that exceeded parser buffer limit")
 	encryptedReasoningRetryTotal    = newCounter("encrypted_reasoning_retry_total", "Responses-API retries triggered by invalid_encrypted_content, by outcome")
 
@@ -90,7 +90,7 @@ var (
 		extraUsageMissingPublisherTotal,
 		extraUsageTopupsDeliveredTotal,
 		extraUsageTopupsIntentTotal,
-		extraUsageBalanceFen,
+		extraUsageBalanceCredits,
 		imageStreamEventTooLargeTotal,
 		encryptedReasoningRetryTotal,
 	}
@@ -150,8 +150,8 @@ func IncExtraUsageTopupIntent(channel string) {
 
 // SetExtraUsageBalance stores a project's current balance. Called from write
 // paths so the gauge stays fresh.
-func SetExtraUsageBalance(projectID string, balanceFen int64) {
-	extraUsageBalanceFen.set(float64(balanceFen), labelPair{"project_id", quote(projectID)})
+func SetExtraUsageBalance(projectID string, balanceCredits int64) {
+	extraUsageBalanceCredits.set(float64(balanceCredits), labelPair{"project_id", quote(projectID)})
 }
 
 // IncImageStreamEventTooLarge records that an image SSE event exceeded the
