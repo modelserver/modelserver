@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -145,15 +146,27 @@ type BillingConfig struct {
 
 // ExtraUsageConfig controls the extra-usage subsystem. `Enabled` is the
 // global circuit breaker (false rejects every guard check regardless of
-// per-project settings). `CreditPriceFen` converts catalog credits into CNY
-// fen and is runtime-writable via admin API. The topup_* limits bound a
-// single call and a project's daily aggregate.
+// per-project settings). Per-channel unit prices convert catalog credits into
+// payment-side currency. The topup_* limits bound a single call per channel
+// and DailyTopupLimitCredits bounds a project's daily aggregate across all
+// channels.
 type ExtraUsageConfig struct {
-	Enabled            bool  `yaml:"enabled"               mapstructure:"enabled"`
-	CreditPriceFen     int64 `yaml:"credit_price_fen"      mapstructure:"credit_price_fen"`
-	MinTopupFen        int64 `yaml:"min_topup_fen"         mapstructure:"min_topup_fen"`
-	MaxTopupFen        int64 `yaml:"max_topup_fen"         mapstructure:"max_topup_fen"`
-	DailyTopupLimitFen int64 `yaml:"daily_topup_limit_fen" mapstructure:"daily_topup_limit_fen"`
+	Enabled bool `yaml:"enabled" mapstructure:"enabled"`
+
+	// Per-channel unit prices. fen and cents are minor-unit integers
+	// in each currency. Independent — no auto-derived rate between them.
+	CreditPriceCNYFen   int64 `yaml:"credit_price_cny_fen"   mapstructure:"credit_price_cny_fen"`
+	CreditPriceUSDCents int64 `yaml:"credit_price_usd_cents" mapstructure:"credit_price_usd_cents"`
+
+	// Per-channel min/max topup amounts, in payment-side currency.
+	MinTopupCNYFen   int64 `yaml:"min_topup_cny_fen"   mapstructure:"min_topup_cny_fen"`
+	MaxTopupCNYFen   int64 `yaml:"max_topup_cny_fen"   mapstructure:"max_topup_cny_fen"`
+	MinTopupUSDCents int64 `yaml:"min_topup_usd_cents" mapstructure:"min_topup_usd_cents"`
+	MaxTopupUSDCents int64 `yaml:"max_topup_usd_cents" mapstructure:"max_topup_usd_cents"`
+
+	// Currency-agnostic per-day cap on credits purchased.
+	DailyTopupLimitCredits int64 `yaml:"daily_topup_limit_credits" mapstructure:"daily_topup_limit_credits"`
+
 	// Monthly/daily window timezone: deliberately NOT a separate
 	// config knob. Set the standard POSIX `TZ` env var
 	// (e.g. TZ=Asia/Shanghai) on the process; Go's time.Local resolves
@@ -259,10 +272,23 @@ func setDefaults(v *viper.Viper) {
 	// subscription-eligibility middleware still annotates requests and the
 	// guard becomes a no-op until an operator flips this to true in config.
 	v.SetDefault("extra_usage.enabled", false)
-	v.SetDefault("extra_usage.credit_price_fen", 5438)
-	v.SetDefault("extra_usage.min_topup_fen", 1000)
-	v.SetDefault("extra_usage.max_topup_fen", 200000)
-	v.SetDefault("extra_usage.daily_topup_limit_fen", 500000)
+	v.SetDefault("extra_usage.credit_price_cny_fen", 5438)
+	v.SetDefault("extra_usage.credit_price_usd_cents", 907)   // ≈ 5438/6 (1USD ≈ 6CNY)
+	v.SetDefault("extra_usage.min_topup_cny_fen", 1000)        // ¥10
+	v.SetDefault("extra_usage.max_topup_cny_fen", 200000)      // ¥2000
+	v.SetDefault("extra_usage.min_topup_usd_cents", 167)       // $1.67 ≈ ¥10
+	v.SetDefault("extra_usage.max_topup_usd_cents", 33333)     // $333.33 ≈ ¥2000
+	// Historical default daily cap was 500_000 fen (¥5000). Convert to credits
+	// using the same default credit_price_cny_fen=5438:
+	//   500_000 × 1_000_000 / 5438 ≈ 91,945,500 credits → round to 91_945_000.
+	v.SetDefault("extra_usage.daily_topup_limit_credits", 91945000)
+	_ = v.BindEnv("extra_usage.credit_price_cny_fen")
+	_ = v.BindEnv("extra_usage.credit_price_usd_cents")
+	_ = v.BindEnv("extra_usage.min_topup_cny_fen")
+	_ = v.BindEnv("extra_usage.max_topup_cny_fen")
+	_ = v.BindEnv("extra_usage.min_topup_usd_cents")
+	_ = v.BindEnv("extra_usage.max_topup_usd_cents")
+	_ = v.BindEnv("extra_usage.daily_topup_limit_credits")
 
 	// HTTP logging (default: off).
 	v.SetDefault("http_log.enabled", false)
@@ -305,6 +331,23 @@ func unmarshal(v *viper.Viper) (*Config, error) {
 		),
 	)); err != nil {
 		return nil, err
+	}
+	if cfg.ExtraUsage.CreditPriceCNYFen <= 0 {
+		return nil, fmt.Errorf("extra_usage.credit_price_cny_fen must be > 0, got %d", cfg.ExtraUsage.CreditPriceCNYFen)
+	}
+	if cfg.ExtraUsage.CreditPriceUSDCents <= 0 {
+		return nil, fmt.Errorf("extra_usage.credit_price_usd_cents must be > 0, got %d", cfg.ExtraUsage.CreditPriceUSDCents)
+	}
+	if cfg.ExtraUsage.MinTopupCNYFen > cfg.ExtraUsage.MaxTopupCNYFen {
+		return nil, fmt.Errorf("extra_usage.min_topup_cny_fen (%d) > max_topup_cny_fen (%d)",
+			cfg.ExtraUsage.MinTopupCNYFen, cfg.ExtraUsage.MaxTopupCNYFen)
+	}
+	if cfg.ExtraUsage.MinTopupUSDCents > cfg.ExtraUsage.MaxTopupUSDCents {
+		return nil, fmt.Errorf("extra_usage.min_topup_usd_cents (%d) > max_topup_usd_cents (%d)",
+			cfg.ExtraUsage.MinTopupUSDCents, cfg.ExtraUsage.MaxTopupUSDCents)
+	}
+	if cfg.ExtraUsage.DailyTopupLimitCredits < 0 {
+		return nil, fmt.Errorf("extra_usage.daily_topup_limit_credits must be >= 0, got %d", cfg.ExtraUsage.DailyTopupLimitCredits)
 	}
 	return &cfg, nil
 }

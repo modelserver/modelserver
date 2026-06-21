@@ -471,3 +471,41 @@ func TestDeviceFlowConfigEnv(t *testing.T) {
 		t.Errorf("DeviceFlow.ClientSecret = %q, want %q", cfg.Auth.OAuth.Hydra.DeviceFlow.ClientSecret, "env-secret")
 	}
 }
+
+func TestExtraUsageConfig_NewDefaults(t *testing.T) {
+	cfg, err := Load([]byte(""))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ExtraUsage.CreditPriceCNYFen != 5438 {
+		t.Errorf("CreditPriceCNYFen = %d, want 5438", cfg.ExtraUsage.CreditPriceCNYFen)
+	}
+	if cfg.ExtraUsage.CreditPriceUSDCents != 907 {
+		t.Errorf("CreditPriceUSDCents = %d, want 907", cfg.ExtraUsage.CreditPriceUSDCents)
+	}
+	if cfg.ExtraUsage.MinTopupUSDCents != 167 {
+		t.Errorf("MinTopupUSDCents = %d, want 167", cfg.ExtraUsage.MinTopupUSDCents)
+	}
+	if cfg.ExtraUsage.DailyTopupLimitCredits != 91945000 {
+		t.Errorf("DailyTopupLimitCredits = %d, want 91945000", cfg.ExtraUsage.DailyTopupLimitCredits)
+	}
+}
+
+func TestExtraUsageConfig_ZeroUSDPriceRejected(t *testing.T) {
+	yaml := []byte(`extra_usage:
+  credit_price_usd_cents: 0`)
+	_, err := Load(yaml)
+	if err == nil {
+		t.Fatal("expected error for credit_price_usd_cents=0")
+	}
+}
+
+func TestExtraUsageConfig_InvertedMinMaxRejected(t *testing.T) {
+	yaml := []byte(`extra_usage:
+  min_topup_cny_fen: 5000
+  max_topup_cny_fen: 1000`)
+	_, err := Load(yaml)
+	if err == nil {
+		t.Fatal("expected error for min > max")
+	}
+}

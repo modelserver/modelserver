@@ -172,7 +172,7 @@ func ExtraUsageGuardMiddleware(cfg config.ExtraUsageConfig, st extraUsageStore, 
 			// that explicitly opts out of billing enforcement, so refusing
 			// requests for missing pricing data would defeat its purpose.
 			if !bypass {
-				if cfg.CreditPriceFen <= 0 {
+				if cfg.CreditPriceCNYFen <= 0 {
 					logger.Error("extra_usage_pricing_unavailable",
 						"reason", "credit_price_unset", "project_id", project.ID)
 					msg := rejectedMessage(intent.Reason, "model_unpriced")

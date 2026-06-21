@@ -17,17 +17,17 @@ import (
 
 // extraUsageGetResponse packs settings + derived counters for the dashboard.
 type extraUsageGetResponse struct {
-	Enabled             bool      `json:"enabled"`
-	BalanceCredits      int64     `json:"balance_credits"`
-	MonthlyLimitCredits int64     `json:"monthly_limit_credits"`
-	MonthlySpentCredits int64     `json:"monthly_spent_credits"`
-	MonthlyWindowStart  string    `json:"monthly_window_start"`
-	CreditPriceFen      int64     `json:"credit_price_fen"`
-	MinTopupFen         int64     `json:"min_topup_fen"`
-	MaxTopupFen         int64     `json:"max_topup_fen"`
-	DailyTopupLimitFen  int64     `json:"daily_topup_limit_fen"`
-	BypassBalanceCheck  bool      `json:"bypass_balance_check"`
-	UpdatedAt           time.Time `json:"updated_at,omitempty"`
+	Enabled                bool      `json:"enabled"`
+	BalanceCredits         int64     `json:"balance_credits"`
+	MonthlyLimitCredits    int64     `json:"monthly_limit_credits"`
+	MonthlySpentCredits    int64     `json:"monthly_spent_credits"`
+	MonthlyWindowStart     string    `json:"monthly_window_start"`
+	CreditPriceCNYFen      int64     `json:"credit_price_cny_fen"`
+	MinTopupCNYFen         int64     `json:"min_topup_cny_fen"`
+	MaxTopupCNYFen         int64     `json:"max_topup_cny_fen"`
+	DailyTopupLimitCredits int64     `json:"daily_topup_limit_credits"`
+	BypassBalanceCheck     bool      `json:"bypass_balance_check"`
+	UpdatedAt              time.Time `json:"updated_at,omitempty"`
 }
 
 // handleGetExtraUsage returns the project's extra-usage state + policy
@@ -47,11 +47,11 @@ func handleGetExtraUsage(st *store.Store, cfg config.ExtraUsageConfig) http.Hand
 			return
 		}
 		resp := extraUsageGetResponse{
-			MonthlyWindowStart: monthStart.Format(time.RFC3339),
-			CreditPriceFen:     cfg.CreditPriceFen,
-			MinTopupFen:        cfg.MinTopupFen,
-			MaxTopupFen:        cfg.MaxTopupFen,
-			DailyTopupLimitFen: cfg.DailyTopupLimitFen,
+			MonthlyWindowStart:     monthStart.Format(time.RFC3339),
+			CreditPriceCNYFen:      cfg.CreditPriceCNYFen,
+			MinTopupCNYFen:         cfg.MinTopupCNYFen,
+			MaxTopupCNYFen:         cfg.MaxTopupCNYFen,
+			DailyTopupLimitCredits: cfg.DailyTopupLimitCredits,
 		}
 		if settings != nil {
 			resp.Enabled = settings.Enabled
@@ -151,14 +151,14 @@ func handleCreateExtraUsageTopup(st *store.Store, payClient billing.PaymentClien
 			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
 			return
 		}
-		if body.AmountFen < euCfg.MinTopupFen {
+		if body.AmountFen < euCfg.MinTopupCNYFen {
 			writeError(w, http.StatusBadRequest, "bad_request",
-				fmt.Sprintf("amount_fen must be >= %d", euCfg.MinTopupFen))
+				fmt.Sprintf("amount_fen must be >= %d", euCfg.MinTopupCNYFen))
 			return
 		}
-		if body.AmountFen > euCfg.MaxTopupFen {
+		if body.AmountFen > euCfg.MaxTopupCNYFen {
 			writeError(w, http.StatusBadRequest, "bad_request",
-				fmt.Sprintf("amount_fen must be <= %d", euCfg.MaxTopupFen))
+				fmt.Sprintf("amount_fen must be <= %d", euCfg.MaxTopupCNYFen))
 			return
 		}
 
@@ -168,9 +168,9 @@ func handleCreateExtraUsageTopup(st *store.Store, payClient billing.PaymentClien
 			writeError(w, http.StatusInternalServerError, "internal", "failed to check daily topup cap")
 			return
 		}
-		if euCfg.DailyTopupLimitFen > 0 && daily+body.AmountFen > euCfg.DailyTopupLimitFen {
+		if euCfg.DailyTopupLimitCredits > 0 && daily+body.AmountFen > euCfg.DailyTopupLimitCredits {
 			writeError(w, http.StatusConflict, "daily_topup_limit",
-				fmt.Sprintf("daily topup limit %d fen reached", euCfg.DailyTopupLimitFen))
+				fmt.Sprintf("daily topup limit %d credits reached", euCfg.DailyTopupLimitCredits))
 			return
 		}
 
@@ -244,7 +244,7 @@ func handleGetExtraUsageTopup(st *store.Store) http.HandlerFunc {
 // recent spend. Superadmin only.
 type adminExtraUsageOverviewRow struct {
 	types.ExtraUsageSettings
-	Spend7DaysFen int64 `json:"spend_7d_fen"`
+	Spend7DaysCredits int64 `json:"spend_7d_credits"`
 }
 
 func handleAdminExtraUsageOverview(st *store.Store) http.HandlerFunc {
@@ -256,12 +256,12 @@ func handleAdminExtraUsageOverview(st *store.Store) http.HandlerFunc {
 		}
 		out := make([]adminExtraUsageOverviewRow, 0, len(rows))
 		for _, s := range rows {
-			spend, err := st.SumRecentExtraUsageSpendFen(s.ProjectID, 7)
+			spend, err := st.SumRecentExtraUsageSpendCredits(s.ProjectID, 7)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "internal", "failed to sum recent spend")
 				return
 			}
-			out = append(out, adminExtraUsageOverviewRow{ExtraUsageSettings: s, Spend7DaysFen: spend})
+			out = append(out, adminExtraUsageOverviewRow{ExtraUsageSettings: s, Spend7DaysCredits: spend})
 		}
 		writeData(w, http.StatusOK, out)
 	}

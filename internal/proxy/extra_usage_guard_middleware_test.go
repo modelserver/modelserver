@@ -113,7 +113,7 @@ func TestRejectedMessage_Mapping(t *testing.T) {
 }
 
 func dummyCfg(enabled bool) config.ExtraUsageConfig {
-	return config.ExtraUsageConfig{Enabled: enabled, CreditPriceFen: 5438}
+	return config.ExtraUsageConfig{Enabled: enabled, CreditPriceCNYFen: 5438, CreditPriceUSDCents: 907}
 }
 
 // fakeExtraUsageStore satisfies the extraUsageStore interface for tests.
@@ -274,7 +274,7 @@ func TestExtraUsageGuard_NoBypass_CreditPriceUnset_Rejected(t *testing.T) {
 			BalanceCredits: 100000,
 		},
 	}
-	cfg := config.ExtraUsageConfig{Enabled: true, CreditPriceFen: 0}
+	cfg := config.ExtraUsageConfig{Enabled: true, CreditPriceCNYFen: 0, CreditPriceUSDCents: 907}
 	m := &types.Model{Name: "any", DefaultCreditRate: &types.CreditRate{InputRate: 1}}
 	rr, called := runGuardWithModel(t, cfg, st, &types.Project{ID: "p1"}, m)
 	if *called {

@@ -394,9 +394,9 @@ func (s *Store) ListExtraUsageSettings() ([]types.ExtraUsageSettings, error) {
 	return out, rows.Err()
 }
 
-// SumRecentExtraUsageSpendFen returns total deductions for a project over the
-// last `lookback` (e.g. 7 days). Used by admin overview.
-func (s *Store) SumRecentExtraUsageSpendFen(projectID string, lookbackDays int) (int64, error) {
+// SumRecentExtraUsageSpendCredits returns total deductions (in credits) for a
+// project over the last `lookbackDays` (e.g. 7). Used by admin overview.
+func (s *Store) SumRecentExtraUsageSpendCredits(projectID string, lookbackDays int) (int64, error) {
 	var spent int64
 	err := s.pool.QueryRow(context.Background(), fmt.Sprintf(`
 		SELECT COALESCE(SUM(-amount_credits), 0)::bigint
