@@ -24,14 +24,14 @@ is migrated one-shot to credits using the current `credit_price_cny_fen`
 | Unit of account | **credits** (BIGINT), the same unit `computeExtraUsageCostFen` already derives from `tokens × model.DefaultCreditRate` |
 | Wallet shape | **Single** `balance_credits` column. Channel is provenance in the ledger, not a wallet attribute |
 | CNY topup pricing | `credits = amount_fen × 1_000_000 / credit_price_cny_fen` |
-| USD topup pricing | `credits = amount_cents × 1_000_000 / credit_price_usd_cent` |
-| Unit-price config | Two independent integer prices: `credit_price_cny_fen` (default 5438, the existing `credit_price_fen` renamed) and `credit_price_usd_cent` (default 907, ≈ 5438/6 reflecting the 1USD≈6CNY business rule). No standalone exchange-rate config — the implicit rate is `credit_price_cny_fen / credit_price_usd_cent`, an emergent property operators can recompute but never set. Promotional USD pricing (e.g. $7/1M during a campaign) becomes one config knob change, not a cross-currency dance. |
+| USD topup pricing | `credits = amount_cents × 1_000_000 / credit_price_usd_cents` |
+| Unit-price config | Two independent integer prices: `credit_price_cny_fen` (default 5438, the existing `credit_price_fen` renamed) and `credit_price_usd_cents` (default 907, ≈ 5438/6 reflecting the 1USD≈6CNY business rule). No standalone exchange-rate config — the implicit rate is `credit_price_cny_fen / credit_price_usd_cents`, an emergent property operators can recompute but never set. Promotional USD pricing (e.g. $7/1M during a campaign) becomes one config knob change, not a cross-currency dance. |
 | Deduction | Unchanged conceptually: compute cost in credits, `balance_credits -= cost`. No spillover, no priority order (single wallet) |
 | Subscription ↔ wallet | No coupling. Any project on any plan can topup via any channel. UI naturally lays out "微信/支付宝 → CNY 单价 → credits" vs "Stripe → USD 单价 → credits" |
 | Refund (Stripe) | MVP: reverse the original topup's credits (ledger `refund` row, `amount_credits = -orig`). Balance may go negative; extra-usage guard rejects until topped up or admin-adjusted |
 | Refund (wechat/alipay) | Same code path. Refunds via these channels are rare in practice |
 | Disputes / chargebacks | Same as refund (B1 in brainstorm). Account state may go negative; ops can `admin_adjust` to recover |
-| Per-channel min/max topup | Stay in payment-channel currency: `min_topup_cny_fen` + `max_topup_cny_fen` (renamed from existing) and new `min_topup_usd_cent` + `max_topup_usd_cent`. Operator-friendly — they think in money for "minimum charge size" / "fraud cap" decisions. |
+| Per-channel min/max topup | Stay in payment-channel currency: `min_topup_cny_fen` + `max_topup_cny_fen` (renamed from existing) and new `min_topup_usd_cents` + `max_topup_usd_cents`. Operator-friendly — they think in money for "minimum charge size" / "fraud cap" decisions. |
 | Daily topup cap | Currency-agnostic: `daily_topup_limit_credits` (renamed from `daily_topup_limit_fen`). Sums credits-bought across all channels in the day. Matches the new "credits is the unit of account" model and avoids any cross-currency arithmetic. |
 | Rounding (topup credits) | `floor` — user gets whole credits; sub-credit fraction goes to platform (≤ 1 credit) |
 | Rounding (deduction cost) | `ceil` (existing) — platform doesn't undercharge |
@@ -122,20 +122,22 @@ expressed in fen and must be re-keyed via admin adjustment.
 type ExtraUsageConfig struct {
     Enabled                bool   `mapstructure:"enabled"`
 
-    // Per-channel unit prices. fen and cent are minor-unit integers
-    // in each respective currency. Independent — no auto-derived
-    // rate between them. Operator may price them however the
-    // business decides (e.g. promotional USD pricing).
+    // Per-channel unit prices. fen and cents are minor-unit integers
+    // in each respective currency (Chinese mass-noun "fen" stays
+    // singular per existing codebase convention; English "cents"
+    // pluralizes — matches existing PriceUSDCents in plan.go).
+    // Independent — no auto-derived rate between them. Operator may
+    // price them however the business decides (e.g. promotional USD pricing).
     CreditPriceCNYFen      int64  `mapstructure:"credit_price_cny_fen"`     // default 5438
-    CreditPriceUSDCent     int64  `mapstructure:"credit_price_usd_cent"`    // default 907
+    CreditPriceUSDCents     int64  `mapstructure:"credit_price_usd_cents"`    // default 907
 
     // Per-channel min/max topup amounts, in payment-side currency.
     // Operators set these based on payment-fee floors and fraud
     // tolerance, which are inherently per-currency concerns.
     MinTopupCNYFen         int64  `mapstructure:"min_topup_cny_fen"`        // default 1000  (¥10)
     MaxTopupCNYFen         int64  `mapstructure:"max_topup_cny_fen"`        // default 200000 (¥2000)
-    MinTopupUSDCent        int64  `mapstructure:"min_topup_usd_cent"`       // default 167   ($1.67 ≈ ¥10 at default rate)
-    MaxTopupUSDCent        int64  `mapstructure:"max_topup_usd_cent"`       // default 33333 ($333.33 ≈ ¥2000)
+    MinTopupUSDCents        int64  `mapstructure:"min_topup_usd_cents"`       // default 167   ($1.67 ≈ ¥10 at default rate)
+    MaxTopupUSDCents        int64  `mapstructure:"max_topup_usd_cents"`       // default 33333 ($333.33 ≈ ¥2000)
 
     // Currency-agnostic per-day cap on credits purchased. Matches
     // the "credits is the unit of account" model.
@@ -147,7 +149,7 @@ Env names follow viper's standard mapping
 (`MODELSERVER_EXTRA_USAGE_CREDIT_PRICE_CNY_FEN`, etc.).
 
 Validation at `Load`:
-- Both `CreditPriceCNYFen` and `CreditPriceUSDCent` must be > 0
+- Both `CreditPriceCNYFen` and `CreditPriceUSDCents` must be > 0
   (a zero would mean "free credits" — likely a misconfiguration; even
   intentional zero-price testing should opt in explicitly via a
   separate flag if ever needed).
@@ -157,7 +159,7 @@ Validation at `Load`:
 Removed: the previous spec draft included a `USDToCNYRate` field.
 That config is **deleted entirely** — having two independent unit
 prices eliminates the need for a separate rate knob, and the implicit
-rate (`CreditPriceCNYFen × 100 / CreditPriceUSDCent`, a unit-less
+rate (`CreditPriceCNYFen × 100 / CreditPriceUSDCents`, a unit-less
 ratio of "how many fen per cent of payment buys the same credits")
 falls out as an emergent property operators can inspect but never
 need to set.
@@ -192,9 +194,9 @@ case "wechat", "alipay":
     payment_amount = amount_fen        // in fen, passed to payserver
 
 case "stripe":
-    if amount_cents < cfg.MinTopupUSDCent { reject 400 }
-    if amount_cents > cfg.MaxTopupUSDCent { reject 400 }
-    credits = (amount_cents * 1_000_000) / cfg.CreditPriceUSDCent
+    if amount_cents < cfg.MinTopupUSDCents { reject 400 }
+    if amount_cents > cfg.MaxTopupUSDCents { reject 400 }
+    credits = (amount_cents * 1_000_000) / cfg.CreditPriceUSDCents
     currency = "USD"
     payment_amount = amount_cents      // in cents, passed to payserver
 }
@@ -216,7 +218,7 @@ order = CreateOrder{
 
 Pre-computing `credits` at order creation time pins the conversion to
 *this order*: any subsequent change to `CreditPriceCNYFen` /
-`CreditPriceUSDCent` does NOT retroactively change how many credits
+`CreditPriceUSDCents` does NOT retroactively change how many credits
 the user receives when this order finally delivers. The delivery
 handler (`internal/admin/handle_delivery.go`) reads the value from
 the order row, not from current config.
@@ -340,16 +342,16 @@ new fields, while old fields are renamed:
 
   "credit_unit_prices": {
     "cny_fen_per_million": 5438,          // = CreditPriceCNYFen
-    "usd_cent_per_million": 907,          // = CreditPriceUSDCent
-    "implicit_usd_to_cny_rate": 5.996     // = CreditPriceCNYFen / CreditPriceUSDCent
+    "usd_cents_per_million": 907,          // = CreditPriceUSDCents
+    "implicit_usd_to_cny_rate": 5.996     // = CreditPriceCNYFen / CreditPriceUSDCents
                                           //   (informational; nothing reads/writes this)
   },
 
   "min_topup": {
     "cny_fen": 1000,                       // = MinTopupCNYFen (¥10)
-    "usd_cent": 167                        // = MinTopupUSDCent ($1.67)
+    "usd_cents": 167                        // = MinTopupUSDCents ($1.67)
   },
-  "max_topup": { "cny_fen": 200000, "usd_cent": 33333 },
+  "max_topup": { "cny_fen": 200000, "usd_cents": 33333 },
   "daily_topup_limit_credits": 919455000,  // = DailyTopupLimitCredits
 
   "bypass_balance_check": false,
@@ -390,7 +392,7 @@ returns credits. Dashboard renders as credits primary, with the
 4. **Runtime-mutable unit prices via DB row.** Env-config is
    sufficient for now (operators set unit prices at deploy time and
    restart to change). A future "promotional pricing" workflow
-   (e.g., `credit_price_usd_cent` temporarily lowered to 800 during
+   (e.g., `credit_price_usd_cents` temporarily lowered to 800 during
    a campaign) would justify moving to a DB-backed admin-editable
    config with audit log; defer until needed.
 
@@ -400,7 +402,7 @@ returns credits. Dashboard renders as credits primary, with the
 
 **Caveats:**
 
-- `credit_price_cny_fen` and `credit_price_usd_cent` are the runtime
+- `credit_price_cny_fen` and `credit_price_usd_cents` are the runtime
   unit prices. An operator who changes either changes the price of
   all future topups via that channel. Existing credit balances are
   unaffected (they're whole numbers, not derived). The dashboard's
@@ -479,7 +481,7 @@ internal/proxy/extra_usage_guard_middleware.go
                                     # BalanceCredits compare
 
 internal/config/config.go           # ExtraUsageConfig: rename CreditPriceFen → CreditPriceCNYFen,
-                                    # add CreditPriceUSDCent, MinTopupUSDCent, MaxTopupUSDCent;
+                                    # add CreditPriceUSDCents, MinTopupUSDCents, MaxTopupUSDCents;
                                     # rename DailyTopupLimitFen → DailyTopupLimitCredits
 
 internal/admin/handle_extra_usage.go
