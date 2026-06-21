@@ -194,7 +194,7 @@ func handleGetUsage(st *store.Store, catalog modelcatalog.Catalog, creditPriceFe
 					writeError(w, http.StatusInternalServerError, "internal", "failed to get usage")
 					return
 				}
-				extraFen, err := st.GetExtraUsageSpendInWindow(projectID, since, until)
+				extraCredits, err := st.GetExtraUsageSpendInWindow(projectID, since, until)
 				if err != nil {
 					writeError(w, http.StatusInternalServerError, "internal", "failed to get usage")
 					return
@@ -206,7 +206,7 @@ func handleGetUsage(st *store.Store, catalog modelcatalog.Catalog, creditPriceFe
 				if sub != nil {
 					activeCurrency = sub.Currency
 				}
-				cb := billing.ComputeCostBreakdown(sums, extraFen, catalog, creditPriceFen,
+				cb := billing.ComputeCostBreakdown(sums, extraCredits, catalog, creditPriceFen,
 					sub, plan, since, until, activeCurrency)
 				overview["cost_breakdown"] = cb
 			}

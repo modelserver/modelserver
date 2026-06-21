@@ -15,22 +15,34 @@ import (
 	"github.com/modelserver/modelserver/internal/types"
 )
 
+// creditUnitPrices holds the per-million-credit price in each supported
+// currency and the implicit exchange rate (for informational display only).
+type creditUnitPrices struct {
+	CNYFenPerMillion   int64   `json:"cny_fen_per_million"`
+	USDCentsPerMillion int64   `json:"usd_cents_per_million"`
+	ImplicitUSDToCNY   float64 `json:"implicit_usd_to_cny_rate"`
+}
+
+// topupAmounts holds the topup bound (min or max) in each supported currency.
+type topupAmounts struct {
+	CNYFen   int64 `json:"cny_fen"`
+	USDCents int64 `json:"usd_cents"`
+}
+
 // extraUsageGetResponse packs settings + derived counters for the dashboard.
 type extraUsageGetResponse struct {
-	Enabled                bool      `json:"enabled"`
-	BalanceCredits         int64     `json:"balance_credits"`
-	MonthlyLimitCredits    int64     `json:"monthly_limit_credits"`
-	MonthlySpentCredits    int64     `json:"monthly_spent_credits"`
-	MonthlyWindowStart     string    `json:"monthly_window_start"`
-	CreditPriceCNYFen      int64     `json:"credit_price_cny_fen"`
-	CreditPriceUSDCents    int64     `json:"credit_price_usd_cents"`
-	MinTopupCNYFen         int64     `json:"min_topup_cny_fen"`
-	MaxTopupCNYFen         int64     `json:"max_topup_cny_fen"`
-	MinTopupUSDCents       int64     `json:"min_topup_usd_cents"`
-	MaxTopupUSDCents       int64     `json:"max_topup_usd_cents"`
-	DailyTopupLimitCredits int64     `json:"daily_topup_limit_credits"`
-	BypassBalanceCheck     bool      `json:"bypass_balance_check"`
-	UpdatedAt              time.Time `json:"updated_at,omitempty"`
+	Enabled             bool             `json:"enabled"`
+	BalanceCredits      int64            `json:"balance_credits"`
+	MonthlyLimitCredits int64            `json:"monthly_limit_credits"`
+	MonthlySpentCredits int64            `json:"monthly_spent_credits"`
+	MonthlyWindowStart  string           `json:"monthly_window_start"`
+	BypassBalanceCheck  bool             `json:"bypass_balance_check"`
+	UpdatedAt           time.Time        `json:"updated_at,omitempty"`
+
+	CreditUnitPrices creditUnitPrices `json:"credit_unit_prices"`
+	MinTopup         topupAmounts     `json:"min_topup"`
+	MaxTopup         topupAmounts     `json:"max_topup"`
+	DailyTopupLimit  int64            `json:"daily_topup_limit_credits"`
 }
 
 // handleGetExtraUsage returns the project's extra-usage state + policy
@@ -50,14 +62,15 @@ func handleGetExtraUsage(st *store.Store, cfg config.ExtraUsageConfig) http.Hand
 			return
 		}
 		resp := extraUsageGetResponse{
-			MonthlyWindowStart:     monthStart.Format(time.RFC3339),
-			CreditPriceCNYFen:      cfg.CreditPriceCNYFen,
-			CreditPriceUSDCents:    cfg.CreditPriceUSDCents,
-			MinTopupCNYFen:         cfg.MinTopupCNYFen,
-			MaxTopupCNYFen:         cfg.MaxTopupCNYFen,
-			MinTopupUSDCents:       cfg.MinTopupUSDCents,
-			MaxTopupUSDCents:       cfg.MaxTopupUSDCents,
-			DailyTopupLimitCredits: cfg.DailyTopupLimitCredits,
+			MonthlyWindowStart: monthStart.Format(time.RFC3339),
+			CreditUnitPrices: creditUnitPrices{
+				CNYFenPerMillion:   cfg.CreditPriceCNYFen,
+				USDCentsPerMillion: cfg.CreditPriceUSDCents,
+				ImplicitUSDToCNY:   float64(cfg.CreditPriceCNYFen) / float64(cfg.CreditPriceUSDCents),
+			},
+			MinTopup:        topupAmounts{CNYFen: cfg.MinTopupCNYFen, USDCents: cfg.MinTopupUSDCents},
+			MaxTopup:        topupAmounts{CNYFen: cfg.MaxTopupCNYFen, USDCents: cfg.MaxTopupUSDCents},
+			DailyTopupLimit: cfg.DailyTopupLimitCredits,
 		}
 		if settings != nil {
 			resp.Enabled = settings.Enabled
@@ -283,20 +296,20 @@ func handleAdminExtraUsageDirectTopup(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "projectID")
 		var body struct {
-			AmountFen   int64  `json:"amount_fen"`
-			Description string `json:"description"`
+			AmountCredits int64  `json:"amount_credits"`
+			Description   string `json:"description"`
 		}
 		if err := decodeBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
 			return
 		}
-		if body.AmountFen <= 0 {
-			writeError(w, http.StatusBadRequest, "bad_request", "amount_fen must be > 0")
+		if body.AmountCredits <= 0 {
+			writeError(w, http.StatusBadRequest, "bad_request", "amount_credits must be > 0")
 			return
 		}
 		bal, err := st.TopUpExtraUsage(store.TopUpExtraUsageReq{
 			ProjectID:     projectID,
-			AmountCredits: body.AmountFen,
+			AmountCredits: body.AmountCredits,
 			Reason:        types.ExtraUsageReasonAdminAdjust,
 			Description:   body.Description,
 		})

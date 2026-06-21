@@ -48,8 +48,8 @@ func TestComputeCostBreakdown_PaidPlanWithSavings(t *testing.T) {
 	if got.SubscriptionFen != 19900 {
 		t.Errorf("SubscriptionFen = %d, want 19900", got.SubscriptionFen)
 	}
-	if got.ExtraUsageFen != 0 {
-		t.Errorf("ExtraUsageFen = %d, want 0", got.ExtraUsageFen)
+	if got.ExtraUsageCredits != 0 {
+		t.Errorf("ExtraUsageCredits = %d, want 0", got.ExtraUsageCredits)
 	}
 	if got.ActualPaidFen != 19900 {
 		t.Errorf("ActualPaidFen = %d, want 19900", got.ActualPaidFen)
@@ -74,7 +74,9 @@ func TestComputeCostBreakdown_NoActiveSubscription(t *testing.T) {
 	fallbackStart := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	fallbackEnd := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 
-	got := ComputeCostBreakdown(sums, 1234, cat, 5438, nil, nil, fallbackStart, fallbackEnd, "")
+	// 5_000_000 credits × 5438 fen/M = 27190 fen equivalent
+	extraCredits := int64(5_000_000)
+	got := ComputeCostBreakdown(sums, extraCredits, cat, 5438, nil, nil, fallbackStart, fallbackEnd, "")
 
 	if got.HasActiveSub {
 		t.Errorf("HasActiveSub = true, want false")
@@ -82,11 +84,16 @@ func TestComputeCostBreakdown_NoActiveSubscription(t *testing.T) {
 	if got.SubscriptionFen != 0 {
 		t.Errorf("SubscriptionFen = %d, want 0", got.SubscriptionFen)
 	}
-	if got.ActualPaidFen != 1234 {
-		t.Errorf("ActualPaidFen = %d, want 1234", got.ActualPaidFen)
+	if got.ExtraUsageCredits != extraCredits {
+		t.Errorf("ExtraUsageCredits = %d, want %d", got.ExtraUsageCredits, extraCredits)
 	}
-	if got.SavedFen != 97884-1234 {
-		t.Errorf("SavedFen = %d, want %d", got.SavedFen, 97884-1234)
+	// actual_paid_fen = (5_000_000 * 5438) / 1_000_000 = 27190
+	if got.ActualPaidFen != 27190 {
+		t.Errorf("ActualPaidFen = %d, want 27190", got.ActualPaidFen)
+	}
+	// api_standard_fen = 97884; saved = 97884 - 27190 = 70694
+	if got.SavedFen != 97884-27190 {
+		t.Errorf("SavedFen = %d, want %d", got.SavedFen, 97884-27190)
 	}
 	if !got.PeriodStart.Equal(fallbackStart) || !got.PeriodEnd.Equal(fallbackEnd) {
 		t.Errorf("fallback period not used")
@@ -201,18 +208,38 @@ func TestComputeCostBreakdown_ExtraUsageOnlyCountedThroughExtraField(t *testing.
 
 	sums := []store.PerModelTokenSums{{Model: "claude-sonnet-4-6",
 		InputTokens: 1_000_000, OutputTokens: 1_000_000}}
-	extra := int64(50_000) // ¥500.00
+	// 9_193_219 credits × 5438 / 1_000_000 = 49,994 fen (~¥499.94)
+	// Using a round credit count: 10_000_000 credits × 5438 / 1M = 54_380 fen
+	// Use 9_194_558 credits × 5438 / 1M = floor(50001) -- let's pick something clean.
+	// 50_000 fen / 5438 * 1_000_000 ≈ 9_194_558 credits → (9_194_558 * 5438)/1M = 49_999
+	// Simplest: use 10_000_000 credits → 54_380 fen; api_std = 97884; saved = 97884-54380 = 43504
+	extra := int64(10_000_000) // 10M credits × 5438 fen/M = 54380 fen
 
 	got := ComputeCostBreakdown(sums, extra, cat, 5438, sub, plan, time.Time{}, time.Time{}, "")
 
-	if got.ExtraUsageFen != 50_000 {
-		t.Errorf("ExtraUsageFen = %d, want 50000", got.ExtraUsageFen)
+	if got.ExtraUsageCredits != extra {
+		t.Errorf("ExtraUsageCredits = %d, want %d", got.ExtraUsageCredits, extra)
 	}
-	if got.ActualPaidFen != 50_000 {
-		t.Errorf("ActualPaidFen = %d, want 50000", got.ActualPaidFen)
+	// actual_paid_fen = (10_000_000 * 5438) / 1_000_000 = 54380
+	if got.ActualPaidFen != 54380 {
+		t.Errorf("ActualPaidFen = %d, want 54380", got.ActualPaidFen)
 	}
-	// API standard 97884 − actual 50000 = 47884
-	if got.SavedFen != 47884 {
-		t.Errorf("SavedFen = %d, want 47884", got.SavedFen)
+	// API standard 97884 − actual 54380 = 43504
+	if got.SavedFen != 43504 {
+		t.Errorf("SavedFen = %d, want 43504", got.SavedFen)
+	}
+}
+
+func TestComputeCostBreakdown_ExtraUsageCreditsConverted(t *testing.T) {
+	// 5,000,000 credits × 5438 fen / 1M = 27,190 fen
+	cb := ComputeCostBreakdown(
+		nil, 5_000_000, nil, 5438, nil, nil,
+		time.Now(), time.Now(), "",
+	)
+	if cb.ExtraUsageCredits != 5_000_000 {
+		t.Errorf("ExtraUsageCredits = %d, want 5_000_000", cb.ExtraUsageCredits)
+	}
+	if cb.ActualPaidFen != 27190 {
+		t.Errorf("ActualPaidFen = %d, want 27190", cb.ActualPaidFen)
 	}
 }

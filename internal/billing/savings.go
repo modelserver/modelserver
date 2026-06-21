@@ -15,16 +15,17 @@ import (
 )
 
 // CostBreakdown is the JSON-serializable shape consumed by the dashboard.
-// All money fields are CNY fen.
+// Money fields ending in _fen are CNY fen; ExtraUsageCredits is in credit
+// units (1 credit = CreditPriceCNYFen / 1_000_000 fen).
 type CostBreakdown struct {
-	APIStandardFen  int64     `json:"api_standard_fen"`
-	SubscriptionFen int64     `json:"subscription_fen"`
-	ExtraUsageFen   int64     `json:"extra_usage_fen"`
-	ActualPaidFen   int64     `json:"actual_paid_fen"`
-	SavedFen        int64     `json:"saved_fen"`
-	PeriodStart     time.Time `json:"period_start"`
-	PeriodEnd       time.Time `json:"period_end"`
-	HasActiveSub    bool      `json:"has_active_subscription"`
+	APIStandardFen    int64     `json:"api_standard_fen"`
+	SubscriptionFen   int64     `json:"subscription_fen"`
+	ExtraUsageCredits int64     `json:"extra_usage_credits"`
+	ActualPaidFen     int64     `json:"actual_paid_fen"`
+	SavedFen          int64     `json:"saved_fen"`
+	PeriodStart       time.Time `json:"period_start"`
+	PeriodEnd         time.Time `json:"period_end"`
+	HasActiveSub      bool      `json:"has_active_subscription"`
 }
 
 // ComputeCostBreakdown folds per-model token sums against the catalog's
@@ -43,9 +44,9 @@ type CostBreakdown struct {
 // See docs/superpowers/specs/2026-06-19-stripe-payserver-design.md §5.7.
 func ComputeCostBreakdown(
 	sums []store.PerModelTokenSums,
-	extraUsageFen int64,
+	extraUsageCredits int64,
 	catalog modelcatalog.Catalog,
-	creditPriceFen int64,
+	creditPriceCNYFen int64,
 	sub *types.Subscription,
 	plan *types.Plan,
 	fallbackStart, fallbackEnd time.Time,
@@ -89,12 +90,17 @@ func ComputeCostBreakdown(
 			credits = 0
 		}
 		// Per-model ceil so rounding never under-states the API standard cost.
-		apiFen += int64(math.Ceil(credits * float64(creditPriceFen) / 1_000_000))
+		apiFen += int64(math.Ceil(credits * float64(creditPriceCNYFen) / 1_000_000))
 	}
 
+	// Convert credits back to fen-equivalent for the actual_paid calculation,
+	// using the CNY unit price. The dashboard explains this is an approximation:
+	// real cost was paid in whatever currency the topup used.
+	extraUsageFenEquivalent := (extraUsageCredits * creditPriceCNYFen) / 1_000_000
+
 	out := CostBreakdown{
-		APIStandardFen: apiFen,
-		ExtraUsageFen:  extraUsageFen,
+		APIStandardFen:    apiFen,
+		ExtraUsageCredits: extraUsageCredits,
 	}
 	if sub != nil && plan != nil {
 		out.HasActiveSub = true
@@ -105,7 +111,7 @@ func ComputeCostBreakdown(
 		out.PeriodStart = fallbackStart
 		out.PeriodEnd = fallbackEnd
 	}
-	out.ActualPaidFen = out.SubscriptionFen + out.ExtraUsageFen
+	out.ActualPaidFen = out.SubscriptionFen + extraUsageFenEquivalent
 	if diff := out.APIStandardFen - out.ActualPaidFen; diff > 0 {
 		out.SavedFen = diff
 	}
