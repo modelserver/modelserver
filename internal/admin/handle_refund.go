@@ -80,7 +80,7 @@ func handleBillingRefundWebhook(st *store.Store, logger *slog.Logger) http.Handl
 					"order_id", body.OrderID,
 					"status", order.Status)
 				writeError(w, http.StatusConflict, "not_refundable",
-					"order is in status "+order.Status+", only delivered orders can be refunded")
+					"order cannot be refunded in its current state")
 				return
 			}
 			// Amount/currency parity gate: V1 only supports full reversal.

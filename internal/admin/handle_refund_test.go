@@ -240,40 +240,53 @@ func TestRefund_Idempotent(t *testing.T) {
 }
 
 // TestRefund_PartialAmountRejected verifies that a refund webhook whose
-// amount does not match the original order is rejected with 422 — V1 only
-// supports full reversal and silently applying a full refund for a partial
-// event would lose money in either direction.
+// amount OR currency does not match the original order is rejected with
+// 422 — V1 only supports full reversal and silently applying a full
+// refund for a partial event would lose money in either direction. The
+// handler uses `||`, so both halves of the disjunction are exercised:
+// amount-mismatch and currency-mismatch.
 func TestRefund_PartialAmountRejected(t *testing.T) {
-	rh := newRefundHarness(t)
-	projectID := rh.seedProject("partial")
-	order := rh.seedDeliveredTopup(projectID, 10_000)
-
-	// Order was seeded with Amount=1000 (per seedDeliveredTopup); send 500.
-	body, _ := json.Marshal(map[string]any{
-		"order_id": order.ID,
-		"amount":   500, // ← != order.Amount (1000)
-		"currency": "CNY",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/billing/webhook/refund", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	rh.h.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d, want 422; body = %s", rr.Code, rr.Body.String())
+	cases := []struct {
+		name     string
+		amount   int64
+		currency string
+	}{
+		{"amount_mismatch", 500, "CNY"},   // != order.Amount (1000)
+		{"currency_mismatch", 1000, "USD"}, // != order.Currency ("CNY")
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rh := newRefundHarness(t)
+			projectID := rh.seedProject("partial-" + tc.name)
+			order := rh.seedDeliveredTopup(projectID, 10_000)
 
-	// No refund ledger row should have been inserted.
-	ctx := context.Background()
-	var rowCount int
-	if err := rh.st.Pool().QueryRow(ctx, `
-		SELECT COUNT(*) FROM extra_usage_transactions
-		WHERE order_id = $1 AND type = 'refund'`, order.ID,
-	).Scan(&rowCount); err != nil {
-		t.Fatalf("count refund rows: %v", err)
-	}
-	if rowCount != 0 {
-		t.Errorf("partial-refund rejection leaked a ledger row (%d rows)", rowCount)
+			body, _ := json.Marshal(map[string]any{
+				"order_id": order.ID,
+				"amount":   tc.amount,
+				"currency": tc.currency,
+			})
+			req := httptest.NewRequest(http.MethodPost, "/billing/webhook/refund", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			rh.h.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, want 422; body = %s", rr.Code, rr.Body.String())
+			}
+
+			// No refund ledger row should have been inserted.
+			ctx := context.Background()
+			var rowCount int
+			if err := rh.st.Pool().QueryRow(ctx, `
+				SELECT COUNT(*) FROM extra_usage_transactions
+				WHERE order_id = $1 AND type = 'refund'`, order.ID,
+			).Scan(&rowCount); err != nil {
+				t.Fatalf("count refund rows: %v", err)
+			}
+			if rowCount != 0 {
+				t.Errorf("partial-refund rejection leaked a ledger row (%d rows)", rowCount)
+			}
+		})
 	}
 }
 
