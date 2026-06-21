@@ -539,11 +539,14 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 				if reqCtx.RequestID != "" {
 					duration := time.Since(startTime).Milliseconds()
 					failReq := types.Request{
-						OAuthGrantID: reqCtx.OAuthGrantID,
-						Status:       types.RequestStatusError,
-						LatencyMs:    duration,
-						ErrorMessage: "claudecode OAuth refresh failed",
-						ClientIP:     reqCtx.ClientIP,
+						OAuthGrantID:      reqCtx.OAuthGrantID,
+						Status:            types.RequestStatusError,
+						LatencyMs:         duration,
+						ErrorMessage:      "claudecode OAuth refresh failed",
+						ClientIP:          reqCtx.ClientIP,
+						IsExtraUsage:      reqCtx.IsExtraUsage,
+						ExtraUsageCostFen: reqCtx.ExtraUsageCostFen,
+						ExtraUsageReason:  reqCtx.ExtraUsageReason,
 					}
 					go func() {
 						if err := e.store.CompleteRequest(reqCtx.RequestID, &failReq); err != nil {
@@ -607,11 +610,14 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 				if reqCtx.RequestID != "" {
 					duration := time.Since(startTime).Milliseconds()
 					failReq := types.Request{
-						OAuthGrantID: reqCtx.OAuthGrantID,
-						Status:       types.RequestStatusError,
-						LatencyMs:    duration,
-						ErrorMessage: "codex OAuth refresh failed",
-						ClientIP:     reqCtx.ClientIP,
+						OAuthGrantID:      reqCtx.OAuthGrantID,
+						Status:            types.RequestStatusError,
+						LatencyMs:         duration,
+						ErrorMessage:      "codex OAuth refresh failed",
+						ClientIP:          reqCtx.ClientIP,
+						IsExtraUsage:      reqCtx.IsExtraUsage,
+						ExtraUsageCostFen: reqCtx.ExtraUsageCostFen,
+						ExtraUsageReason:  reqCtx.ExtraUsageReason,
 					}
 					go func() {
 						if err := e.store.CompleteRequest(reqCtx.RequestID, &failReq); err != nil {
@@ -763,11 +769,14 @@ func (e *Executor) Execute(w http.ResponseWriter, r *http.Request, reqCtx *Reque
 	if reqCtx.RequestID != "" {
 		duration := time.Since(startTime).Milliseconds()
 		req := types.Request{
-			OAuthGrantID: reqCtx.OAuthGrantID,
-			Status:       types.RequestStatusError,
-			LatencyMs:    duration,
-			ErrorMessage: "all upstreams exhausted",
-			ClientIP:     reqCtx.ClientIP,
+			OAuthGrantID:      reqCtx.OAuthGrantID,
+			Status:            types.RequestStatusError,
+			LatencyMs:         duration,
+			ErrorMessage:      "all upstreams exhausted",
+			ClientIP:          reqCtx.ClientIP,
+			IsExtraUsage:      reqCtx.IsExtraUsage,
+			ExtraUsageCostFen: reqCtx.ExtraUsageCostFen,
+			ExtraUsageReason:  reqCtx.ExtraUsageReason,
 		}
 		go func() {
 			if err := e.store.CompleteRequest(reqCtx.RequestID, &req); err != nil {
@@ -902,19 +911,22 @@ func (e *Executor) commitErrorResponse(
 
 	// Record the error request.
 	req := types.Request{
-		ProjectID:    reqCtx.Project.ID,
-		APIKeyID:     reqCtx.APIKeyID,
-		OAuthGrantID: reqCtx.OAuthGrantID,
-		UpstreamID:   candidate.Upstream.ID,
-		TraceID:      reqCtx.TraceID,
-		Provider:     candidate.Upstream.Provider,
-		RequestKind:  reqCtx.RequestKind,
-		Model:        reqCtx.Model,
-		Streaming:    reqCtx.IsStream,
-		Status:       status,
-		LatencyMs:    duration,
-		ErrorMessage: string(errBody),
-		ClientIP:     reqCtx.ClientIP,
+		ProjectID:         reqCtx.Project.ID,
+		APIKeyID:          reqCtx.APIKeyID,
+		OAuthGrantID:      reqCtx.OAuthGrantID,
+		UpstreamID:        candidate.Upstream.ID,
+		TraceID:           reqCtx.TraceID,
+		Provider:          candidate.Upstream.Provider,
+		RequestKind:       reqCtx.RequestKind,
+		Model:             reqCtx.Model,
+		Streaming:         reqCtx.IsStream,
+		Status:            status,
+		LatencyMs:         duration,
+		ErrorMessage:      string(errBody),
+		ClientIP:          reqCtx.ClientIP,
+		IsExtraUsage:      reqCtx.IsExtraUsage,
+		ExtraUsageCostFen: reqCtx.ExtraUsageCostFen,
+		ExtraUsageReason:  reqCtx.ExtraUsageReason,
 	}
 	if reqCtx.RequestID != "" {
 		go func() {

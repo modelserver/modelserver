@@ -113,9 +113,9 @@ func (s *Store) HasPayingOrder(projectID string) (bool, error) {
 
 // SumDailyExtraUsageTopupFen returns the total fen (sum of paid/delivered
 // top-up orders) committed in the day containing dayStart. Callers
-// compute dayStart from the deployment's MonthlyWindowTZ via
-// store.DayWindowStart so the daily cap rolls over at the same wall-
-// clock moment a Chinese user sees as "midnight."
+// compute dayStart via store.DayWindowStart() (which reads time.Local,
+// set from the TZ env var) so the daily cap rolls over at the same
+// wall-clock moment the operator's users see as "midnight."
 func (s *Store) SumDailyExtraUsageTopupFen(projectID string, dayStart time.Time) (int64, error) {
 	var total int64
 	err := s.pool.QueryRow(context.Background(), `

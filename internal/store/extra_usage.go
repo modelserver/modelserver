@@ -47,8 +47,8 @@ type DeductExtraUsageReq struct {
 	Reason           string
 	Description      string
 	// MonthWindowStart is the inclusive lower bound of the current
-	// month, in the deployment's configured timezone. Used by the
-	// monthly-limit check. Compute via MonthWindowStart(cfg.MonthlyWindowTZ).
+	// month, in the process's local timezone (TZ env var → time.Local).
+	// Used by the monthly-limit check. Compute via store.MonthWindowStart().
 	MonthWindowStart time.Time
 }
 
@@ -302,9 +302,10 @@ func (s *Store) TopUpExtraUsage(req TopUpExtraUsageReq) (int64, error) {
 }
 
 // GetMonthlyExtraSpendFen returns the total spent (positive fen) in the
-// month containing monthStart. Callers compute monthStart from the
-// deployment's MonthlyWindowTZ via store.MonthWindowStart so the
-// boundary matches DeductExtraUsage's atomic check exactly.
+// month containing monthStart. Callers compute monthStart via
+// store.MonthWindowStart() (which reads time.Local, set from the TZ
+// env var) so the boundary matches DeductExtraUsage's atomic check
+// exactly.
 func (s *Store) GetMonthlyExtraSpendFen(projectID string, monthStart time.Time) (int64, error) {
 	var spent int64
 	err := s.pool.QueryRow(context.Background(), `
