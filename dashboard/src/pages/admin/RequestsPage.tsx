@@ -4,6 +4,8 @@ import { useAdminRequests, type AdminRequestFilters } from "@/api/adminRequests"
 import { useAdminHttpLog } from "@/api/httpLog";
 import { useUpstreams } from "@/api/upstreams";
 import { useAllUsersCompact } from "@/api/users";
+import { useModels } from "@/api/models";
+import { REQUEST_KINDS } from "@/lib/requestKinds";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { Pagination } from "@/components/shared/Pagination";
@@ -11,7 +13,6 @@ import { StatusBadge } from "@/components/shared/StatusBadge";
 import { UserCell } from "@/components/shared/UserCell";
 import { ValidationBadge } from "@/components/shared/ValidationBadge";
 import { DateRangePicker } from "@/components/shared/DateRangePicker";
-import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Select,
@@ -49,6 +50,7 @@ function defaultUntil() {
 export function AdminRequestsPage() {
   const [page, setPage] = useState(1);
   const [model, setModel] = useState("");
+  const [requestKind, setRequestKind] = useState("");
   const [status, setStatus] = useState("");
   const [since, setSince] = useState(defaultSince);
   const [until, setUntil] = useState(defaultUntil);
@@ -62,13 +64,16 @@ export function AdminRequestsPage() {
 
   const { data: upstreamsData } = useUpstreams(1, 100);
   const { data: usersData } = useAllUsersCompact();
+  const { data: modelsData } = useModels("active");
   const users = usersData?.data ?? [];
   const upstreams = upstreamsData?.data ?? [];
+  const allModels = modelsData?.data ?? [];
 
   const filters: AdminRequestFilters = {
     page,
     per_page: 20,
     model: model || undefined,
+    request_kind: requestKind || undefined,
     status: status || undefined,
     created_by: createdBy || undefined,
     since: since ? `${since}T00:00:00Z` : undefined,
@@ -193,15 +198,44 @@ export function AdminRequestsPage() {
           onSinceChange={setSince}
           onUntilChange={setUntil}
         />
-        <Input
-          placeholder="Filter by model..."
+        <Select
           value={model}
-          onChange={(e) => {
-            setModel(e.target.value);
+          onValueChange={(v) => {
+            setModel(!v || v === "all" ? "" : v);
             setPage(1);
           }}
-          className="w-48"
-        />
+        >
+          <SelectTrigger className="w-56">
+            <SelectValue placeholder="All models" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All models</SelectItem>
+            {allModels.map((m) => (
+              <SelectItem key={m.name} value={m.name}>
+                {m.display_name || m.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={requestKind}
+          onValueChange={(v) => {
+            setRequestKind(!v || v === "all" ? "" : v);
+            setPage(1);
+          }}
+        >
+          <SelectTrigger className="w-56">
+            <SelectValue placeholder="All kinds" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All kinds</SelectItem>
+            {REQUEST_KINDS.map((k) => (
+              <SelectItem key={k.value} value={k.value}>
+                {k.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Select
           value={status}
           onValueChange={(v) => {

@@ -7,6 +7,7 @@ import { useHttpLog } from "@/api/httpLog";
 import { useKeys } from "@/api/keys";
 import { useMembersCompact } from "@/api/members";
 import { useProjectModels } from "@/api/models";
+import { REQUEST_KINDS } from "@/lib/requestKinds";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { StatusBadge } from "@/components/shared/StatusBadge";
@@ -37,22 +38,6 @@ function formatTokens(n: number): string {
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
 }
-
-// REQUEST_KINDS mirrors types.AllRequestKinds in
-// internal/types/request_kind.go. Hard-coded in the frontend so the
-// dropdown renders with zero network roundtrips; the enum changes
-// only when a new wire protocol is added, which is already a
-// coordinated backend+frontend change.
-const REQUEST_KINDS: ReadonlyArray<{ value: string; label: string }> = [
-  { value: "anthropic_messages", label: "Anthropic Messages" },
-  { value: "anthropic_count_tokens", label: "Anthropic Count Tokens" },
-  { value: "openai_chat_completions", label: "OpenAI Chat Completions" },
-  { value: "openai_responses", label: "OpenAI Responses" },
-  { value: "openai_responses_compact", label: "OpenAI Responses Compact" },
-  { value: "openai_images_generations", label: "OpenAI Images Generations" },
-  { value: "openai_images_edits", label: "OpenAI Images Edits" },
-  { value: "google_generate_content", label: "Google Generate Content" },
-] as const;
 
 function defaultSince() {
   const d = new Date();
