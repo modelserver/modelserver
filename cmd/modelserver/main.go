@@ -201,7 +201,7 @@ func main() {
 	// Initialize rate limiter.
 	rateLimiter := ratelimit.NewCompositeRateLimiter(st, logger)
 
-	executor := proxy.NewExecutor(router, st, coll, rateLimiter, catalog, logger, cfg.Server.MaxRequestBody, cfg.Images.MaxBodySize, cfg.ExtraUsage, httpLogger, cfg.HttpLog)
+	executor := proxy.NewExecutor(router, st, coll, rateLimiter, catalog, logger, cfg.Server.MaxRequestBody, cfg.Images.MaxBodySize, cfg.ExtraUsage, cfg.Server.StreamIdleTimeout, httpLogger, cfg.HttpLog)
 	proxyHandler := proxy.NewHandler(executor, router, st, coll, catalog, logger, cfg.Server.MaxRequestBody, cfg.Images.MaxBodySize, httpLogger)
 
 	// --- Proxy server ---

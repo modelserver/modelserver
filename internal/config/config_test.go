@@ -25,6 +25,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Server.MaxRequestBody != 52428800 {
 		t.Errorf("Server.MaxRequestBody = %d, want 52428800", cfg.Server.MaxRequestBody)
 	}
+	if cfg.Server.StreamIdleTimeout != 10*time.Minute {
+		t.Errorf("Server.StreamIdleTimeout = %v, want 10m", cfg.Server.StreamIdleTimeout)
+	}
 	if cfg.Images.MaxBodySize != 200<<20 {
 		t.Errorf("Images.MaxBodySize = %d, want %d", cfg.Images.MaxBodySize, int64(200<<20))
 	}
@@ -62,6 +65,7 @@ server:
   admin_addr: ":9091"
   request_timeout: 30s
   max_request_body: 1048576
+  stream_idle_timeout: 90s
 db:
   url: "postgres://user:pass@localhost/mydb"
 auth:
@@ -114,6 +118,9 @@ images:
 	}
 	if cfg.Server.MaxRequestBody != 1048576 {
 		t.Errorf("Server.MaxRequestBody = %d, want 1048576", cfg.Server.MaxRequestBody)
+	}
+	if cfg.Server.StreamIdleTimeout != 90*time.Second {
+		t.Errorf("Server.StreamIdleTimeout = %v, want 90s", cfg.Server.StreamIdleTimeout)
 	}
 	if cfg.DB.URL != "postgres://user:pass@localhost/mydb" {
 		t.Errorf("DB.URL = %q", cfg.DB.URL)

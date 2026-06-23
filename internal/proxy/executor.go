@@ -154,6 +154,10 @@ type Executor struct {
 	maxBodySize       int64
 	imagesMaxBodySize int64
 	extraUsageCfg     config.ExtraUsageConfig
+	// streamIdleTimeout bounds the gap between upstream SSE chunks for
+	// streaming responses (server.stream_idle_timeout). 0 disables the
+	// watchdog. See idleTimeoutReader for semantics.
+	streamIdleTimeout time.Duration
 	httpLogger        *httplog.Logger
 	httpLogCfg        config.HttpLogConfig
 }
@@ -169,6 +173,7 @@ func NewExecutor(
 	maxBodySize int64,
 	imagesMaxBodySize int64,
 	extraUsageCfg config.ExtraUsageConfig,
+	streamIdleTimeout time.Duration,
 	bl *httplog.Logger,
 	blCfg config.HttpLogConfig,
 ) *Executor {
@@ -194,6 +199,7 @@ func NewExecutor(
 		logger:            logger,
 		maxBodySize:       maxBodySize,
 		imagesMaxBodySize: imagesMaxBodySize,
+		streamIdleTimeout: streamIdleTimeout,
 		httpLogger:        bl,
 		httpLogCfg:        blCfg,
 	}
@@ -996,13 +1002,24 @@ func (e *Executor) commitStreamingResponse(
 
 	w.WriteHeader(resp.StatusCode)
 
+	// Wrap the upstream body in an idle-timeout watchdog BEFORE the metrics
+	// interceptor so the watchdog observes raw upstream bytes, not the
+	// post-parser stream. A long-silent upstream now surfaces a clear
+	// ErrStreamIdleTimeout to the client instead of letting the client's own
+	// watchdog (e.g. Claude Code's "Stream idle timeout - partial response
+	// received") fire while modelserver looks healthy.
+	upstreamBody := resp.Body
+	if e.streamIdleTimeout > 0 {
+		upstreamBody = newIdleTimeoutReader(resp.Body, e.streamIdleTimeout)
+	}
+
 	var wrapped io.ReadCloser
 	if isImageRequestKind(reqCtx.RequestKind) {
-		wrapped = newImageStreamInterceptor(resp.Body, startTime, func(usage ImageTokenUsage, usagePresent bool, ttftMs int64) {
+		wrapped = newImageStreamInterceptor(upstreamBody, startTime, func(usage ImageTokenUsage, usagePresent bool, ttftMs int64) {
 			e.completeImageStreamingRequest(candidate, reqCtx, usage, usagePresent, ttftMs, startTime, cancelFn, logger)
 		})
 	} else {
-		wrapped = transformer.WrapStream(resp.Body, startTime, func(metrics StreamMetrics) {
+		wrapped = transformer.WrapStream(upstreamBody, startTime, func(metrics StreamMetrics) {
 			e.completeStreamingRequest(candidate, reqCtx, metrics, startTime, cancelFn, logger)
 		})
 	}
@@ -1528,14 +1545,30 @@ func copyWithFlush(src io.Reader, dst io.Writer, flusher http.Flusher) (int64, e
 	}
 }
 
-// upstreamTimeout returns the appropriate timeout for the upstream.
-// This timeout covers the entire round-trip: dial, TLS, request send,
-// upstream processing, and response read. Non-streaming LLM calls can
-// take well over 30s for large outputs, so the default is 5 minutes
-// (same as streaming).
+// upstreamTimeout returns the per-attempt context deadline applied to the
+// outbound request. It covers dial, TLS, request send, and response read.
+//
+// For STREAMING requests it returns 0 (no deadline) because a single stream
+// can legitimately last 30+ minutes (long Opus reasoning, 1M-context tool
+// turns, long file writes) and a hard ceiling would chop the response
+// mid-flight — exactly the failure mode that surfaced as "Stream idle
+// timeout - partial response received" on the Claude Code client. Real
+// upstream stalls are caught by idleTimeoutReader (server.stream_idle_timeout)
+// instead, which only fires when the upstream truly goes silent between
+// chunks.
+//
+// For NON-STREAMING requests the legacy 5-minute round-trip ceiling stays,
+// because there is no per-chunk signal to watch and large outputs are still
+// bounded by the upstream's own response time.
+//
+// A per-upstream upstream.ReadTimeout overrides both modes for operators
+// who want a stricter ceiling on a specific upstream.
 func upstreamTimeout(upstream *types.Upstream, isStream bool) time.Duration {
 	if upstream.ReadTimeout > 0 {
 		return upstream.ReadTimeout
+	}
+	if isStream {
+		return 0
 	}
 	return 5 * time.Minute
 }

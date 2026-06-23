@@ -31,6 +31,16 @@ type ServerConfig struct {
 	AdminAddr      string        `yaml:"admin_addr"       mapstructure:"admin_addr"`
 	RequestTimeout time.Duration `yaml:"request_timeout"  mapstructure:"request_timeout"`
 	MaxRequestBody int64         `yaml:"max_request_body" mapstructure:"max_request_body"`
+	// StreamIdleTimeout bounds the idle gap between upstream SSE chunks for
+	// streaming requests. The timer resets on every byte received from the
+	// upstream, so total stream duration is unbounded — only true silence
+	// (e.g. upstream hung mid-generation) triggers it. Default 10m is set
+	// well above any healthy LLM gap (long Opus reasoning, large 1M-context
+	// tool turns) so this only fires on actual upstream failure, surfacing
+	// the underlying stall as an error instead of the client (Claude Code)
+	// silently hitting its own watchdog and showing
+	// "Stream idle timeout - partial response received".
+	StreamIdleTimeout time.Duration `yaml:"stream_idle_timeout" mapstructure:"stream_idle_timeout"`
 }
 
 // DBConfig holds database connection settings.
@@ -207,6 +217,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.admin_addr", ":8081")
 	v.SetDefault("server.request_timeout", 600*time.Second)
 	v.SetDefault("server.max_request_body", 52428800)
+	v.SetDefault("server.stream_idle_timeout", 10*time.Minute)
 
 	// DB
 	_ = v.BindEnv("db.url")
