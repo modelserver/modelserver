@@ -21,9 +21,10 @@ func handleListRequests(st *store.Store) http.HandlerFunc {
 		q := r.URL.Query()
 
 		filters := store.RequestFilters{
-			Model:    q.Get("model"),
-			Status:   q.Get("status"),
-			APIKeyID: q.Get("api_key_id"),
+			Model:       q.Get("model"),
+			RequestKind: q.Get("request_kind"),
+			Status:      q.Get("status"),
+			APIKeyID:    q.Get("api_key_id"),
 		}
 
 		// Developers can only see their own requests.
@@ -69,9 +70,10 @@ func handleListAllRequests(st *store.Store) http.HandlerFunc {
 		q := r.URL.Query()
 
 		filters := store.RequestFilters{
-			Model:     q.Get("model"),
-			Status:    q.Get("status"),
-			CreatedBy: q.Get("created_by"),
+			Model:       q.Get("model"),
+			RequestKind: q.Get("request_kind"),
+			Status:      q.Get("status"),
+			CreatedBy:   q.Get("created_by"),
 		}
 		if since := q.Get("since"); since != "" {
 			if t, err := time.Parse(time.RFC3339, since); err == nil {

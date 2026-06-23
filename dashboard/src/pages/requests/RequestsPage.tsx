@@ -6,13 +6,13 @@ import { useRequests, type RequestFilters } from "@/api/requests";
 import { useHttpLog } from "@/api/httpLog";
 import { useKeys } from "@/api/keys";
 import { useMembersCompact } from "@/api/members";
+import { useProjectModels } from "@/api/models";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { UserCell } from "@/components/shared/UserCell";
 import { ValidationBadge } from "@/components/shared/ValidationBadge";
 import { DateRangePicker } from "@/components/shared/DateRangePicker";
-import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Select,
@@ -38,6 +38,22 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
+// REQUEST_KINDS mirrors types.AllRequestKinds in
+// internal/types/request_kind.go. Hard-coded in the frontend so the
+// dropdown renders with zero network roundtrips; the enum changes
+// only when a new wire protocol is added, which is already a
+// coordinated backend+frontend change.
+const REQUEST_KINDS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "anthropic_messages", label: "Anthropic Messages" },
+  { value: "anthropic_count_tokens", label: "Anthropic Count Tokens" },
+  { value: "openai_chat_completions", label: "OpenAI Chat Completions" },
+  { value: "openai_responses", label: "OpenAI Responses" },
+  { value: "openai_responses_compact", label: "OpenAI Responses Compact" },
+  { value: "openai_images_generations", label: "OpenAI Images Generations" },
+  { value: "openai_images_edits", label: "OpenAI Images Edits" },
+  { value: "google_generate_content", label: "Google Generate Content" },
+] as const;
+
 function defaultSince() {
   const d = new Date();
   d.setDate(d.getDate() - 7);
@@ -52,6 +68,7 @@ export function RequestsPage() {
   const projectId = useCurrentProject();
   const [page, setPage] = useState(1);
   const [model, setModel] = useState("");
+  const [requestKind, setRequestKind] = useState("");
   const [status, setStatus] = useState("");
   const [apiKeyId, setApiKeyId] = useState("");
   const [since, setSince] = useState(defaultSince);
@@ -72,10 +89,14 @@ export function RequestsPage() {
   const { data: membersData } = useMembersCompact(projectId);
   const members = membersData?.data ?? [];
 
+  const { data: projectModelsData } = useProjectModels(projectId);
+  const projectModels = projectModelsData?.data ?? [];
+
   const filters: RequestFilters = {
     page,
     per_page: 20,
     model: model || undefined,
+    request_kind: requestKind || undefined,
     status: status || undefined,
     api_key_id: apiKeyId || undefined,
     created_by: createdBy || undefined,
@@ -216,15 +237,44 @@ export function RequestsPage() {
           onSinceChange={setSince}
           onUntilChange={setUntil}
         />
-        <Input
-          placeholder="Filter by model..."
+        <Select
           value={model}
-          onChange={(e) => {
-            setModel(e.target.value);
+          onValueChange={(v) => {
+            setModel(!v || v === "all" ? "" : v);
             setPage(1);
           }}
-          className="w-48"
-        />
+        >
+          <SelectTrigger className="w-56">
+            <SelectValue placeholder="All models" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All models</SelectItem>
+            {projectModels.map((m) => (
+              <SelectItem key={m.name} value={m.name}>
+                {m.display_name || m.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={requestKind}
+          onValueChange={(v) => {
+            setRequestKind(!v || v === "all" ? "" : v);
+            setPage(1);
+          }}
+        >
+          <SelectTrigger className="w-56">
+            <SelectValue placeholder="All kinds" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All kinds</SelectItem>
+            {REQUEST_KINDS.map((k) => (
+              <SelectItem key={k.value} value={k.value}>
+                {k.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Select
           value={status}
           onValueChange={(v) => {

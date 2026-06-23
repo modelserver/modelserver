@@ -161,12 +161,13 @@ func (s *Store) ListRequests(projectID string, p types.PaginationParams, filters
 
 // RequestFilters holds optional filters for listing requests.
 type RequestFilters struct {
-	Model     string
-	Status    string
-	APIKeyID  string
-	CreatedBy string
-	Since     time.Time
-	Until     time.Time
+	Model       string
+	RequestKind string
+	Status      string
+	APIKeyID    string
+	CreatedBy   string
+	Since       time.Time
+	Until       time.Time
 }
 
 func buildRequestFilters(projectID string, f RequestFilters) (string, []interface{}, int) {
@@ -177,6 +178,11 @@ func buildRequestFilters(projectID string, f RequestFilters) (string, []interfac
 	if f.Model != "" {
 		conditions = append(conditions, fmt.Sprintf("r.model = $%d", n))
 		args = append(args, f.Model)
+		n++
+	}
+	if f.RequestKind != "" {
+		conditions = append(conditions, fmt.Sprintf("r.request_kind = $%d", n))
+		args = append(args, f.RequestKind)
 		n++
 	}
 	if f.Status != "" {
@@ -272,6 +278,11 @@ func buildGlobalRequestFilters(f RequestFilters) (string, []interface{}, int) {
 	if f.Model != "" {
 		conditions = append(conditions, fmt.Sprintf("r.model = $%d", n))
 		args = append(args, f.Model)
+		n++
+	}
+	if f.RequestKind != "" {
+		conditions = append(conditions, fmt.Sprintf("r.request_kind = $%d", n))
+		args = append(args, f.RequestKind)
 		n++
 	}
 	if f.Status != "" {
