@@ -17,6 +17,11 @@ type StreamMetrics struct {
 	CacheCreationTokens int64
 	CacheReadTokens     int64
 	TTFTMs              int64
+	// InterruptErr is set by the executor when copyWithFlush returned
+	// an error (downstream write failed, upstream EOF mid-stream, etc).
+	// nil on clean completion. Read by completeStreamingRequest to flip
+	// the request row from success→error and record the cause.
+	InterruptErr error
 }
 
 // ResponseMetrics is the unified metric output from non-streaming response parsing.
