@@ -201,7 +201,12 @@ func main() {
 	// Initialize rate limiter.
 	rateLimiter := ratelimit.NewCompositeRateLimiter(st, logger)
 
-	executor := proxy.NewExecutor(router, st, coll, rateLimiter, catalog, logger, cfg.Server.MaxRequestBody, cfg.Images.MaxBodySize, cfg.ExtraUsage, cfg.Server.StreamIdleTimeout, httpLogger, cfg.HttpLog)
+	executor := proxy.NewExecutor(router, st, coll, rateLimiter, catalog, logger, cfg.Server.MaxRequestBody, cfg.Images.MaxBodySize, cfg.ExtraUsage, cfg.Server.StreamIdleTimeout, cfg.Server.SSEKeepaliveInterval, httpLogger, cfg.HttpLog)
+	if cfg.Server.SSEKeepaliveInterval > 0 && cfg.Server.StreamIdleTimeout > 0 && cfg.Server.SSEKeepaliveInterval >= cfg.Server.StreamIdleTimeout {
+		logger.Warn("server.sse_keepalive_interval >= server.stream_idle_timeout — keepalive may not prevent idle-timeout trips",
+			"keepalive", cfg.Server.SSEKeepaliveInterval,
+			"idle_timeout", cfg.Server.StreamIdleTimeout)
+	}
 	proxyHandler := proxy.NewHandler(executor, router, st, coll, catalog, logger, cfg.Server.MaxRequestBody, cfg.Images.MaxBodySize, httpLogger)
 
 	// --- Proxy server ---

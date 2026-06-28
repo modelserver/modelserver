@@ -73,11 +73,11 @@ type RequestContext struct {
 	// Execute() from the inbound r.Context so the deferred streaming callback
 	// (which fires after r is gone) can still settle. The remaining fields
 	// are outputs populated by settleExtraUsage.
-	HasExtraUsageCtx             bool
-	ExtraUsageCtx                ExtraUsageContext
-	IsExtraUsage                 bool
-	ExtraUsageCostCredits        int64 // was ExtraUsageCostFen
-	ExtraUsageReason             string
+	HasExtraUsageCtx              bool
+	ExtraUsageCtx                 ExtraUsageContext
+	IsExtraUsage                  bool
+	ExtraUsageCostCredits         int64 // was ExtraUsageCostFen
+	ExtraUsageReason              string
 	ExtraUsageBalanceAfterCredits int64 // was ExtraUsageBalanceAfterFen
 
 	// HTTP logging state. HttpLogEnabled is set by the handler based on
@@ -158,8 +158,12 @@ type Executor struct {
 	// streaming responses (server.stream_idle_timeout). 0 disables the
 	// watchdog. See idleTimeoutReader for semantics.
 	streamIdleTimeout time.Duration
-	httpLogger        *httplog.Logger
-	httpLogCfg        config.HttpLogConfig
+	// sseKeepaliveInterval is the gap of downstream silence after which
+	// a ":\n\n" SSE comment is injected to reset client stall timers.
+	// 0 disables. See keepaliveWriter for semantics.
+	sseKeepaliveInterval time.Duration
+	httpLogger           *httplog.Logger
+	httpLogCfg           config.HttpLogConfig
 }
 
 // NewExecutor creates a new Executor wired to the given Router and dependencies.
@@ -174,6 +178,7 @@ func NewExecutor(
 	imagesMaxBodySize int64,
 	extraUsageCfg config.ExtraUsageConfig,
 	streamIdleTimeout time.Duration,
+	sseKeepaliveInterval time.Duration,
 	bl *httplog.Logger,
 	blCfg config.HttpLogConfig,
 ) *Executor {
@@ -193,15 +198,16 @@ func NewExecutor(
 				DisableCompression: true,
 			},
 		},
-		store:             st,
-		collector:         coll,
-		rateLimiter:       limiter,
-		logger:            logger,
-		maxBodySize:       maxBodySize,
-		imagesMaxBodySize: imagesMaxBodySize,
-		streamIdleTimeout: streamIdleTimeout,
-		httpLogger:        bl,
-		httpLogCfg:        blCfg,
+		store:                st,
+		collector:            coll,
+		rateLimiter:          limiter,
+		logger:               logger,
+		maxBodySize:          maxBodySize,
+		imagesMaxBodySize:    imagesMaxBodySize,
+		streamIdleTimeout:    streamIdleTimeout,
+		sseKeepaliveInterval: sseKeepaliveInterval,
+		httpLogger:           bl,
+		httpLogCfg:           blCfg,
 	}
 }
 
@@ -1013,13 +1019,34 @@ func (e *Executor) commitStreamingResponse(
 		upstreamBody = newIdleTimeoutReader(resp.Body, e.streamIdleTimeout)
 	}
 
+	// interruptErrPtr is set by the stream-flush block below when
+	// copyWithFlush fails (broken pipe, upstream RST mid-stream). The
+	// WrapStream callback closes over this pointer and reads it when
+	// the interceptor's finish() runs.
+	//
+	// Subtle: finish() can fire from two paths — streamReader.Close()
+	// after copyWithFlush returns (the broken-pipe path we care about,
+	// where *interruptErrPtr is set before Close runs), OR from inside
+	// the interceptor's Read() when upstream returns io.EOF (the clean
+	// completion path, where *interruptErrPtr is still nil but copyErr
+	// is also nil so there is nothing to publish). Both branches —
+	// image and non-image — close over the pointer the same way.
+	//
+	// Edge case not handled: if a single upstream Read returns
+	// (n>0, io.EOF) and the subsequent dst.Write fails, finish() fires
+	// from Read with InterruptErr=nil before the flush block sets the
+	// pointer. Tracked as follow-up SK1.
+	var interruptErr error
+	interruptErrPtr := &interruptErr
+
 	var wrapped io.ReadCloser
 	if isImageRequestKind(reqCtx.RequestKind) {
 		wrapped = newImageStreamInterceptor(upstreamBody, startTime, func(usage ImageTokenUsage, usagePresent bool, ttftMs int64) {
-			e.completeImageStreamingRequest(candidate, reqCtx, usage, usagePresent, ttftMs, startTime, cancelFn, logger)
+			e.completeImageStreamingRequest(candidate, reqCtx, usage, usagePresent, *interruptErrPtr, ttftMs, startTime, cancelFn, logger)
 		})
 	} else {
 		wrapped = transformer.WrapStream(upstreamBody, startTime, func(metrics StreamMetrics) {
+			metrics.InterruptErr = *interruptErrPtr
 			e.completeStreamingRequest(candidate, reqCtx, metrics, startTime, cancelFn, logger)
 		})
 	}
@@ -1048,10 +1075,16 @@ func (e *Executor) commitStreamingResponse(
 		})
 	}
 
-	// Flush streaming data to the client.
-	flusher, _ := w.(http.Flusher)
+	// Wrap w in a keepaliveWriter so a ":\n\n" SSE comment is injected
+	// during upstream silence windows, preventing client stall detection
+	// (Claude Code et al.) and middlebox idle ceilings from cutting long
+	// reasoning turns mid-stream. The wrapper itself implements
+	// http.Flusher and serialises heartbeats vs data writes through a
+	// single mutex, so SSE events are never torn.
+	kw := newKeepaliveWriter(w, e.sseKeepaliveInterval)
+	defer kw.Close()
 
-	n, copyErr := copyWithFlush(streamReader, w, flusher)
+	n, copyErr := copyWithFlush(streamReader, kw, kw)
 	if copyErr != nil {
 		logger.Warn("stream_interrupted",
 			"request_id", reqCtx.RequestID,
@@ -1060,6 +1093,12 @@ func (e *Executor) commitStreamingResponse(
 			"error", copyErr.Error(),
 		)
 		e.router.Metrics().RecordError(candidate.Upstream.ID)
+		// Publish the error so completeStreamingRequest can flip the
+		// request row from success→error and record the cause. The
+		// callback registered with transformer.WrapStream above closes
+		// over `interruptErrPtr`; the interceptor's finish() runs from
+		// streamReader.Close() below and will read it.
+		*interruptErrPtr = copyErr
 	}
 
 	streamReader.Close()
@@ -1109,7 +1148,7 @@ func (e *Executor) completeStreamingRequest(
 		RequestKind:           reqCtx.RequestKind,
 		Model:                 model,
 		Streaming:             true,
-		Status:                types.RequestStatusSuccess,
+		Status:                "", // set below from metrics
 		InputTokens:           metrics.InputTokens,
 		OutputTokens:          metrics.OutputTokens,
 		CacheCreationTokens:   metrics.CacheCreationTokens,
@@ -1122,6 +1161,9 @@ func (e *Executor) completeStreamingRequest(
 		ExtraUsageCostCredits: reqCtx.ExtraUsageCostCredits,
 		ExtraUsageReason:      reqCtx.ExtraUsageReason,
 	}
+	status, errMsg := requestStatusFromMetrics(metrics)
+	req.Status = status
+	req.ErrorMessage = errMsg
 	if reqCtx.RequestID != "" {
 		go func() {
 			if err := e.store.CompleteRequest(reqCtx.RequestID, &req); err != nil {
@@ -1134,7 +1176,7 @@ func (e *Executor) completeStreamingRequest(
 
 	logger.Info("request completed",
 		"msg_id", metrics.MsgID,
-		"status", types.RequestStatusSuccess,
+		"status", status,
 		"streaming", true,
 		"input_tokens", metrics.InputTokens,
 		"output_tokens", metrics.OutputTokens,
@@ -1155,6 +1197,7 @@ func (e *Executor) completeImageStreamingRequest(
 	reqCtx *RequestContext,
 	usage ImageTokenUsage,
 	usagePresent bool,
+	interruptErr error,
 	ttftMs int64,
 	startTime time.Time,
 	cancelFn context.CancelFunc,
@@ -1193,7 +1236,7 @@ func (e *Executor) completeImageStreamingRequest(
 		RequestKind:           reqCtx.RequestKind,
 		Model:                 model,
 		Streaming:             true,
-		Status:                types.RequestStatusSuccess,
+		Status:                "", // set below from interruptErr
 		InputTokens:           tokenUsage.InputTokens,
 		OutputTokens:          tokenUsage.OutputTokens,
 		CacheCreationTokens:   tokenUsage.CacheCreationTokens,
@@ -1205,6 +1248,12 @@ func (e *Executor) completeImageStreamingRequest(
 		IsExtraUsage:          reqCtx.IsExtraUsage,
 		ExtraUsageCostCredits: reqCtx.ExtraUsageCostCredits,
 		ExtraUsageReason:      reqCtx.ExtraUsageReason,
+	}
+	if interruptErr != nil {
+		req.Status = types.RequestStatusError
+		req.ErrorMessage = "stream_interrupted: " + interruptErr.Error()
+	} else {
+		req.Status = types.RequestStatusSuccess
 	}
 	if usagePresent {
 		req.Metadata = imageUsageMetadata(usage)
@@ -1220,7 +1269,7 @@ func (e *Executor) completeImageStreamingRequest(
 	}
 
 	logger.Info("request completed",
-		"status", types.RequestStatusSuccess,
+		"status", req.Status,
 		"streaming", true,
 		"input_tokens", tokenUsage.InputTokens,
 		"output_tokens", tokenUsage.OutputTokens,
@@ -1543,6 +1592,18 @@ func copyWithFlush(src io.Reader, dst io.Writer, flusher http.Flusher) (int64, e
 			return total, readErr
 		}
 	}
+}
+
+// requestStatusFromMetrics maps a StreamMetrics result to the (status,
+// error_message) pair to persist on the requests row. Interrupted streams
+// (copyWithFlush returned an error mid-flight) become Status=error with
+// the underlying error recorded so dashboards and billing see the truth
+// instead of a phantom success.
+func requestStatusFromMetrics(m StreamMetrics) (string, string) {
+	if m.InterruptErr != nil {
+		return types.RequestStatusError, "stream_interrupted: " + m.InterruptErr.Error()
+	}
+	return types.RequestStatusSuccess, ""
 }
 
 // upstreamTimeout returns the per-attempt context deadline applied to the

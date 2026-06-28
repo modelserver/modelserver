@@ -13,6 +13,16 @@ server:
   request_timeout: 600s
   # Maximum accepted request body size in bytes (default 50 MB).
   max_request_body: 52428800
+  # Idle gap between upstream SSE chunks (streaming requests) that triggers
+  # the upstream-side watchdog. Default 10m is well above any healthy LLM
+  # gap; this only fires on actual upstream silence.
+  stream_idle_timeout: 10m
+  # Idle gap on downstream writes after which modelserver injects an SSE
+  # comment (":\n\n") to keep the client's stall detector and any
+  # middlebox idle timer from cutting long-reasoning streams. The timer
+  # resets on every successful downstream Write, so a busy stream emits
+  # no heartbeats. Default 15s; set to 0 to disable.
+  sse_keepalive_interval: 15s
 
 db:
   # REQUIRED — PostgreSQL connection string.
