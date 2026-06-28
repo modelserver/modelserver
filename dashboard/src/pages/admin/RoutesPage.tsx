@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useSearchParams } from "react-router";
 import {
   useRoutingRoutes,
   useCreateRoutingRoute,
@@ -6,8 +7,11 @@ import {
   useDeleteRoutingRoute,
   useUpstreamGroups,
   useRequestKinds,
+  useRoutingRoute,
 } from "@/api/upstreams";
 import { useAllProjects } from "@/api/projects";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { RoutesMatrixView } from "./RoutesMatrixView";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { Pagination } from "@/components/shared/Pagination";
@@ -189,6 +193,37 @@ export function RoutesPage() {
 
   const isSaving = createRoute.isPending || updateRoute.isPending;
 
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeView = searchParams.get("view") === "matrix" ? "matrix" : "list";
+
+  // Cold-cache fallback for edit-from-matrix: when handleEditRoute is called
+  // with a route id not in the list query, fetch it on demand.
+  const [pendingFetchId, setPendingFetchId] = useState<string | null>(null);
+  const pendingRouteQuery = useRoutingRoute(pendingFetchId);
+
+  // When the cold-cache fetch completes, populate the edit form just like
+  // openEdit() does for list-cached routes.
+  useEffect(() => {
+    if (!pendingFetchId) return;
+    if (pendingRouteQuery.data?.data) {
+      openEdit(pendingRouteQuery.data.data);
+      setPendingFetchId(null);
+    } else if (pendingRouteQuery.error) {
+      toast.error("Route no longer exists");
+      setPendingFetchId(null);
+    }
+  }, [pendingFetchId, pendingRouteQuery.data, pendingRouteQuery.error]);
+
+  // Shared edit-route handler: try list cache, then fall back to fetch.
+  const handleEditRoute = (routeId: string) => {
+    const cached = routes.find((r) => r.id === routeId);
+    if (cached) {
+      openEdit(cached);
+    } else {
+      setPendingFetchId(routeId);
+    }
+  };
+
   const columns: Column<RoutingRoute>[] = [
     {
       header: "ID",
@@ -264,7 +299,7 @@ export function RoutesPage() {
             <MoreHorizontal className="h-4 w-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => openEdit(r)}>
+            <DropdownMenuItem onClick={() => handleEditRoute(r.id)}>
               <Pencil className="mr-2 h-4 w-4" />
               Edit
             </DropdownMenuItem>
@@ -295,35 +330,62 @@ export function RoutesPage() {
         }
       />
 
-      <Card>
-        <CardContent className="p-0">
-          {isLoading ? (
-            <div className="flex items-center gap-2 p-6 text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Loading...
-            </div>
-          ) : (
-            <DataTable
-              columns={columns}
-              data={routes}
-              keyFn={(r) => r.id}
-              emptyMessage="No routes configured — requests will fall back to default upstream group selection"
+      <Tabs
+        value={activeView}
+        onValueChange={(v) => {
+          const next = new URLSearchParams(searchParams);
+          if (v === "matrix") {
+            next.set("view", "matrix");
+          } else {
+            next.delete("view");
+          }
+          setSearchParams(next, { replace: true });
+        }}
+      >
+        <TabsList>
+          <TabsTrigger value="list">List</TabsTrigger>
+          <TabsTrigger value="matrix">Matrix</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="list" className="space-y-4">
+          <Card>
+            <CardContent className="p-0">
+              {isLoading ? (
+                <div className="flex items-center gap-2 p-6 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading...
+                </div>
+              ) : (
+                <DataTable
+                  columns={columns}
+                  data={routes}
+                  keyFn={(r) => r.id}
+                  emptyMessage="No routes configured — requests will fall back to default upstream group selection"
+                />
+              )}
+            </CardContent>
+          </Card>
+
+          {meta && meta.total > 0 && (
+            <Pagination
+              page={page}
+              totalPages={meta.total_pages}
+              total={meta.total}
+              perPage={meta.per_page}
+              onPageChange={setPage}
             />
           )}
-        </CardContent>
-      </Card>
+        </TabsContent>
 
-      {meta && meta.total > 0 && (
-        <Pagination
-          page={page}
-          totalPages={meta.total_pages}
-          total={meta.total}
-          perPage={meta.per_page}
-          onPageChange={setPage}
-        />
-      )}
+        <TabsContent value="matrix">
+          <RoutesMatrixView onEditRoute={handleEditRoute} />
+        </TabsContent>
+      </Tabs>
 
-      {/* Create Dialog */}
+      {/* Edit and Delete Dialogs render at page level (outside Tabs) so they
+          are reachable from either tab without re-mounting. */}
+
+      {/* Create / Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
