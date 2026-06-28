@@ -456,3 +456,120 @@ func TestMatch_RespectsResponsesCompactKind(t *testing.T) {
 		}
 	})
 }
+
+func TestRouter_MatrixGlobal(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	upstreams := []types.Upstream{
+		{ID: "up-a", Provider: types.ProviderAnthropic, Status: types.UpstreamStatusActive, Weight: 1, SupportedModels: []string{"claude-sonnet"}},
+		{ID: "up-b", Provider: types.ProviderOpenAI, Status: types.UpstreamStatusActive, Weight: 1, SupportedModels: []string{"gpt-5"}},
+	}
+	groups := []store.UpstreamGroupWithMembers{
+		{
+			UpstreamGroup: types.UpstreamGroup{ID: "grp-anth", Name: "anthropic-pool", LBPolicy: types.LBPolicyWeightedRandom, Status: "active"},
+			Members: []store.UpstreamGroupMemberDetail{
+				{UpstreamGroupMember: types.UpstreamGroupMember{UpstreamGroupID: "grp-anth", UpstreamID: "up-a"}},
+			},
+		},
+		{
+			UpstreamGroup: types.UpstreamGroup{ID: "grp-oai", Name: "openai-pool", LBPolicy: types.LBPolicyWeightedRandom, Status: "active"},
+			Members: []store.UpstreamGroupMemberDetail{
+				{UpstreamGroupMember: types.UpstreamGroupMember{UpstreamGroupID: "grp-oai", UpstreamID: "up-b"}},
+			},
+		},
+	}
+	routes := []types.Route{
+		// High-priority global route for claude-sonnet on anthropic_messages.
+		{ID: "rt-hi", ProjectID: "", ModelNames: []string{"claude-sonnet"}, RequestKinds: []string{types.KindAnthropicMessages}, UpstreamGroupID: "grp-anth", MatchPriority: 100, Status: "active"},
+		// Lower-priority global route that also matches claude-sonnet on anthropic_messages (should lose).
+		{ID: "rt-lo", ProjectID: "", ModelNames: []string{"claude-sonnet"}, RequestKinds: []string{types.KindAnthropicMessages}, UpstreamGroupID: "grp-oai", MatchPriority: 1, Status: "active"},
+		// Disabled global route — must be ignored.
+		{ID: "rt-off", ProjectID: "", ModelNames: []string{"claude-sonnet"}, RequestKinds: []string{types.KindAnthropicCountTokens}, UpstreamGroupID: "grp-anth", MatchPriority: 1, Status: "disabled"},
+		// Project-scoped route — must NOT appear in the global matrix.
+		{ID: "rt-proj", ProjectID: "proj-1", ModelNames: []string{"claude-sonnet"}, RequestKinds: []string{types.KindAnthropicMessages}, UpstreamGroupID: "grp-anth", MatchPriority: 50, Status: "active"},
+		// Multi-kind, multi-model global route for gpt-5.
+		{ID: "rt-multi", ProjectID: "", ModelNames: []string{"gpt-5"}, RequestKinds: []string{types.KindOpenAIChatCompletions, types.KindOpenAIResponses}, UpstreamGroupID: "grp-oai", MatchPriority: 5, Status: "active"},
+		// Route referencing a missing group — must be silently skipped (matches Match behavior).
+		{ID: "rt-bad", ProjectID: "", ModelNames: []string{"gpt-5"}, RequestKinds: []string{types.KindOpenAIResponsesCompact}, UpstreamGroupID: "grp-missing", MatchPriority: 1, Status: "active"},
+		// Lower-priority valid fallback. When rt-bad's group is missing,
+		// MatrixGlobal must mirror Match and keep walking — this route wins.
+		{ID: "rt-fallback", ProjectID: "", ModelNames: []string{"gpt-5"}, RequestKinds: []string{types.KindOpenAIResponsesCompact}, UpstreamGroupID: "grp-oai", MatchPriority: 0, Status: "active"},
+	}
+
+	r := NewRouter(upstreams, groups, routes, []byte{}, logger, time.Minute, nil, nil, nil)
+
+	cells := r.MatrixGlobal([]string{"claude-sonnet", "gpt-5"})
+
+	byKey := map[string]MatrixCell{}
+	for _, c := range cells {
+		byKey[c.Model+"::"+c.Kind] = c
+	}
+
+	// High-priority winner.
+	got, ok := byKey["claude-sonnet::"+types.KindAnthropicMessages]
+	if !ok {
+		t.Fatalf("expected cell for (claude-sonnet, anthropic_messages)")
+	}
+	if got.UpstreamGroupID != "grp-anth" || got.RouteID != "rt-hi" || got.MatchPriority != 100 {
+		t.Errorf("winner = %+v, want grp-anth/rt-hi/100", got)
+	}
+
+	// Disabled route must produce no cell.
+	if _, ok := byKey["claude-sonnet::"+types.KindAnthropicCountTokens]; ok {
+		t.Errorf("disabled route produced a cell")
+	}
+
+	// Project-scoped route must produce no cell (project_id == "" filter).
+	// (Only check we don't accidentally pick rt-proj — the global rt-hi already wins anyway.)
+	if got.RouteID == "rt-proj" {
+		t.Errorf("project-scoped route appeared in global matrix")
+	}
+
+	// Multi-kind route produces two cells.
+	if _, ok := byKey["gpt-5::"+types.KindOpenAIChatCompletions]; !ok {
+		t.Errorf("expected cell for (gpt-5, openai_chat_completions)")
+	}
+	if _, ok := byKey["gpt-5::"+types.KindOpenAIResponses]; !ok {
+		t.Errorf("expected cell for (gpt-5, openai_responses)")
+	}
+
+	// Route pointing at a missing group must be skipped, and search MUST
+	// continue down the priority list — rt-fallback should win.
+	gotFallback, ok := byKey["gpt-5::"+types.KindOpenAIResponsesCompact]
+	if !ok {
+		t.Fatalf("expected fallback cell for (gpt-5, openai_responses_compact)")
+	}
+	if gotFallback.RouteID != "rt-fallback" || gotFallback.UpstreamGroupID != "grp-oai" {
+		t.Errorf("fallback = %+v, want rt-fallback/grp-oai", gotFallback)
+	}
+
+	// Unrouted pair is absent.
+	if _, ok := byKey["gpt-5::"+types.KindAnthropicMessages]; ok {
+		t.Errorf("unrouted pair produced a cell")
+	}
+}
+
+func TestRouter_SnapshotGroupNames(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	upstreams := []types.Upstream{
+		{ID: "up-a", Provider: types.ProviderAnthropic, Status: types.UpstreamStatusActive, Weight: 1, SupportedModels: []string{"x"}},
+	}
+	groups := []store.UpstreamGroupWithMembers{{
+		UpstreamGroup: types.UpstreamGroup{ID: "grp-1", Name: "alpha", LBPolicy: types.LBPolicyWeightedRandom, Status: "active"},
+		Members: []store.UpstreamGroupMemberDetail{
+			{UpstreamGroupMember: types.UpstreamGroupMember{UpstreamGroupID: "grp-1", UpstreamID: "up-a"}},
+		},
+	}}
+	r := NewRouter(upstreams, groups, nil, []byte{}, logger, time.Minute, nil, nil, nil)
+
+	got := r.SnapshotGroupNames()
+	if got["grp-1"] != "alpha" {
+		t.Errorf("SnapshotGroupNames[grp-1] = %q, want %q", got["grp-1"], "alpha")
+	}
+
+	// Mutating the returned map must not affect the router.
+	got["grp-1"] = "mutated"
+	if again := r.SnapshotGroupNames(); again["grp-1"] != "alpha" {
+		t.Errorf("returned map shared with router internals: %q", again["grp-1"])
+	}
+}

@@ -443,6 +443,84 @@ func (r *Router) resultWithPrimary(primary *types.Upstream, candidates []lb.Cand
 	return result
 }
 
+// MatrixCell is one winning (model, kind) -> upstream group resolution,
+// computed by MatrixGlobal. It is the same logical answer Match returns
+// for a (projectID="", model, kind) tuple, but emitted as data so the
+// admin UI can render the full matrix in one fetch.
+type MatrixCell struct {
+	Model           string
+	Kind            string
+	UpstreamGroupID string
+	RouteID         string
+	MatchPriority   int
+}
+
+// MatrixGlobal walks every (model, kind) pair over the supplied models and
+// the full AllRequestKinds set, returning one MatrixCell for each pair
+// that resolves under the global-route branch of Match. Unrouted pairs are
+// omitted (sparse result).
+//
+// Rules MUST mirror Match exactly:
+//   - routes are walked in priority-descending order (r.routes is pre-sorted)
+//   - routes with Status != "active" are skipped
+//   - routes with ProjectID != "" are skipped (global view)
+//   - the first matching route wins
+//   - if the winning route's UpstreamGroupID is not present in r.groups,
+//     the pair is silently dropped (matches Match's "group missing" branch)
+func (r *Router) MatrixGlobal(models []string) []MatrixCell {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if len(models) == 0 {
+		return nil
+	}
+
+	out := make([]MatrixCell, 0, len(models)*len(types.AllRequestKinds))
+	for _, model := range models {
+		for _, kind := range types.AllRequestKinds {
+			for _, route := range r.routes {
+				if route.Status != "active" {
+					continue
+				}
+				if route.ProjectID != "" {
+					continue
+				}
+				if !slices.Contains(route.ModelNames, model) {
+					continue
+				}
+				if !slices.Contains(route.RequestKinds, kind) {
+					continue
+				}
+				if _, ok := r.groups[route.UpstreamGroupID]; !ok {
+					// Mirror Match: skip this route and keep looking down the priority list.
+					continue
+				}
+				out = append(out, MatrixCell{
+					Model:           model,
+					Kind:            kind,
+					UpstreamGroupID: route.UpstreamGroupID,
+					RouteID:         route.ID,
+					MatchPriority:   route.MatchPriority,
+				})
+				break
+			}
+		}
+	}
+	return out
+}
+
+// SnapshotGroupNames returns a fresh map of group ID -> group name. Caller
+// owns the returned map and may mutate it without affecting the router.
+func (r *Router) SnapshotGroupNames() map[string]string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make(map[string]string, len(r.groups))
+	for id, g := range r.groups {
+		out[id] = g.group.Name
+	}
+	return out
+}
+
 // BindSession stores a (session, model)-to-upstream binding for stickiness.
 func (r *Router) BindSession(sessionID, model, upstreamID string) {
 	if sessionID == "" || model == "" {
