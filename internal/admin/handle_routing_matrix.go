@@ -57,7 +57,7 @@ func handleRoutingMatrixWithLister(
 		kinds := append([]string(nil), types.AllRequestKinds...)
 		sort.Strings(kinds)
 
-		cells := router.MatrixGlobal(names)
+		cells := router.MatrixGlobal(names, "")
 		groupNames := router.SnapshotGroupNames()
 
 		out := matrixResponse{

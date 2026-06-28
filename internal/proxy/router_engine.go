@@ -214,11 +214,11 @@ func (r *Router) buildMaps(
 }
 
 // matchesGlobalRoute reports whether the route is a candidate for the
-// given (model, kind) under the global-route branch. Both Match and
-// MatrixGlobal must use this so they cannot drift apart. If you teach
-// this function to evaluate route.Conditions or any new criterion,
-// both consumers benefit automatically.
-func matchesGlobalRoute(route types.Route, projectID, model, kind string) bool {
+// given (projectID, model, kind, client) tuple. Both Match and MatrixGlobal
+// must use this so they cannot drift apart. If you teach this function to
+// evaluate route.Conditions or any new criterion, both consumers benefit
+// automatically.
+func matchesGlobalRoute(route types.Route, projectID, model, kind, client string) bool {
 	if route.Status != "active" {
 		return false
 	}
@@ -231,37 +231,73 @@ func matchesGlobalRoute(route types.Route, projectID, model, kind string) bool {
 	if !slices.Contains(route.RequestKinds, kind) {
 		return false
 	}
+	if len(route.Clients) > 0 && !slices.Contains(route.Clients, client) {
+		return false
+	}
 	return true
 }
 
-// Match finds the upstream group for a request (project + model + kind).
-// It checks project-specific routes first, then global routes.
-// No auto-discovery fallback — all routing must go through explicit routes.
-func (r *Router) Match(projectID, model, kind string) (*resolvedGroup, error) {
+// Match finds the upstream group for a request, scoring all eligible
+// routes by weighted specificity (project 10, clients 1) then
+// MatchPriority desc with ID asc as the final deterministic tiebreak.
+// The shared matchesGlobalRoute predicate keeps Match and MatrixGlobal
+// aligned on what "eligible" means.
+//
+// Specificity weights are lexicographic by construction: project-scoped
+// routes always beat global ones; among same-project routes,
+// client-specific beats client-agnostic; MatchPriority breaks further
+// ties; ID asc is the deterministic floor.
+func (r *Router) Match(projectID, model, kind, client string) (*resolvedGroup, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	// 1. Try project-specific routes (highest match_priority first, routes are pre-sorted).
-	for _, route := range r.routes {
-		if !matchesGlobalRoute(route, projectID, model, kind) {
-			continue
+	type candidate struct {
+		route *types.Route
+		spec  int
+	}
+	var best *candidate
+
+	consider := func(route *types.Route) {
+		if _, ok := r.groups[route.UpstreamGroupID]; !ok {
+			// Mirror the prior "if g, ok := r.groups[...]; ok" fall-through.
+			return
 		}
-		if g, ok := r.groups[route.UpstreamGroupID]; ok {
-			return g, nil
+		spec := 0
+		if route.ProjectID != "" {
+			spec += 10
+		}
+		if len(route.Clients) > 0 {
+			spec += 1
+		}
+		if best == nil {
+			best = &candidate{route: route, spec: spec}
+			return
+		}
+		if spec > best.spec ||
+			(spec == best.spec && route.MatchPriority > best.route.MatchPriority) ||
+			(spec == best.spec && route.MatchPriority == best.route.MatchPriority && route.ID < best.route.ID) {
+			best = &candidate{route: route, spec: spec}
 		}
 	}
 
-	// 2. Fall back to global routes (projectID = "").
-	for _, route := range r.routes {
-		if !matchesGlobalRoute(route, "", model, kind) {
+	for i := range r.routes {
+		route := &r.routes[i]
+		// Project-scoped pass.
+		if matchesGlobalRoute(*route, projectID, model, kind, client) {
+			consider(route)
 			continue
 		}
-		if g, ok := r.groups[route.UpstreamGroupID]; ok {
-			return g, nil
+		// Global fallback pass.
+		if matchesGlobalRoute(*route, "", model, kind, client) {
+			consider(route)
 		}
 	}
 
-	return nil, fmt.Errorf("no route configured for model %s on endpoint %s", model, kind)
+	if best == nil {
+		return nil, fmt.Errorf("no route configured for model %s on endpoint %s (client=%s)",
+			model, kind, client)
+	}
+	return r.groups[best.route.UpstreamGroupID], nil
 }
 
 // SelectWithRetry returns an ordered list of upstreams to try for the given group.
@@ -456,32 +492,36 @@ func (r *Router) resultWithPrimary(primary *types.Upstream, candidates []lb.Cand
 	return result
 }
 
-// MatrixCell is one winning (model, kind) -> upstream group resolution,
+// MatrixCell is one winning (model, kind, client) -> upstream group resolution,
 // computed by MatrixGlobal. It is the same logical answer Match returns
-// for a (projectID="", model, kind) tuple, but emitted as data so the
+// for a (projectID="", model, kind, client) tuple, but emitted as data so the
 // admin UI can render the full matrix in one fetch.
 type MatrixCell struct {
 	Model           string
 	Kind            string
+	Client          string   // bucket this cell was resolved for
 	UpstreamGroupID string
 	RouteID         string
 	MatchPriority   int
+	Clients         []string // verbatim from the winning route — informational for UI badges
 }
 
-// MatrixGlobal walks every (model, kind) pair over the supplied models and
-// the full AllRequestKinds set, returning one MatrixCell for each pair
-// that resolves under the global-route branch of Match. Unrouted pairs are
-// omitted (sparse result).
+// MatrixGlobal walks every (model, kind, client) 3-tuple over the
+// supplied models, the full AllRequestKinds set, and the 5
+// ClientBuckets, returning one MatrixCell for each tuple that resolves
+// under the global-route branch of Match (projectID == ""). Unrouted
+// tuples are omitted (sparse result).
+//
+// filterClient: when non-empty, restrict the client axis to that single
+// bucket; the returned cells carry the filter value in their Client
+// field. Empty means iterate over all 5 buckets.
 //
 // Rules MUST mirror Match exactly:
-//   - routes are walked in priority-descending order (r.routes is pre-sorted)
-//   - routes with Status != "active" are skipped
-//   - routes with ProjectID != "" are skipped (global view)
-//   - the first matching route wins
-//   - if a matching route's UpstreamGroupID is not present in r.groups,
-//     that route is skipped and the walk continues down the priority list
-//     (mirrors Match's behavior when a matching route's group is missing)
-func (r *Router) MatrixGlobal(models []string) []MatrixCell {
+//   - matchesGlobalRoute predicate (shared)
+//   - weighted specificity scoring (clients 1; project does NOT apply
+//     here since this is the global pass)
+//   - missing group → skip and keep walking
+func (r *Router) MatrixGlobal(models []string, filterClient string) []MatrixCell {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -489,26 +529,49 @@ func (r *Router) MatrixGlobal(models []string) []MatrixCell {
 		return nil
 	}
 
+	clients := types.AllClientBuckets
+	if filterClient != "" {
+		clients = []string{filterClient}
+	}
+
 	out := make([]MatrixCell, 0, len(models)*len(types.AllRequestKinds))
 	for _, model := range models {
 		for _, kind := range types.AllRequestKinds {
-			for _, route := range r.routes {
-				if !matchesGlobalRoute(route, "", model, kind) {
-					continue
+			for _, client := range clients {
+				var best *types.Route
+				var bestSpec int
+				for i := range r.routes {
+					route := &r.routes[i]
+					if !matchesGlobalRoute(*route, "", model, kind, client) {
+						continue
+					}
+					if _, ok := r.groups[route.UpstreamGroupID]; !ok {
+						continue
+					}
+					spec := 0
+					if len(route.Clients) > 0 {
+						spec += 1
+					}
+					if best == nil ||
+						spec > bestSpec ||
+						(spec == bestSpec && route.MatchPriority > best.MatchPriority) ||
+						(spec == bestSpec && route.MatchPriority == best.MatchPriority && route.ID < best.ID) {
+						best = route
+						bestSpec = spec
+					}
 				}
-				if _, ok := r.groups[route.UpstreamGroupID]; !ok {
-					// Mirror Match: skip this route and keep walking down the
-					// priority list.
+				if best == nil {
 					continue
 				}
 				out = append(out, MatrixCell{
 					Model:           model,
 					Kind:            kind,
-					UpstreamGroupID: route.UpstreamGroupID,
-					RouteID:         route.ID,
-					MatchPriority:   route.MatchPriority,
+					Client:          client,
+					UpstreamGroupID: best.UpstreamGroupID,
+					RouteID:         best.ID,
+					MatchPriority:   best.MatchPriority,
+					Clients:         best.Clients,
 				})
-				break
 			}
 		}
 	}

@@ -88,9 +88,10 @@ func TestHandleRoutingMatrix_HappyPath(t *testing.T) {
 		t.Errorf("kinds = %v, want %v (sorted AllRequestKinds)", gotKinds, sortedKinds)
 	}
 
-	// Sparse cells: 3 total (claude-sonnet/messages, gpt-5/chat, gpt-5/responses).
-	if len(resp.Data.Cells) != 3 {
-		t.Errorf("len(cells) = %d, want 3 (sparse)", len(resp.Data.Cells))
+	// Sparse cells: 3 (model,kind) pairs × 5 client buckets = 15 total.
+	// Routes have no Clients filter so every client bucket resolves.
+	if len(resp.Data.Cells) != 15 {
+		t.Errorf("len(cells) = %d, want 15 (3 model×kind pairs × 5 client buckets)", len(resp.Data.Cells))
 	}
 	for _, c := range resp.Data.Cells {
 		if c.UpstreamGroupName == "" {
