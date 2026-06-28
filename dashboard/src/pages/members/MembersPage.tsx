@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useCurrentProject } from "@/hooks/useCurrentProject";
-import { useMembers, useMyMembership, useAddMember, useUpdateMember, useRemoveMember, useMembersUsage } from "@/api/members";
+import { useMembers, useMyMembership, useAddMember, useUpdateMember, useRemoveMember, useMembersUsage, useMemberAffectedKeys } from "@/api/members";
+import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type Column } from "@/components/shared/DataTable";
 import { Pagination } from "@/components/shared/Pagination";
@@ -10,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -64,6 +66,13 @@ export function MembersPage() {
   // Denied-models dialog state
   const [showDenied, setShowDenied] = useState(false);
   const [deniedTarget, setDeniedTarget] = useState<ProjectMember | null>(null);
+
+  // Remove-member confirmation dialog state
+  const [removeTarget, setRemoveTarget] = useState<ProjectMember | null>(null);
+  const removeKeysQuery = useMemberAffectedKeys(
+    projectId,
+    removeTarget?.user_id ?? null,
+  );
 
   function openDeniedDialog(m: ProjectMember) {
     setDeniedTarget(m);
@@ -295,7 +304,7 @@ export function MembersPage() {
             )}
             <DropdownMenuItem
               className="text-destructive-foreground"
-              onClick={() => removeMember.mutate(m.user_id)}
+              onClick={() => setRemoveTarget(m)}
             >
               Remove
             </DropdownMenuItem>
@@ -464,6 +473,70 @@ export function MembersPage() {
           member={deniedTarget}
         />
       )}
+
+      {/* Remove Member Confirmation Dialog */}
+      <Dialog
+        open={!!removeTarget}
+        onOpenChange={(open) => !open && setRemoveTarget(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove member</DialogTitle>
+            <DialogDescription>
+              Remove{" "}
+              <strong>
+                {removeTarget?.user?.nickname ?? removeTarget?.user?.email ?? "this member"}
+              </strong>{" "}
+              from this project?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="text-sm text-muted-foreground">
+            {removeKeysQuery.isLoading && "Counting affected API keys…"}
+            {removeKeysQuery.error && (
+              <>Could not count affected API keys. Proceed with caution — any keys this member created will be revoked.</>
+            )}
+            {removeKeysQuery.data && (
+              <>
+                This will revoke{" "}
+                <strong>{removeKeysQuery.data.data.active_api_keys}</strong>{" "}
+                active API key
+                {removeKeysQuery.data.data.active_api_keys === 1 ? "" : "s"}{" "}
+                they created. The keys cannot be reactivated by re-adding this member.
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemoveTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={removeMember.isPending}
+              onClick={async () => {
+                if (!removeTarget) return;
+                try {
+                  const res = await removeMember.mutateAsync(removeTarget.user_id);
+                  const n = res?.data?.revoked_api_keys ?? 0;
+                  const g = res?.data?.deleted_oauth_grants ?? 0;
+                  const who =
+                    removeTarget.user?.nickname ??
+                    removeTarget.user?.email ??
+                    "member";
+                  toast.success(
+                    `Removed ${who}; revoked ${n} API key${n === 1 ? "" : "s"} and ${g} OAuth grant${g === 1 ? "" : "s"}`,
+                  );
+                } catch {
+                  toast.error("Failed to remove member");
+                } finally {
+                  setRemoveTarget(null);
+                }
+              }}
+            >
+              {removeMember.isPending ? "Removing…" : "Remove member"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

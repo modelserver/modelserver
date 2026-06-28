@@ -94,11 +94,28 @@ export function useRemoveMember(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (userId: string) =>
-      api.delete(`/api/v1/projects/${projectId}/members/${userId}`),
+      api.delete<DataResponse<{ revoked_api_keys: number; deleted_oauth_grants: number }>>(
+        `/api/v1/projects/${projectId}/members/${userId}`,
+      ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["members", projectId] });
       qc.invalidateQueries({ queryKey: ["members-compact", projectId] });
     },
+  });
+}
+
+// useMemberAffectedKeys returns the count of active API keys the member
+// has in the project. Used by the Remove-member confirmation dialog so
+// the operator sees the blast radius before clicking Confirm. Pass null
+// for userId to disable the query.
+export function useMemberAffectedKeys(projectId: string, userId: string | null) {
+  return useQuery({
+    queryKey: ["member-affected-keys", projectId, userId],
+    queryFn: () =>
+      api.get<DataResponse<{ active_api_keys: number }>>(
+        `/api/v1/projects/${projectId}/members/${userId}/affected-keys`,
+      ),
+    enabled: !!userId,
   });
 }
 
