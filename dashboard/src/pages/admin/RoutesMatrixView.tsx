@@ -26,11 +26,17 @@ export function RoutesMatrixView({ onEditRoute }: RoutesMatrixViewProps) {
 
   const { data, isLoading, error } = useRoutingMatrix({ client: clientFilter });
 
-  // O(1) cell lookup keyed by `${model}::${kind}`.
+  // Cell lookup keyed by `${model}::${kind}`. Stores an array because the
+  // unfiltered matrix returns one cell per (model, kind, client) 3-tuple —
+  // multiple cells may share the same (model, kind) when per-client routing
+  // differs. The render logic detects "mixed" routes and shows a badge.
   const cellIndex = useMemo(() => {
-    const m = new Map<string, RoutingMatrixCell>();
+    const m = new Map<string, RoutingMatrixCell[]>();
     for (const c of data?.data.cells ?? []) {
-      m.set(`${c.model}::${c.kind}`, c);
+      const key = `${c.model}::${c.kind}`;
+      const arr = m.get(key) ?? [];
+      arr.push(c);
+      m.set(key, arr);
     }
     return m;
   }, [data]);
@@ -128,27 +134,41 @@ export function RoutesMatrixView({ onEditRoute }: RoutesMatrixViewProps) {
                     {model}
                   </th>
                   {kinds.map((kind) => {
-                    const cell = cellIndex.get(`${model}::${kind}`);
+                    const cells = cellIndex.get(`${model}::${kind}`) ?? [];
+                    if (cells.length === 0) {
+                      return (
+                        <td key={kind} className="px-3 py-2 border-b align-middle">
+                          <span className="text-muted-foreground">—</span>
+                        </td>
+                      );
+                    }
+                    const distinctRouteIDs = new Set(cells.map((c) => c.route_id));
+                    const isMixed = distinctRouteIDs.size > 1;
+                    const firstCell = cells[0]!; // safe: cells.length === 0 returns early above
+                    const label = isMixed
+                      ? "Mixed"
+                      : (firstCell.upstream_group_name || firstCell.upstream_group_id.slice(0, 8));
+                    const title = isMixed
+                      ? `Routes differ by client (${distinctRouteIDs.size} distinct routes). Click to open the first; use the Client filter to see all variants.`
+                      : `route ${firstCell.route_id.slice(0, 8)} (priority ${firstCell.match_priority})`;
                     return (
                       <td
                         key={kind}
                         className="px-3 py-2 border-b align-middle"
                       >
-                        {cell ? (
-                          <button
-                            type="button"
-                            onClick={() => onEditRoute(cell.route_id)}
-                            className="inline-flex"
-                            title={`route ${cell.route_id.slice(0, 8)} (priority ${cell.match_priority})`}
+                        <button
+                          type="button"
+                          onClick={() => onEditRoute(firstCell.route_id)}
+                          className="inline-flex"
+                          title={title}
+                        >
+                          <Badge
+                            variant={isMixed ? "secondary" : "outline"}
+                            className="cursor-pointer"
                           >
-                            <Badge variant="outline" className="cursor-pointer">
-                              {cell.upstream_group_name ||
-                                cell.upstream_group_id.slice(0, 8)}
-                            </Badge>
-                          </button>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
+                            {label}
+                          </Badge>
+                        </button>
                       </td>
                     );
                   })}
