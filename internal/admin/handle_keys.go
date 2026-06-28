@@ -45,6 +45,28 @@ func handleCreateKey(st *store.Store, encKey []byte, catalog modelcatalog.Catalo
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "projectID")
 		user := UserFromContext(r.Context())
+
+		// Enforce: every API key creator MUST be a project member, even
+		// superadmins. projectAccessMiddleware bypasses the membership
+		// load for superadmins (member-in-context is nil), so we check
+		// here explicitly. Without this, superadmin-created keys would
+		// violate the invariant relied on by migration 055 and
+		// RemoveProjectMember: "every active api_key has a row in
+		// project_members for (project_id, created_by)".
+		if member := MemberFromContext(r.Context()); member == nil {
+			m, err := st.GetProjectMember(projectID, user.ID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "internal",
+					"failed to verify project membership")
+				return
+			}
+			if m == nil {
+				writeError(w, http.StatusForbidden, "forbidden",
+					"superadmins must join the project as a member before creating API keys")
+				return
+			}
+		}
+
 		var body struct {
 			Name          string   `json:"name"`
 			Description   string   `json:"description"`
