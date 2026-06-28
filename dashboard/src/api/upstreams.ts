@@ -286,7 +286,7 @@ export function useCreateRoutingRoute() {
       api.post<DataResponse<RoutingRoute>>("/api/v1/routing/routes", body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "routing-routes"] });
-      qc.invalidateQueries({ queryKey: ["admin", "routing-matrix"] });
+      qc.invalidateQueries({ queryKey: ["routing-matrix"] });
     },
   });
 }
@@ -298,7 +298,7 @@ export function useUpdateRoutingRoute() {
       api.put<DataResponse<RoutingRoute>>(`/api/v1/routing/routes/${id}`, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "routing-routes"] });
-      qc.invalidateQueries({ queryKey: ["admin", "routing-matrix"] });
+      qc.invalidateQueries({ queryKey: ["routing-matrix"] });
     },
   });
 }
@@ -309,7 +309,7 @@ export function useDeleteRoutingRoute() {
     mutationFn: (id: string) => api.delete(`/api/v1/routing/routes/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "routing-routes"] });
-      qc.invalidateQueries({ queryKey: ["admin", "routing-matrix"] });
+      qc.invalidateQueries({ queryKey: ["routing-matrix"] });
     },
   });
 }
@@ -324,13 +324,33 @@ export function useRequestKinds() {
   });
 }
 
-// useRoutingMatrix returns the global-route Model x Kind matrix. Cells are
-// sparse: pairs with no resolving route are absent.
-export function useRoutingMatrix() {
+// useClientBuckets returns the static list of valid client bucket values,
+// fetched from the server so the enum stays out of the frontend bundle.
+export function useClientBuckets() {
   return useQuery({
-    queryKey: ["admin", "routing-matrix"],
-    queryFn: () =>
-      api.get<DataResponse<RoutingMatrix>>("/api/v1/routing/matrix"),
+    queryKey: ["routing-clients"],
+    queryFn: () => api.get<DataResponse<string[]>>("/api/v1/routing/clients"),
+    staleTime: Infinity,
+  });
+}
+
+export interface RoutingMatrixOpts {
+  client?: string;
+}
+
+// useRoutingMatrix returns the global-route Model x Kind matrix. Cells are
+// sparse: pairs with no resolving route are absent. Accepts an optional
+// client filter; the filter is embedded in both the URL and the cache key.
+export function useRoutingMatrix(opts: RoutingMatrixOpts = {}) {
+  const client = opts.client ?? "";
+  const qs = new URLSearchParams();
+  if (client) qs.set("client", client);
+  const url = qs.toString()
+    ? `/api/v1/routing/matrix?${qs.toString()}`
+    : "/api/v1/routing/matrix";
+  return useQuery({
+    queryKey: ["routing-matrix", client],
+    queryFn: () => api.get<DataResponse<RoutingMatrix>>(url),
   });
 }
 

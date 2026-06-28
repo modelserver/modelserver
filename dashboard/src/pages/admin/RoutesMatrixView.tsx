@@ -1,8 +1,17 @@
 import { useMemo } from "react";
-import { useRoutingMatrix } from "@/api/upstreams";
+import { useSearchParams } from "react-router";
+import { useRoutingMatrix, useClientBuckets } from "@/api/upstreams";
 import type { RoutingMatrixCell } from "@/api/types";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Loader2 } from "lucide-react";
 
 interface RoutesMatrixViewProps {
@@ -10,7 +19,12 @@ interface RoutesMatrixViewProps {
 }
 
 export function RoutesMatrixView({ onEditRoute }: RoutesMatrixViewProps) {
-  const { data, isLoading, error } = useRoutingMatrix();
+  const [params, setParams] = useSearchParams();
+  const clientFilter = params.get("client") ?? "";
+
+  const { data: clientsList } = useClientBuckets();
+
+  const { data, isLoading, error } = useRoutingMatrix({ client: clientFilter });
 
   // O(1) cell lookup keyed by `${model}::${kind}`.
   const cellIndex = useMemo(() => {
@@ -56,7 +70,32 @@ export function RoutesMatrixView({ onEditRoute }: RoutesMatrixViewProps) {
   }
 
   return (
-    <Card>
+    <>
+      <div className="mb-4">
+        <div className="space-y-1">
+          <Label className="text-xs">Client</Label>
+          <Select
+            value={clientFilter || "all"}
+            onValueChange={(v) => {
+              const next = new URLSearchParams(params);
+              if (!v || v === "all") next.delete("client");
+              else next.set("client", v);
+              setParams(next, { replace: true });
+            }}
+          >
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="All clients" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All clients</SelectItem>
+              {(clientsList?.data ?? []).map((c) => (
+                <SelectItem key={c} value={c}>{c}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <Card>
       <CardContent className="p-0">
         <div className="overflow-x-auto">
           <table className="w-full border-separate border-spacing-0 text-sm">
@@ -120,5 +159,6 @@ export function RoutesMatrixView({ onEditRoute }: RoutesMatrixViewProps) {
         </div>
       </CardContent>
     </Card>
+    </>
   );
 }

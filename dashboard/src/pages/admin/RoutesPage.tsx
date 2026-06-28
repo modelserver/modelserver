@@ -7,6 +7,7 @@ import {
   useDeleteRoutingRoute,
   useUpstreamGroups,
   useRequestKinds,
+  useClientBuckets,
   useRoutingRoute,
 } from "@/api/upstreams";
 import { useAllProjects } from "@/api/projects";
@@ -66,6 +67,7 @@ export function RoutesPage() {
   const [form, setForm] = useState({
     model_names: [] as string[],
     request_kinds: ["anthropic_messages"] as string[],
+    clients: [] as string[],
     upstream_group_id: "",
     match_priority: 0,
     status: "active",
@@ -74,6 +76,9 @@ export function RoutesPage() {
 
   const { data: requestKindsData } = useRequestKinds();
   const requestKinds = requestKindsData?.data ?? [];
+
+  const { data: clientsList } = useClientBuckets();
+  const clientBuckets = clientsList?.data ?? [];
 
   const routes = routesData?.data ?? [];
   const meta = routesData?.meta;
@@ -128,6 +133,7 @@ export function RoutesPage() {
     setForm({
       model_names: [],
       request_kinds: ["anthropic_messages"],
+      clients: [],
       upstream_group_id: "",
       match_priority: 0,
       status: "active",
@@ -141,6 +147,7 @@ export function RoutesPage() {
     setForm({
       model_names: [...(route.model_names ?? [])],
       request_kinds: [...(route.request_kinds ?? [])],
+      clients: [...(route.clients ?? [])],
       upstream_group_id: route.upstream_group_id,
       match_priority: route.match_priority,
       status: route.status,
@@ -161,6 +168,7 @@ export function RoutesPage() {
     const payload = {
       model_names: form.model_names,
       request_kinds: form.request_kinds,
+      clients: form.clients,
       upstream_group_id: form.upstream_group_id,
       match_priority: form.match_priority,
       status: form.status,
@@ -249,6 +257,21 @@ export function RoutesPage() {
           ))}
         </div>
       ),
+    },
+    {
+      header: "Clients",
+      accessor: (r) =>
+        r.clients?.length ? (
+          <div className="flex flex-wrap gap-1">
+            {r.clients.map((c) => (
+              <Badge key={c} variant="outline" className="text-xs font-mono">
+                {c}
+              </Badge>
+            ))}
+          </div>
+        ) : (
+          <span className="text-muted-foreground">Any</span>
+        ),
     },
     {
       header: "Upstream Group",
@@ -455,6 +478,36 @@ export function RoutesPage() {
                 Wire-level endpoints this route serves (e.g. anthropic_messages =
                 /v1/messages, anthropic_count_tokens = /v1/messages/count_tokens).
                 Pick at least one.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Clients (optional)</Label>
+              <div className="flex flex-wrap gap-2">
+                {clientBuckets.map((c) => {
+                  const selected = form.clients.includes(c);
+                  return (
+                    <Button
+                      key={c}
+                      type="button"
+                      size="sm"
+                      variant={selected ? "default" : "outline"}
+                      onClick={() =>
+                        setForm((p) => ({
+                          ...p,
+                          clients: selected
+                            ? p.clients.filter((x) => x !== c)
+                            : [...p.clients, c],
+                        }))
+                      }
+                    >
+                      {c}
+                    </Button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                When set, the route only matches requests from one of these client
+                buckets. Leave empty to match any client.
               </p>
             </div>
             <div className="space-y-2">

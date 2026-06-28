@@ -490,6 +490,7 @@ export interface RoutingRoute {
   project_id?: string;
   model_names: string[];
   request_kinds: string[];
+  clients: string[];          // ClientBucket values; [] = match any
   upstream_group_id: string;
   match_priority: number;
   conditions?: Record<string, string>;
@@ -504,10 +505,12 @@ export interface RoutingRoute {
 export interface RoutingMatrixCell {
   model: string;
   kind: string;
+  client?: string;             // client filter active when this cell was resolved
   upstream_group_id: string;
   upstream_group_name: string;
   route_id: string;
   match_priority: number;
+  clients?: string[];          // client buckets the winning route is restricted to
 }
 
 // Server-rendered matrix view for /admin/routes. `models` and `kinds` are
