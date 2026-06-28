@@ -2363,10 +2363,375 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-> **End of installment 5 (Task 7).** Pricing is now client-aware on the subscription path; extra-usage path is verified unchanged by invariant test. Tasks 1-7 together complete the proxy-side feature. Tasks 8-9 are admin API + dashboard.
+### Task 8: Admin API — route validation + new GET endpoints + matrix filters + plan allow-list
+
+**Files:**
+- Modify: `internal/admin/handle_routing_routes.go` (extend `handleCreateRoutingRoute` + `handleUpdateRoutingRoute` with `clients` and `billing_modes`; add `handleListClientBuckets` and `handleListBillingModes`)
+- Modify: `internal/admin/handle_routing_matrix.go` (add `?client=` / `?billing_mode=` query params; extend `matrixCellOut` with the 4 new fields)
+- Modify: `internal/admin/handle_routing_matrix_test.go` (add filter test cases)
+- Modify: `internal/admin/handle_plans.go` (extend the allow-list to accept `client_model_credit_rates`)
+- Modify: `internal/admin/routes.go` (register the two new GET endpoints in the existing `/routing` subtree)
+
+**Interfaces:**
+- Consumes: `types.AllClientBuckets` + `types.IsValidClientBucket` + `types.AllBillingModes` + `types.IsValidBillingMode` (Task 1); extended `types.Route` (Task 4); extended `Router.MatrixGlobal(models, filterClient, filterBillingMode)` + `MatrixCell` (Task 6); `types.Plan.ClientModelCreditRates` (Task 4).
+- Produces:
+  - `POST /api/v1/routing/routes` and `PUT /api/v1/routing/routes/{id}` accept `clients []string` and `billing_modes []string`. Each member validated; unknown values → 400.
+  - `GET /api/v1/routing/clients` → `{"data": [...AllClientBuckets...]}`.
+  - `GET /api/v1/routing/billing-modes` → `{"data": ["subscription", "extra_usage"]}`.
+  - `GET /api/v1/routing/matrix` accepts optional `?client=` and `?billing_mode=` query params; each `cells[]` element gains `client`, `billing_mode`, `clients`, `billing_modes` JSON fields.
+  - `PUT /api/v1/plans/{slug}` body's `client_model_credit_rates` field round-trips through the existing JSON edit path.
+
+This is the operator surface. After this task the matrix endpoint can drive the dashboard's new filter dropdowns; admin write paths gate against invalid bucket / mode strings before they reach the store.
+
+- [ ] **Step 1: Extend `handleCreateRoutingRoute`**
+
+In `internal/admin/handle_routing_routes.go`, find the body struct (around line 44) and add the two new fields:
+
+```go
+var body struct {
+    ProjectID       string            `json:"project_id"`
+    ModelNames      []string          `json:"model_names"`
+    RequestKinds    []string          `json:"request_kinds"`
+    Clients         []string          `json:"clients"`        // NEW
+    BillingModes    []string          `json:"billing_modes"`  // NEW
+    UpstreamGroupID string            `json:"upstream_group_id"`
+    MatchPriority   int               `json:"match_priority"`
+    Conditions      map[string]string `json:"conditions"`
+    Status          string            `json:"status"`
+}
+```
+
+After the existing `request_kinds` validation block (around line 68), add validation for the two new fields:
+
+```go
+for _, c := range body.Clients {
+    if !types.IsValidClientBucket(c) {
+        writeError(w, http.StatusBadRequest, "bad_request", "invalid client: "+c)
+        return
+    }
+}
+for _, m := range body.BillingModes {
+    if !types.IsValidBillingMode(m) {
+        writeError(w, http.StatusBadRequest, "bad_request", "invalid billing_mode: "+m)
+        return
+    }
+}
+```
+
+Empty arrays are valid (= match any) — the validation loops simply iterate zero times.
+
+Update the `route := &types.Route{...}` construction to include the two new fields:
+
+```go
+route := &types.Route{
+    ProjectID:       body.ProjectID,
+    ModelNames:      canonical,
+    RequestKinds:    body.RequestKinds,
+    Clients:         body.Clients,
+    BillingModes:    body.BillingModes,
+    UpstreamGroupID: body.UpstreamGroupID,
+    MatchPriority:   body.MatchPriority,
+    Conditions:      body.Conditions,
+    Status:          status,
+}
+```
+
+- [ ] **Step 2: Extend `handleUpdateRoutingRoute`**
+
+In the same file, find the existing field allow-list loop (around line 110-160 — a `switch field` block inside `for _, field := range []string{...}`):
+
+```go
+for _, field := range []string{"project_id", "model_names", "request_kinds", "upstream_group_id", "match_priority", "conditions", "status"} {
+    if v, ok := body[field]; ok {
+        switch field {
+        case "project_id": ...
+        case "model_names": ...
+        case "request_kinds": ...
+        }
+        updates[field] = v
+    }
+}
+```
+
+Extend the slice with the two new field names and add the matching `switch` cases:
+
+```go
+for _, field := range []string{"project_id", "model_names", "request_kinds", "clients", "billing_modes", "upstream_group_id", "match_priority", "conditions", "status"} {
+    if v, ok := body[field]; ok {
+        switch field {
+        // ... existing cases ...
+        case "clients":
+            clients, ok := toStringSlice(v)
+            if !ok {
+                writeError(w, http.StatusBadRequest, "bad_request", "clients must be an array of strings")
+                return
+            }
+            for _, c := range clients {
+                if !types.IsValidClientBucket(c) {
+                    writeError(w, http.StatusBadRequest, "bad_request", "invalid client: "+c)
+                    return
+                }
+            }
+            v = clients
+        case "billing_modes":
+            modes, ok := toStringSlice(v)
+            if !ok {
+                writeError(w, http.StatusBadRequest, "bad_request", "billing_modes must be an array of strings")
+                return
+            }
+            for _, m := range modes {
+                if !types.IsValidBillingMode(m) {
+                    writeError(w, http.StatusBadRequest, "bad_request", "invalid billing_mode: "+m)
+                    return
+                }
+            }
+            v = modes
+        }
+        updates[field] = v
+    }
+}
+```
+
+Empty array updates are valid and clear the field (= back to "match any"). That's the operator's signal to remove a previous specificity restriction.
+
+- [ ] **Step 3: Add the two new list endpoints**
+
+In `internal/admin/handle_routing_routes.go`, near the existing `handleListRequestKinds` (around line 180), add two siblings:
+
+```go
+// handleListClientBuckets returns the catalog of valid route `clients`
+// values so the dashboard can render a dropdown without compiling the
+// enum into the frontend bundle.
+func handleListClientBuckets() http.HandlerFunc {
+    return func(w http.ResponseWriter, _ *http.Request) {
+        writeData(w, http.StatusOK, types.AllClientBuckets)
+    }
+}
+
+// handleListBillingModes returns the catalog of valid route `billing_modes`
+// values for the dashboard dropdown.
+func handleListBillingModes() http.HandlerFunc {
+    return func(w http.ResponseWriter, _ *http.Request) {
+        writeData(w, http.StatusOK, types.AllBillingModes)
+    }
+}
+```
+
+In `internal/admin/routes.go`, find the `r.Route("/routing", ...)` block (around line 292) and add the two registrations next to the existing `request-kinds`:
+
+```go
+r.Route("/routing", func(r chi.Router) {
+    // ... existing route registrations ...
+    r.Get("/request-kinds", handleListRequestKinds())
+    r.Get("/clients", handleListClientBuckets())          // NEW
+    r.Get("/billing-modes", handleListBillingModes())     // NEW
+    r.Get("/matrix", handleRoutingMatrix(st, router))
+})
+```
+
+- [ ] **Step 4: Extend the matrix endpoint with query-param filters + new cell fields**
+
+In `internal/admin/handle_routing_matrix.go`, extend `matrixCellOut`:
+
+```go
+type matrixCellOut struct {
+    Model             string   `json:"model"`
+    Kind              string   `json:"kind"`
+    Client            string   `json:"client,omitempty"`         // NEW — the bucket this cell was resolved for
+    BillingMode       string   `json:"billing_mode,omitempty"`   // NEW — the mode this cell was resolved for
+    UpstreamGroupID   string   `json:"upstream_group_id"`
+    UpstreamGroupName string   `json:"upstream_group_name"`
+    RouteID           string   `json:"route_id"`
+    MatchPriority     int      `json:"match_priority"`
+    Clients           []string `json:"clients,omitempty"`        // NEW — verbatim from winning route (for UI badges)
+    BillingModes      []string `json:"billing_modes,omitempty"`  // NEW — verbatim from winning route (for UI badges)
+}
+```
+
+Extend `handleRoutingMatrixWithLister` to accept and forward the new query params. Find the existing function body and modify:
+
+```go
+func handleRoutingMatrixWithLister(
+    listModels func(string) ([]types.Model, error),
+    router *proxy.Router,
+) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        // Optional filters from query string.
+        filterClient := r.URL.Query().Get("client")
+        if filterClient != "" && !types.IsValidClientBucket(filterClient) {
+            writeError(w, http.StatusBadRequest, "bad_request", "invalid client: "+filterClient)
+            return
+        }
+        filterMode := r.URL.Query().Get("billing_mode")
+        if filterMode != "" && !types.IsValidBillingMode(filterMode) {
+            writeError(w, http.StatusBadRequest, "bad_request", "invalid billing_mode: "+filterMode)
+            return
+        }
+
+        models, err := listModels(types.ModelStatusActive)
+        if err != nil {
+            writeError(w, http.StatusInternalServerError, "internal", "failed to list models")
+            return
+        }
+
+        modelNames := make([]string, 0, len(models))
+        for _, m := range models {
+            modelNames = append(modelNames, m.Name)
+        }
+        sort.Strings(modelNames)
+
+        cells := router.MatrixGlobal(modelNames, filterClient, filterMode)
+
+        names := router.SnapshotGroupNames()
+        out := matrixResponse{
+            Models: modelNames,
+            Kinds:  types.AllRequestKinds,
+            Cells:  make([]matrixCellOut, 0, len(cells)),
+        }
+        for _, c := range cells {
+            out.Cells = append(out.Cells, matrixCellOut{
+                Model:             c.Model,
+                Kind:              c.Kind,
+                Client:            c.Client,
+                BillingMode:       c.BillingMode,
+                UpstreamGroupID:   c.UpstreamGroupID,
+                UpstreamGroupName: names[c.UpstreamGroupID],
+                RouteID:           c.RouteID,
+                MatchPriority:     c.MatchPriority,
+                Clients:           c.Clients,
+                BillingModes:      c.BillingModes,
+            })
+        }
+        writeData(w, http.StatusOK, out)
+    }
+}
+```
+
+The exact shape of the existing function may differ slightly (e.g. it might not currently sort modelNames or might have a different `matrixResponse` field set) — adapt to what's actually there. The mandatory changes are: (a) read and validate the two query params, (b) forward them to `MatrixGlobal`, (c) carry the 4 new fields onto `matrixCellOut`.
+
+- [ ] **Step 5: Extend the matrix integration test**
+
+In `internal/admin/handle_routing_matrix_test.go`, find the existing `TestHandleRoutingMatrix_*` tests and add two filter cases. The shape mirrors the existing `TestHandleRoutingMatrix_HappyPath`:
+
+```go
+func TestHandleRoutingMatrix_FilterByClient(t *testing.T) {
+    // Reuse the existing fixture-building helper if there is one;
+    // otherwise build a router + lister inline as TestHandleRoutingMatrix_HappyPath does.
+    h := handleRoutingMatrixWithLister(fakeListModels, fakeRouter)
+
+    req := httptest.NewRequest(http.MethodGet, "/routing/matrix?client=claude-code-cli", nil)
+    rec := httptest.NewRecorder()
+    h.ServeHTTP(rec, req)
+
+    if rec.Code != http.StatusOK {
+        t.Fatalf("status = %d, want 200", rec.Code)
+    }
+    var resp struct {
+        Data struct {
+            Cells []matrixCellOut `json:"cells"`
+        } `json:"data"`
+    }
+    if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+        t.Fatalf("decode: %v", err)
+    }
+    for _, c := range resp.Data.Cells {
+        if c.Client != types.ClientBucketClaudeCodeCLI {
+            t.Errorf("filter leaked: cell.Client = %q", c.Client)
+        }
+    }
+}
+
+func TestHandleRoutingMatrix_FilterRejectsInvalid(t *testing.T) {
+    h := handleRoutingMatrixWithLister(fakeListModels, fakeRouter)
+
+    req := httptest.NewRequest(http.MethodGet, "/routing/matrix?client=bogus", nil)
+    rec := httptest.NewRecorder()
+    h.ServeHTTP(rec, req)
+
+    if rec.Code != http.StatusBadRequest {
+        t.Errorf("invalid client: status = %d, want 400", rec.Code)
+    }
+}
+```
+
+Reuse `fakeListModels` / `fakeRouter` from the existing happy-path test — they're already set up in the file. If they don't exist, follow the same pattern the happy-path test uses to construct a `proxy.Router` with a small fixture.
+
+- [ ] **Step 6: Extend the plan admin allow-list**
+
+In `internal/admin/handle_plans.go`, find the existing `handleUpdatePlan` (around line 152) and locate the block that handles `model_credit_rates` specially (around line 169):
+
+```go
+if v, ok := body["model_credit_rates"]; ok {
+    // ... marshal map → bytes → updates["model_credit_rates"] = b ...
+}
+```
+
+Add a parallel block for `client_model_credit_rates`:
+
+```go
+if v, ok := body["client_model_credit_rates"]; ok {
+    // Two-level map: top-level keys must be valid ClientBucket values.
+    m, ok := v.(map[string]interface{})
+    if !ok && v != nil {
+        writeError(w, http.StatusBadRequest, "bad_request", "client_model_credit_rates must be an object")
+        return
+    }
+    for client := range m {
+        if !types.IsValidClientBucket(client) {
+            writeError(w, http.StatusBadRequest, "bad_request", "invalid client bucket in client_model_credit_rates: "+client)
+            return
+        }
+    }
+    b, err := json.Marshal(v)
+    if err != nil {
+        writeError(w, http.StatusBadRequest, "bad_request", "client_model_credit_rates marshal failed")
+        return
+    }
+    updates["client_model_credit_rates"] = b
+}
+```
+
+Apply the same pattern to `handleCreatePlan` if its body struct currently lists `model_credit_rates` — add the new field and pass it through to the `Plan` constructor's `ClientModelCreditRates` (the store CreatePlan from Task 4 already accepts it).
+
+- [ ] **Step 7: Build + run admin tests**
+
+Run: `cd /root/coding/modelserver && go build ./... && go test ./internal/admin/...`
+
+Expected: green. The existing routing-route create/update tests should continue to pass (they don't send the new fields, so the new validation never triggers). The matrix test continues to pass for the no-filter case and the two new filter cases.
+
+- [ ] **Step 8: Commit**
+
+```bash
+cd /root/coding/modelserver
+git add internal/admin/handle_routing_routes.go internal/admin/handle_routing_matrix.go \
+        internal/admin/handle_routing_matrix_test.go internal/admin/handle_plans.go \
+        internal/admin/routes.go
+git commit -m "feat(admin): client+billing_mode admin API
+
+Route create/update accept clients []string and billing_modes []string;
+each value validated against types.AllClientBuckets and AllBillingModes.
+Empty arrays are valid and mean 'match any' (preserves legacy
+behavior; clears existing specificity on update).
+
+Two new GET endpoints: /api/v1/routing/clients and /routing/billing-modes
+return the bucket / mode catalogs so the dashboard can dropdown without
+compiling the enum into the FE bundle.
+
+Matrix endpoint accepts ?client= and ?billing_mode= query params for
+server-side filter; each cell response gains client + billing_mode +
+clients + billing_modes JSON fields.
+
+Plan upsert allow-list accepts client_model_credit_rates as a top-level
+JSON field; top-level keys validated against AllClientBuckets.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+> **End of installment 6 (Task 8).** Admin API now exposes the new dimensions. Backend is complete after this commit. Only the dashboard UI (Task 9) remains.
 >
 > Remaining installments:
-> - **Installment 6 (Task 8):** admin API validation for new route fields + `GET /routing/clients` + `GET /routing/billing-modes` + matrix endpoint filter params + plan admin allow-list update.
 > - **Installment 7 (Task 9):** dashboard Routes page columns + Create/Edit dialog selectors + Matrix tab filter dropdowns + manual smoke checklist.
 > - **Final installment:** plan self-review section + execution handoff.
 
