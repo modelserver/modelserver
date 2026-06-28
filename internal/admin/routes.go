@@ -290,6 +290,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 			r.Route("/routing", func(r chi.Router) {
 				r.Use(RequireSuperadmin)
 				r.Get("/routes", handleListRoutingRoutes(st))
+				r.Get("/routes/{routeID}", handleGetRoutingRoute(st))
 				r.Post("/routes", handleCreateRoutingRoute(st, catalog))
 				r.Put("/routes/{routeID}", handleUpdateRoutingRoute(st, catalog))
 				r.Delete("/routes/{routeID}", handleDeleteRoutingRoute(st))

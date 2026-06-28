@@ -25,6 +25,21 @@ func handleListRoutingRoutes(st *store.Store) http.HandlerFunc {
 	}
 }
 
+func handleGetRoutingRoute(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		route, err := st.GetRouteByID(chi.URLParam(r, "routeID"))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "failed to load routing route")
+			return
+		}
+		if route == nil {
+			writeError(w, http.StatusNotFound, "not_found", "routing route not found")
+			return
+		}
+		writeData(w, http.StatusOK, route)
+	}
+}
+
 func handleCreateRoutingRoute(st *store.Store, catalog modelcatalog.Catalog) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
