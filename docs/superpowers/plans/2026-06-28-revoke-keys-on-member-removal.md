@@ -35,6 +35,7 @@
 **Backend — modify:**
 - `internal/store/projects.go` — `RemoveProjectMember` signature gains `(int, error)`; runs in a tx; add `CountActiveKeysForMember`.
 - `internal/store/projects_test.go` *(currently absent — create as new file)* — new tests for `RemoveProjectMember` + `CountActiveKeysForMember`.
+- `internal/admin/handle_keys.go` — `handleCreateKey` rejects callers without a `project_members` row (closes the superadmin loophole the spec calls out).
 - `internal/admin/handle_projects.go` — `handleRemoveMember` returns 200 with count; add `handleCountAffectedKeysOnRemove`.
 - `internal/admin/routes.go` — register `GET /members/{userID}/affected-keys`.
 - `internal/proxy/auth_middleware.go` — extract `GetProjectMember` behind a small interface used by AuthMiddleware (for testability); add `memberPresentCache`; rewrite the L319-365 cache-hydration block to a triple-cache pattern with fail-closed semantics.
@@ -211,7 +212,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
   func (s *Store) RemoveProjectMember(projectID, userID string) (revokedCount int, err error)
   func (s *Store) CountActiveKeysForMember(projectID, userID string) (int, error)
   ```
-  Signature on `RemoveProjectMember` is intentionally backward-incompatible — Task 3 updates the one caller (`handleRemoveMember`).
+  Signature on `RemoveProjectMember` is intentionally backward-incompatible — Task 4 updates the one caller (`handleRemoveMember`).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -475,9 +476,9 @@ Expected: all four tests PASS (assuming `TEST_DATABASE_URL` is set; otherwise th
 
 Run: `cd /root/coding/modelserver && go build ./...`
 
-Expected: build failure in `internal/admin/handle_projects.go` because `handleRemoveMember` still calls `RemoveProjectMember` expecting a single `error` return. This is the bridge to Task 3 — leave the build broken and commit the store changes; Task 3 fixes the caller.
+Expected: build failure in `internal/admin/handle_projects.go` because `handleRemoveMember` still calls `RemoveProjectMember` expecting a single `error` return. This is the bridge to Task 4 — leave the build broken and commit the store changes; Task 4 fixes the caller. (Task 3, between, also lands inside this red-build window.)
 
-(If you prefer to commit only on green: skip this step and proceed to Step 6, treating the build failure as expected scaffolding for Task 3.)
+(If you prefer to commit only on green: skip this step and proceed to Step 6, treating the build failure as expected scaffolding for the Task 3 + Task 4 commits.)
 
 - [ ] **Step 6: Commit**
 
@@ -498,7 +499,89 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task 3: `handleRemoveMember` returns count; add `handleCountAffectedKeysOnRemove`
+### Task 3: Close superadmin loophole in `handleCreateKey`
+
+**Files:**
+- Modify: `internal/admin/handle_keys.go` (`handleCreateKey`, currently around line 44)
+
+**Interfaces:**
+- Consumes: existing `MemberFromContext`, `UserFromContext` from `internal/admin`; existing `writeError` helper.
+- Produces: a new pre-flight check inside `handleCreateKey` that 403s any caller without a `project_members` row for the target project. No new exported symbols.
+
+**Why this task exists:** `projectAccessMiddleware` (`internal/admin/routes.go:321-324`) lets superadmins through without populating a member context. As a result, `handleCreateKey` happily creates API keys for users who are NOT in `project_members`. That violates the invariant the rest of this PR depends on ("every active key has a corresponding member row"). Without this task, migration 055 and `RemoveProjectMember` would revoke superadmin-created keys on deploy. The spec's "Closing the superadmin loophole" section authorizes this tightening.
+
+- [ ] **Step 1: Inspect the current handler and confirm the failure mode**
+
+Run: `grep -n "MemberFromContext\|handleCreateKey" /root/coding/modelserver/internal/admin/handle_keys.go | head -5`
+
+Confirm `handleCreateKey` does NOT currently call `MemberFromContext`. Read the function body (around lines 44-105) — it pulls `user := UserFromContext(...)` and assigns `key.CreatedBy = user.ID`, with no membership check. That's the exact gap.
+
+- [ ] **Step 2: Add the membership check**
+
+In `internal/admin/handle_keys.go`, locate the existing `handleCreateKey` function. Immediately after the `projectID := chi.URLParam(r, "projectID")` line and the `user := UserFromContext(...)` line (and before the body-decode block), insert a membership pre-flight check:
+
+```go
+		// Enforce: every API key creator MUST be a project member, even
+		// superadmins. projectAccessMiddleware bypasses the membership
+		// load for superadmins (member-in-context is nil), so we check
+		// here explicitly. Without this, superadmin-created keys would
+		// violate the invariant relied on by migration 055 and
+		// RemoveProjectMember: "every active api_key has a row in
+		// project_members for (project_id, created_by)".
+		if member := MemberFromContext(r.Context()); member == nil {
+			m, err := st.GetProjectMember(projectID, user.ID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "internal",
+					"failed to verify project membership")
+				return
+			}
+			if m == nil {
+				writeError(w, http.StatusForbidden, "forbidden",
+					"superadmins must join the project as a member before creating API keys")
+				return
+			}
+		}
+```
+
+The check runs ONLY when `MemberFromContext` returns nil (superadmin path). Non-superadmin callers always have a member context populated by `projectAccessMiddleware`, so they skip this DB call entirely — no regression in the hot path.
+
+- [ ] **Step 3: Build**
+
+Run: `cd /root/coding/modelserver && go build ./...`
+
+Expected: this is still failing in `handle_projects.go` from Task 2's signature change. That's fine — the build green-bridges in Task 4 (next task). Verify the failure is ONLY the `RemoveProjectMember` arity error and not something this task introduced.
+
+- [ ] **Step 4: Run admin tests (skip-permissive)**
+
+Run: `cd /root/coding/modelserver && go test ./internal/admin/... 2>&1 | tail -30`
+
+Expected: compile error from the in-progress `handle_projects.go` change (Task 2). Verify nothing else in `internal/admin/` started failing because of this task's change. If `handle_keys_test.go` or similar starts failing, debug — your change should be purely additive on a path no current test exercises.
+
+(If you prefer green-build commits: skip Step 3-4 and rely on the Task 4 commit to restore the green state. Either path is acceptable; the plan already authorizes a red-build window across Tasks 2-4.)
+
+- [ ] **Step 5: Commit**
+
+```bash
+cd /root/coding/modelserver
+git add internal/admin/handle_keys.go
+git commit -m "feat(admin): handleCreateKey requires project membership for superadmins
+
+projectAccessMiddleware bypasses membership for superadmins, but
+handleCreateKey was happily creating api_keys whose created_by user
+had no project_members row. That violates the invariant migration 055
+and RemoveProjectMember rely on.
+
+Adds an explicit GetProjectMember check on the superadmin path only;
+returns 403 'superadmins must join the project as a member before
+creating API keys' on miss. Non-superadmins are unaffected (they
+already have a member in context).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Task 4: `handleRemoveMember` returns count; add `handleCountAffectedKeysOnRemove`
 
 **Files:**
 - Modify: `internal/admin/handle_projects.go` (around line 605)
@@ -598,7 +681,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task 4: AuthMiddleware fail-closed membership check
+### Task 5: AuthMiddleware fail-closed membership check
 
 **Files:**
 - Modify: `internal/proxy/auth_middleware.go`
@@ -1009,14 +1092,14 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task 5: Dashboard — confirmation dialog + post-action count
+### Task 6: Dashboard — confirmation dialog + post-action count
 
 **Files:**
 - Modify: `dashboard/src/api/members.ts`
 - Modify: `dashboard/src/pages/members/MembersPage.tsx`
 
 **Interfaces:**
-- Consumes: backend endpoints from Task 3 (`GET /members/{userID}/affected-keys`, updated `DELETE /members/{userID}` response).
+- Consumes: backend endpoints from Task 4 (`GET /members/{userID}/affected-keys`, updated `DELETE /members/{userID}` response).
 - Produces:
   - `useMemberAffectedKeys(projectId, userId | null): UseQueryResult<DataResponse<{ active_api_keys: number }>>`.
   - `useRemoveMember`'s mutation now returns `DataResponse<{ revoked_api_keys: number }>`.
@@ -1235,42 +1318,44 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 |---|---|
 | Layer A — transactional `RemoveProjectMember` | Task 2 |
 | `CountActiveKeysForMember` for pre-removal dialog | Task 2 |
-| `handleRemoveMember` returns `{revoked_api_keys: N}` | Task 3 |
-| `GET /members/{userID}/affected-keys` endpoint | Task 3 |
-| Layer B — fail-closed membership check in AuthMiddleware | Task 4 |
-| `memberPresentCache` (10s, shared key) | Task 4 |
-| Triple-cache hydration via one DB call | Task 4 |
+| Close superadmin loophole — `handleCreateKey` requires membership | Task 3 |
+| `handleRemoveMember` returns `{revoked_api_keys: N}` | Task 4 |
+| `GET /members/{userID}/affected-keys` endpoint | Task 4 |
+| Layer B — fail-closed membership check in AuthMiddleware | Task 5 |
+| `memberPresentCache` (10s, shared key) | Task 5 |
+| Triple-cache hydration via one DB call | Task 5 |
 | Backfill migration 055 | Task 1 |
-| Frontend confirmation dialog | Task 5 |
-| Frontend success toast w/ count | Task 5 |
+| Frontend confirmation dialog | Task 6 |
+| Frontend success toast w/ count | Task 6 |
 | Status flip uses existing `revoked` enum value | Task 2 (SQL literal `'revoked'`), Task 1 (SQL literal `'revoked'`) |
 | Re-add does NOT auto-reactivate | Implicit — nothing in any task reactivates revoked keys; documented in spec |
 | Owner-removal protection | Out of scope (spec) — no task |
 | Tests cover: tx atomicity, scope by (project, user), pre-migration zombie state, count-only-active | Task 2 (4 tests) |
-| Tests cover: 401 on removed member, 503 on DB error (fail-closed), positive and negative cache hits, error not cached | Task 4 (5 tests) |
+| Tests cover: 401 on removed member, 503 on DB error (fail-closed), positive and negative cache hits, error not cached | Task 5 (5 tests) |
 | Tests cover: migration revokes only orphans, leaves member's keys alone, idempotent on re-run | Task 1 (1 test, multiple assertions) |
-| Frontend tests | N/A — no FE framework (called out in Global Constraints + Task 5 Step 4 manual smoke) |
+| Frontend tests | N/A — no FE framework (called out in Global Constraints + Task 6 Step 4 manual smoke) |
 
 No spec requirement is unimplemented.
 
 **2. Placeholder scan**
 
 - No TBD / TODO / "implement later" / "appropriate error handling" / "similar to Task N" / vague refs.
-- Task 5 Step 2 instructs the engineer to read `MembersPage.tsx` end-to-end before editing — necessary because the page already has its own state and the dialog JSX must align with existing patterns. The example JSX block is the target shape; the surrounding scaffold (imports, useState placement, dialog footer convention) is described concretely.
-- Task 4 Step 5 inlines the triple-cache logic instead of calling `checkMembership` directly — this is a deliberate decoupling explained in the step text (the inline version uses the shared `GetProjectMember` call to hydrate three caches in one DB round-trip; `checkMembership` exists purely for its unit-test contract).
-- Task 2 Step 5 explicitly authorizes leaving the build red between commits (Task 2's signature change vs Task 3's caller update). This is honest scaffolding, not a defect.
+- Task 6 Step 2 instructs the engineer to read `MembersPage.tsx` end-to-end before editing — necessary because the page already has its own state and the dialog JSX must align with existing patterns. The example JSX block is the target shape; the surrounding scaffold (imports, useState placement, dialog footer convention) is described concretely.
+- Task 5 Step 5 inlines the triple-cache logic instead of calling `checkMembership` directly — this is a deliberate decoupling explained in the step text (the inline version uses the shared `GetProjectMember` call to hydrate three caches in one DB round-trip; `checkMembership` exists purely for its unit-test contract).
+- Task 2 Step 5 explicitly authorizes leaving the build red between commits (Task 2's signature change vs Task 4's caller update; Task 3 also lands inside this window). This is honest scaffolding, not a defect.
 
 **3. Type consistency**
 
-- `RemoveProjectMember(projectID, userID string) (int, error)` — declared in Task 2, consumed in Task 3 (`revokedCount, err := st.RemoveProjectMember(...)`).
-- `CountActiveKeysForMember(projectID, userID string) (int, error)` — declared in Task 2, consumed in Task 3.
-- Response JSON tags: `{"revoked_api_keys": N}` (Task 3 handler) ↔ TS type `{ revoked_api_keys: number }` (Task 5 mutation). Match.
-- Response JSON tags: `{"active_api_keys": N}` (Task 3 handler) ↔ TS type `{ active_api_keys: number }` (Task 5 hook). Match.
-- `memberStore` interface (Task 4) consumed only inside the proxy package; the production code path doesn't go through it, only the test does. Consistent.
-- `memberPresentCacheGet/Set` and `InvalidateMemberPresentCache` — Task 4 declares all three; production code uses Get+Set, exported Invalidate name is reserved for future callers.
+- `RemoveProjectMember(projectID, userID string) (int, error)` — declared in Task 2, consumed in Task 4 (`revokedCount, err := st.RemoveProjectMember(...)`).
+- `CountActiveKeysForMember(projectID, userID string) (int, error)` — declared in Task 2, consumed in Task 4.
+- Response JSON tags: `{"revoked_api_keys": N}` (Task 4 handler) ↔ TS type `{ revoked_api_keys: number }` (Task 6 mutation). Match.
+- Response JSON tags: `{"active_api_keys": N}` (Task 4 handler) ↔ TS type `{ active_api_keys: number }` (Task 6 hook). Match.
+- `memberStore` interface (Task 5) consumed only inside the proxy package; the production code path doesn't go through it, only the test does. Consistent.
+- `memberPresentCacheGet/Set` and `InvalidateMemberPresentCache` — Task 5 declares all three; production code uses Get+Set, exported Invalidate name is reserved for future callers.
 - `checkMembership(w, ms, projectID, userID) bool` — only consumed by tests in this plan; production inlines the equivalent logic. Documented as such.
-- `useMemberAffectedKeys(projectId, userId | null)` — declared in Task 5 Step 1, consumed in Task 5 Step 2.
-- `removeMember.mutateAsync(userId)` returning a typed body — established via the updated mutation generic in Task 5 Step 1, consumed in the dialog's confirm button (Task 5 Step 2).
+- `useMemberAffectedKeys(projectId, userId | null)` — declared in Task 6 Step 1, consumed in Task 6 Step 2.
+- `removeMember.mutateAsync(userId)` returning a typed body — established via the updated mutation generic in Task 6 Step 1, consumed in the dialog's confirm button (Task 6 Step 2).
+- Task 3's `handleCreateKey` membership check uses existing `MemberFromContext` and `st.GetProjectMember` — no new symbols introduced; no downstream consumers.
 
 No naming drift detected.
 

@@ -59,6 +59,38 @@ Two layers of defense, deployed together:
 - **Hard delete of revoked keys.** Existing behavior (admin must
   explicitly revoke, then delete) is unchanged.
 
+## Closing the superadmin loophole
+
+A background security review flagged that today `projectAccessMiddleware`
+(`internal/admin/routes.go:321-324`) lets superadmins bypass the
+project-membership check entirely — they can call
+`POST /projects/{projectID}/keys` without ever appearing in
+`project_members`. Combined with this spec's `NOT EXISTS (project_members
+…)` predicate, those superadmin-created keys would be revoked by
+migration 055 (and by any future `RemoveProjectMember` call that happens
+to share the `created_by` user).
+
+Rather than carve a `WHERE NOT EXISTS (… is_superadmin)` exemption into
+both the migration and `RemoveProjectMember` — which would weaken the
+invariant "every active key has a member" — we tighten key creation
+instead:
+
+**`handleCreateKey` requires the caller to have a `project_members`
+row in the target project, even when the caller is a superadmin.**
+Superadmins who want to create a key in a project they don't yet belong
+to must first add themselves as a member (any role) via the existing
+`POST /projects/{projectID}/members` endpoint.
+
+This restores the invariant the revocation logic relies on. The
+migration's `NOT EXISTS` predicate becomes precise: every active key
+has a corresponding member row, by construction.
+
+Failure mode: a superadmin who calls `POST /keys` without first joining
+gets a 403 with body
+`{"error":{"code":"forbidden","message":"superadmins must join the
+project as a member before creating API keys"}}`. The dashboard already
+exposes the Add Member flow on the project's Members tab.
+
 ## Scope decisions (from brainstorming)
 
 | Decision | Choice |
