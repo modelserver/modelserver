@@ -324,10 +324,54 @@ func (s *Store) UpdateProjectMember(
 	return err
 }
 
-// RemoveProjectMember removes a member from a project.
-func (s *Store) RemoveProjectMember(projectID, userID string) error {
-	_, err := s.pool.Exec(context.Background(), `
-		DELETE FROM project_members WHERE project_id = $1 AND user_id = $2`,
+// RemoveProjectMember atomically revokes every active API key the member
+// created in this project, then removes the member. Returns the number
+// of keys flipped from 'active' to 'revoked'.
+//
+// The revocation UPDATE runs FIRST so a concurrent in-flight request can
+// never observe (member-deleted, key-still-active) during the tx window.
+// Postgres rolls both statements back on any failure.
+//
+// If the user has no membership row (pre-migration zombie state), the
+// keys are still revoked and the DELETE of zero rows is not an error.
+func (s *Store) RemoveProjectMember(projectID, userID string) (int, error) {
+	ctx := context.Background()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx) // no-op after Commit
+
+	tag, err := tx.Exec(ctx, `
+		UPDATE api_keys
+		   SET status = 'revoked', updated_at = NOW()
+		 WHERE project_id = $1 AND created_by = $2 AND status = 'active'`,
 		projectID, userID)
-	return err
+	if err != nil {
+		return 0, fmt.Errorf("revoke keys: %w", err)
+	}
+	revokedCount := int(tag.RowsAffected())
+
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM project_members WHERE project_id=$1 AND user_id=$2`,
+		projectID, userID); err != nil {
+		return 0, fmt.Errorf("delete member: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit: %w", err)
+	}
+	return revokedCount, nil
+}
+
+// CountActiveKeysForMember returns the number of api_keys with
+// status='active' that the user created in the project. Used by the
+// dashboard's pre-removal confirmation dialog.
+func (s *Store) CountActiveKeysForMember(projectID, userID string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM api_keys
+		 WHERE project_id = $1 AND created_by = $2 AND status = 'active'`,
+		projectID, userID).Scan(&n)
+	return n, err
 }
