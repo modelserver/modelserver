@@ -42,9 +42,10 @@ type RateLimitPolicy struct {
 	ProjectID        string                `json:"project_id"`
 	Name             string                `json:"name"`
 	IsDefault        bool                  `json:"is_default"`
-	CreditRules      []CreditRule          `json:"credit_rules,omitempty"`
-	ModelCreditRates map[string]CreditRate `json:"model_credit_rates,omitempty"`
-	ClassicRules     []ClassicRule         `json:"classic_rules,omitempty"`
+	CreditRules            []CreditRule                     `json:"credit_rules,omitempty"`
+	ModelCreditRates       map[string]CreditRate            `json:"model_credit_rates,omitempty"`
+	ClientModelCreditRates map[string]map[string]CreditRate `json:"client_model_credit_rates,omitempty"`
+	ClassicRules           []ClassicRule                    `json:"classic_rules,omitempty"`
 	StartsAt         *time.Time            `json:"starts_at,omitempty"`
 	ExpiresAt        *time.Time            `json:"expires_at,omitempty"`
 	CreatedAt        time.Time             `json:"created_at"`

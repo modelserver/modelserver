@@ -14,9 +14,10 @@ type Plan struct {
 	PriceCNYFen      int64                 `json:"price_cny_fen"`
 	PriceUSDCents    int64                 `json:"price_usd_cents"`
 	PeriodMonths     int                   `json:"period_months"`
-	CreditRules      []CreditRule          `json:"credit_rules,omitempty"`
-	ModelCreditRates map[string]CreditRate `json:"model_credit_rates,omitempty"`
-	ClassicRules     []ClassicRule         `json:"classic_rules,omitempty"`
+	CreditRules            []CreditRule                     `json:"credit_rules,omitempty"`
+	ModelCreditRates       map[string]CreditRate            `json:"model_credit_rates,omitempty"`
+	ClientModelCreditRates map[string]map[string]CreditRate `json:"client_model_credit_rates,omitempty"`
+	ClassicRules           []ClassicRule                    `json:"classic_rules,omitempty"`
 	IsActive         bool                  `json:"is_active"`
 	CreatedAt        time.Time             `json:"created_at"`
 	UpdatedAt        time.Time             `json:"updated_at"`
@@ -45,11 +46,12 @@ func (p *Plan) ToPolicy(projectID string, subscriptionStartsAt *time.Time) *Rate
 		}
 	}
 	return &RateLimitPolicy{
-		ID:               "plan:" + p.ID,
-		ProjectID:        projectID,
-		Name:             p.Name,
-		CreditRules:      rules,
-		ModelCreditRates: p.ModelCreditRates,
-		ClassicRules:     p.ClassicRules,
+		ID:                     "plan:" + p.ID,
+		ProjectID:              projectID,
+		Name:                   p.Name,
+		CreditRules:            rules,
+		ModelCreditRates:       p.ModelCreditRates,
+		ClientModelCreditRates: p.ClientModelCreditRates,
+		ClassicRules:           p.ClassicRules,
 	}
 }

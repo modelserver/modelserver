@@ -14,37 +14,41 @@ import (
 func (s *Store) CreatePlan(p *types.Plan) error {
 	creditRulesJSON, _ := marshalJSON(p.CreditRules)
 	ratesJSON, _ := marshalJSON(p.ModelCreditRates)
+	clientRatesJSON, _ := marshalJSON(p.ClientModelCreditRates)
 	classicJSON, _ := marshalJSON(p.ClassicRules)
 
 	return s.pool.QueryRow(context.Background(), `
 		INSERT INTO plans (name, slug, display_name, description, tier_level, group_tag,
-			price_cny_fen, price_usd_cents, period_months, credit_rules, model_credit_rates, classic_rules, is_active)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			price_cny_fen, price_usd_cents, period_months, credit_rules, model_credit_rates,
+			client_model_credit_rates, classic_rules, is_active)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id, created_at, updated_at`,
 		p.Name, p.Slug, p.DisplayName, p.Description, p.TierLevel, p.GroupTag,
-		p.PriceCNYFen, p.PriceUSDCents, p.PeriodMonths, creditRulesJSON, ratesJSON, classicJSON, p.IsActive,
+		p.PriceCNYFen, p.PriceUSDCents, p.PeriodMonths, creditRulesJSON, ratesJSON,
+		clientRatesJSON, classicJSON, p.IsActive,
 	).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
 }
 
 // GetPlanByID returns a plan by ID.
 func (s *Store) GetPlanByID(id string) (*types.Plan, error) {
 	p := &types.Plan{}
-	var creditRules, rates, classic []byte
+	var creditRules, rates, clientRates, classic []byte
 	err := s.pool.QueryRow(context.Background(), `
 		SELECT id, name, slug, display_name, description, tier_level, group_tag,
-			price_cny_fen, price_usd_cents, period_months, credit_rules, model_credit_rates, classic_rules,
-			is_active, created_at, updated_at
+			price_cny_fen, price_usd_cents, period_months, credit_rules, model_credit_rates,
+			client_model_credit_rates,
+			classic_rules, is_active, created_at, updated_at
 		FROM plans WHERE id = $1`, id,
 	).Scan(&p.ID, &p.Name, &p.Slug, &p.DisplayName, &p.Description, &p.TierLevel, &p.GroupTag,
-		&p.PriceCNYFen, &p.PriceUSDCents, &p.PeriodMonths, &creditRules, &rates, &classic,
-		&p.IsActive, &p.CreatedAt, &p.UpdatedAt)
+		&p.PriceCNYFen, &p.PriceUSDCents, &p.PeriodMonths, &creditRules, &rates, &clientRates,
+		&classic, &p.IsActive, &p.CreatedAt, &p.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get plan: %w", err)
 	}
-	if err := unmarshalPlanJSON(p, creditRules, rates, classic); err != nil {
+	if err := unmarshalPlanJSON(p, creditRules, rates, clientRates, classic); err != nil {
 		return nil, fmt.Errorf("get plan: %w", err)
 	}
 	return p, nil
@@ -53,22 +57,23 @@ func (s *Store) GetPlanByID(id string) (*types.Plan, error) {
 // GetPlanBySlug returns a plan by slug.
 func (s *Store) GetPlanBySlug(slug string) (*types.Plan, error) {
 	p := &types.Plan{}
-	var creditRules, rates, classic []byte
+	var creditRules, rates, clientRates, classic []byte
 	err := s.pool.QueryRow(context.Background(), `
 		SELECT id, name, slug, display_name, description, tier_level, group_tag,
-			price_cny_fen, price_usd_cents, period_months, credit_rules, model_credit_rates, classic_rules,
-			is_active, created_at, updated_at
+			price_cny_fen, price_usd_cents, period_months, credit_rules, model_credit_rates,
+			client_model_credit_rates,
+			classic_rules, is_active, created_at, updated_at
 		FROM plans WHERE slug = $1`, slug,
 	).Scan(&p.ID, &p.Name, &p.Slug, &p.DisplayName, &p.Description, &p.TierLevel, &p.GroupTag,
-		&p.PriceCNYFen, &p.PriceUSDCents, &p.PeriodMonths, &creditRules, &rates, &classic,
-		&p.IsActive, &p.CreatedAt, &p.UpdatedAt)
+		&p.PriceCNYFen, &p.PriceUSDCents, &p.PeriodMonths, &creditRules, &rates, &clientRates,
+		&classic, &p.IsActive, &p.CreatedAt, &p.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get plan by slug: %w", err)
 	}
-	if err := unmarshalPlanJSON(p, creditRules, rates, classic); err != nil {
+	if err := unmarshalPlanJSON(p, creditRules, rates, clientRates, classic); err != nil {
 		return nil, fmt.Errorf("get plan by slug: %w", err)
 	}
 	return p, nil
@@ -78,8 +83,9 @@ func (s *Store) GetPlanBySlug(slug string) (*types.Plan, error) {
 func (s *Store) ListPlans(activeOnly bool) ([]types.Plan, error) {
 	query := `
 		SELECT id, name, slug, display_name, description, tier_level, group_tag,
-			price_cny_fen, price_usd_cents, period_months, credit_rules, model_credit_rates, classic_rules,
-			is_active, created_at, updated_at
+			price_cny_fen, price_usd_cents, period_months, credit_rules, model_credit_rates,
+			client_model_credit_rates,
+			classic_rules, is_active, created_at, updated_at
 		FROM plans`
 	if activeOnly {
 		query += ` WHERE is_active = TRUE`
@@ -104,8 +110,9 @@ func (s *Store) ListPlansPaginated(p types.PaginationParams) ([]types.Plan, int,
 
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT id, name, slug, display_name, description, tier_level, group_tag,
-			price_cny_fen, price_usd_cents, period_months, credit_rules, model_credit_rates, classic_rules,
-			is_active, created_at, updated_at
+			price_cny_fen, price_usd_cents, period_months, credit_rules, model_credit_rates,
+			client_model_credit_rates,
+			classic_rules, is_active, created_at, updated_at
 		FROM plans ORDER BY %s %s LIMIT $1 OFFSET $2`,
 		sanitizeSort(p.Sort, "tier_level"), sanitizeOrder(p.Order)),
 		p.Limit(), p.Offset(),
@@ -126,8 +133,9 @@ func (s *Store) ListPlansPaginated(p types.PaginationParams) ([]types.Plan, int,
 func (s *Store) ListPlansForProject(projectID string) ([]types.Plan, error) {
 	rows, err := s.pool.Query(context.Background(), `
 		SELECT pl.id, pl.name, pl.slug, pl.display_name, pl.description, pl.tier_level, pl.group_tag,
-			pl.price_cny_fen, pl.price_usd_cents, pl.period_months, pl.credit_rules, pl.model_credit_rates, pl.classic_rules,
-			pl.is_active, pl.created_at, pl.updated_at
+			pl.price_cny_fen, pl.price_usd_cents, pl.period_months, pl.credit_rules, pl.model_credit_rates,
+			pl.client_model_credit_rates,
+			pl.classic_rules, pl.is_active, pl.created_at, pl.updated_at
 		FROM plans pl
 		JOIN projects pr ON pr.id = $1
 		WHERE pl.is_active = TRUE
@@ -158,14 +166,14 @@ func scanPlans(rows pgx.Rows) ([]types.Plan, error) {
 	var plans []types.Plan
 	for rows.Next() {
 		var p types.Plan
-		var creditRules, rates, classic []byte
+		var creditRules, rates, clientRates, classic []byte
 		if err := rows.Scan(&p.ID, &p.Name, &p.Slug, &p.DisplayName, &p.Description,
 			&p.TierLevel, &p.GroupTag, &p.PriceCNYFen, &p.PriceUSDCents, &p.PeriodMonths,
-			&creditRules, &rates, &classic,
-			&p.IsActive, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			&creditRules, &rates, &clientRates,
+			&classic, &p.IsActive, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan plan: %w", err)
 		}
-		if err := unmarshalPlanJSON(&p, creditRules, rates, classic); err != nil {
+		if err := unmarshalPlanJSON(&p, creditRules, rates, clientRates, classic); err != nil {
 			return nil, err
 		}
 		plans = append(plans, p)
@@ -176,7 +184,7 @@ func scanPlans(rows pgx.Rows) ([]types.Plan, error) {
 	return plans, nil
 }
 
-func unmarshalPlanJSON(p *types.Plan, creditRules, rates, classic []byte) error {
+func unmarshalPlanJSON(p *types.Plan, creditRules, rates, clientRates, classic []byte) error {
 	if creditRules != nil {
 		if err := json.Unmarshal(creditRules, &p.CreditRules); err != nil {
 			return fmt.Errorf("unmarshal credit_rules: %w", err)
@@ -185,6 +193,11 @@ func unmarshalPlanJSON(p *types.Plan, creditRules, rates, classic []byte) error 
 	if rates != nil {
 		if err := json.Unmarshal(rates, &p.ModelCreditRates); err != nil {
 			return fmt.Errorf("unmarshal model_credit_rates: %w", err)
+		}
+	}
+	if clientRates != nil {
+		if err := json.Unmarshal(clientRates, &p.ClientModelCreditRates); err != nil {
+			return fmt.Errorf("unmarshal client_model_credit_rates: %w", err)
 		}
 	}
 	if classic != nil {

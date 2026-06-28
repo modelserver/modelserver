@@ -13,7 +13,8 @@ import (
 // routeSelectCols is the canonical SELECT column list for route rows.
 // It must stay in lockstep with scanRoute's Scan argument order.
 const routeSelectCols = `id, COALESCE(project_id::text, ''), model_names, request_kinds,
-	upstream_group_id, match_priority, conditions, status, created_at, updated_at`
+	upstream_group_id, match_priority, conditions, status, created_at, updated_at,
+	clients`
 
 // CreateRoute inserts a new route.
 func (s *Store) CreateRoute(r *types.Route) error {
@@ -29,12 +30,17 @@ func (s *Store) CreateRoute(r *types.Route) error {
 	if requestKinds == nil {
 		requestKinds = []string{}
 	}
+	clients := r.Clients
+	if clients == nil {
+		clients = []string{}
+	}
 	return s.pool.QueryRow(context.Background(), `
-		INSERT INTO routes (project_id, model_names, request_kinds, upstream_group_id, match_priority, conditions, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO routes (project_id, model_names, request_kinds, upstream_group_id,
+		    match_priority, conditions, status, clients)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, created_at, updated_at`,
 		nullString(r.ProjectID), modelNames, requestKinds, r.UpstreamGroupID,
-		r.MatchPriority, conditionsJSON, r.Status,
+		r.MatchPriority, conditionsJSON, r.Status, clients,
 	).Scan(&r.ID, &r.CreatedAt, &r.UpdatedAt)
 }
 
@@ -45,7 +51,8 @@ func (s *Store) GetRouteByID(id string) (*types.Route, error) {
 	err := s.pool.QueryRow(context.Background(),
 		fmt.Sprintf(`SELECT %s FROM routes WHERE id = $1`, routeSelectCols), id,
 	).Scan(&r.ID, &r.ProjectID, &r.ModelNames, &r.RequestKinds, &r.UpstreamGroupID,
-		&r.MatchPriority, &conditionsRaw, &r.Status, &r.CreatedAt, &r.UpdatedAt)
+		&r.MatchPriority, &conditionsRaw, &r.Status, &r.CreatedAt, &r.UpdatedAt,
+		&r.Clients)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -165,7 +172,8 @@ func scanRoute(rows pgx.Rows) (*types.Route, error) {
 	r := &types.Route{}
 	var conditionsRaw []byte
 	if err := rows.Scan(&r.ID, &r.ProjectID, &r.ModelNames, &r.RequestKinds, &r.UpstreamGroupID,
-		&r.MatchPriority, &conditionsRaw, &r.Status, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		&r.MatchPriority, &conditionsRaw, &r.Status, &r.CreatedAt, &r.UpdatedAt,
+		&r.Clients); err != nil {
 		return nil, err
 	}
 	r.Conditions = unmarshalConditions(conditionsRaw)
