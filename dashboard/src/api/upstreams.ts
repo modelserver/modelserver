@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
-import type { ListResponse, DataResponse, Upstream, UpstreamGroupWithMembers, RoutingRoute, UpstreamTestResult, UpstreamUsageSummary, ClaudeCodeUtilization } from "./types";
+import type { ListResponse, DataResponse, Upstream, UpstreamGroupWithMembers, RoutingRoute, RoutingMatrix, UpstreamTestResult, UpstreamUsageSummary, ClaudeCodeUtilization } from "./types";
 
 // --- Upstreams ---
 export function useUpstreams(page = 1, perPage = 20) {
@@ -284,7 +284,10 @@ export function useCreateRoutingRoute() {
   return useMutation({
     mutationFn: (body: Partial<RoutingRoute>) =>
       api.post<DataResponse<RoutingRoute>>("/api/v1/routing/routes", body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "routing-routes"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "routing-routes"] });
+      qc.invalidateQueries({ queryKey: ["admin", "routing-matrix"] });
+    },
   });
 }
 
@@ -293,7 +296,10 @@ export function useUpdateRoutingRoute() {
   return useMutation({
     mutationFn: ({ id, ...body }: Partial<RoutingRoute> & { id: string }) =>
       api.put<DataResponse<RoutingRoute>>(`/api/v1/routing/routes/${id}`, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "routing-routes"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "routing-routes"] });
+      qc.invalidateQueries({ queryKey: ["admin", "routing-matrix"] });
+    },
   });
 }
 
@@ -301,7 +307,10 @@ export function useDeleteRoutingRoute() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/routing/routes/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "routing-routes"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "routing-routes"] });
+      qc.invalidateQueries({ queryKey: ["admin", "routing-matrix"] });
+    },
   });
 }
 
@@ -312,6 +321,28 @@ export function useRequestKinds() {
     queryKey: ["admin", "routing-request-kinds"],
     queryFn: () => api.get<DataResponse<string[]>>("/api/v1/routing/request-kinds"),
     staleTime: 60 * 60 * 1000,
+  });
+}
+
+// useRoutingMatrix returns the global-route Model x Kind matrix. Cells are
+// sparse: pairs with no resolving route are absent.
+export function useRoutingMatrix() {
+  return useQuery({
+    queryKey: ["admin", "routing-matrix"],
+    queryFn: () =>
+      api.get<DataResponse<RoutingMatrix>>("/api/v1/routing/matrix"),
+  });
+}
+
+// useRoutingRoute fetches one route by ID. Used by the Matrix tab when a
+// cell click references a route that isn't in the current List page window.
+// Pass null to disable the query.
+export function useRoutingRoute(id: string | null) {
+  return useQuery({
+    queryKey: ["admin", "routing-route", id],
+    queryFn: () =>
+      api.get<DataResponse<RoutingRoute>>(`/api/v1/routing/routes/${id}`),
+    enabled: !!id,
   });
 }
 

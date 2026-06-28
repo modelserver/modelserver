@@ -498,3 +498,23 @@ export interface RoutingRoute {
   updated_at: string;
 }
 
+// One resolved cell in the (model x request-kind) routing matrix.
+// Only emitted for (model, kind) pairs that resolve to a group; unrouted
+// pairs are absent from the array (sparse representation).
+export interface RoutingMatrixCell {
+  model: string;
+  kind: string;
+  upstream_group_id: string;
+  upstream_group_name: string;
+  route_id: string;
+  match_priority: number;
+}
+
+// Server-rendered matrix view for /admin/routes. `models` and `kinds` are
+// alphabetical; `cells` is sparse.
+export interface RoutingMatrix {
+  models: string[];
+  kinds: string[];
+  cells: RoutingMatrixCell[];
+}
+
