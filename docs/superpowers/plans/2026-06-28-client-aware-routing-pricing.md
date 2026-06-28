@@ -1200,10 +1200,705 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-> **End of installment 3 (Task 5).** Trace middleware now exposes the client bucket on the request context. Tasks 6 + 7 will consume it.
+### Task 6: Router refactor — Match signature + weighted specificity + MatrixGlobal extension
+
+**Files:**
+- Modify: `internal/proxy/router_engine.go` (Match signature; matchesGlobalRoute predicate; specificity sort; MatrixCell struct; MatrixGlobal signature + body)
+- Modify: `internal/proxy/router_engine_test.go` (update 9 existing `r.Match(...)` call sites; rewrite `TestRouter_MatrixGlobal`; add 7 new tests)
+- Modify: `internal/proxy/executor.go` (one-line caller update at L253)
+
+**Interfaces:**
+- Consumes: `types.MapClientKindToBucket` (Task 1), `ClientBucketFromContext` (Task 5), `types.Route.Clients` + `BillingModes` (Task 4), `types.BillingMode*` constants (Task 1).
+- Produces:
+  ```go
+  // router_engine.go
+  func (r *Router) Match(projectID, model, kind, client, billingMode string) (*resolvedGroup, error)
+
+  type MatrixCell struct {
+      Model           string
+      Kind            string
+      Client          string   // NEW — empty string when winning route's Clients is empty
+      BillingMode     string   // NEW — empty string when winning route's BillingModes is empty
+      UpstreamGroupID string
+      UpstreamGroupName string  // hydrated by handler from SnapshotGroupNames; spec/plan added in routing-matrix PR — keep current field set
+      RouteID         string
+      MatchPriority   int
+      Clients         []string // NEW — verbatim from the winning route (informational)
+      BillingModes    []string // NEW — verbatim from the winning route (informational)
+  }
+
+  func (r *Router) MatrixGlobal(models []string, filterClient, filterBillingMode string) []MatrixCell
+  ```
+  `executor.go:253` calls the new signature with `ClientBucketFromContext(r.Context())` and a `billingMode` derived from `reqCtx.IsExtraUsage`. The admin matrix endpoint (Task 8) calls `MatrixGlobal` with the filters from query params.
+
+This is the single biggest task in the plan. It's intentionally one commit because the signature change ripples through ~10 call sites; staging it across multiple commits leaves a window of red builds with no shipping value.
+
+#### Algorithm recap
+
+Match collects every route that matches `(projectID, model, kind, client, billingMode)` (project-scoped or global), scores each by weighted specificity, and picks the best with a deterministic tiebreak:
+
+```
+spec = (project_id_specific ? 100 : 0)
+     + (clients_specific    ?  10 : 0)
+     + (billing_modes_specific ?  1 : 0)
+sort: spec desc, MatchPriority desc, ID asc
+take head
+```
+
+Weights 100/10/1 are lexicographic: project trumps everything; client beats mode; mode is tiebreak among same-project same-client routes. Within a single spec bucket, `MatchPriority desc` decides; final tiebreak is `ID asc` so distributed nodes produce identical answers.
+
+`matchesGlobalRoute` is the **shared** predicate used by both Match and MatrixGlobal — drift between them was a defect fixed in the prior route-matrix PR. This task preserves the shared-predicate invariant. The two new clauses (`Clients`, `BillingModes`) are added to the predicate; both callers benefit automatically.
+
+The current two-pass structure (project-pass then global-pass) collapses into one: we still scan every route once, but the weighted score plus the project-pass-first scan order make the right candidate win without an explicit pass-ordered fall-through.
+
+- [ ] **Step 1: Extend `matchesGlobalRoute` predicate**
+
+In `internal/proxy/router_engine.go`, find the existing `matchesGlobalRoute` (around line 221) and add the two new clauses at the end. The function's contract — "exact projectID equality" — stays the same.
+
+```go
+// matchesGlobalRoute reports whether the route is a candidate for the
+// given (projectID, model, kind, client, billingMode) tuple. Both Match
+// and MatrixGlobal must use this so they cannot drift apart. If you
+// teach this function to evaluate route.Conditions or any new criterion,
+// both consumers benefit automatically.
+func matchesGlobalRoute(route types.Route, projectID, model, kind, client, billingMode string) bool {
+	if route.Status != "active" {
+		return false
+	}
+	if route.ProjectID != projectID {
+		return false
+	}
+	if !slices.Contains(route.ModelNames, model) {
+		return false
+	}
+	if !slices.Contains(route.RequestKinds, kind) {
+		return false
+	}
+	if len(route.Clients) > 0 && !slices.Contains(route.Clients, client) {
+		return false
+	}
+	if len(route.BillingModes) > 0 && !slices.Contains(route.BillingModes, billingMode) {
+		return false
+	}
+	return true
+}
+```
+
+- [ ] **Step 2: Replace `Router.Match` body with the scored algorithm**
+
+Replace the existing `Match` (around line 240) with:
+
+```go
+// Match finds the upstream group for a request, scoring all eligible
+// routes by weighted specificity (project 100, clients 10, billing_modes 1)
+// then MatchPriority desc with ID asc as the final deterministic
+// tiebreak. The shared matchesGlobalRoute predicate guarantees Match and
+// MatrixGlobal stay aligned on what "eligible" means.
+//
+// Specificity weights are lexicographic by construction: project-scoped
+// routes always beat global ones; among same-project routes,
+// client-specific beats client-agnostic; among same-project same-client
+// routes, mode-specific beats mode-agnostic; MatchPriority breaks
+// further ties; ID asc is the deterministic floor.
+func (r *Router) Match(projectID, model, kind, client, billingMode string) (*resolvedGroup, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	type candidate struct {
+		route *types.Route
+		spec  int
+	}
+	var best *candidate
+
+	consider := func(route *types.Route) {
+		// Skip routes pointing at a missing group — mirrors the prior
+		// "if g, ok := r.groups[...]; ok" fall-through behavior.
+		if _, ok := r.groups[route.UpstreamGroupID]; !ok {
+			return
+		}
+		spec := 0
+		if route.ProjectID != "" {
+			spec += 100
+		}
+		if len(route.Clients) > 0 {
+			spec += 10
+		}
+		if len(route.BillingModes) > 0 {
+			spec += 1
+		}
+		if best == nil {
+			best = &candidate{route: route, spec: spec}
+			return
+		}
+		// Tiebreak: spec desc, MatchPriority desc, ID asc.
+		if spec > best.spec ||
+			(spec == best.spec && route.MatchPriority > best.route.MatchPriority) ||
+			(spec == best.spec && route.MatchPriority == best.route.MatchPriority && route.ID < best.route.ID) {
+			best = &candidate{route: route, spec: spec}
+		}
+	}
+
+	for i := range r.routes {
+		route := &r.routes[i]
+		// Project-scoped pass.
+		if matchesGlobalRoute(*route, projectID, model, kind, client, billingMode) {
+			consider(route)
+			continue
+		}
+		// Global fallback pass.
+		if matchesGlobalRoute(*route, "", model, kind, client, billingMode) {
+			consider(route)
+		}
+	}
+
+	if best == nil {
+		return nil, fmt.Errorf("no route configured for model %s on endpoint %s (client=%s billing_mode=%s)",
+			model, kind, client, billingMode)
+	}
+	return r.groups[best.route.UpstreamGroupID], nil
+}
+```
+
+The error message now includes `client` and `billing_mode` so over-narrow route definitions ("I only have a `[subscription]` route — why does my extra-usage request 404?") are diagnosable from the message alone.
+
+The old code held `r.routes` pre-sorted by `MatchPriority desc` (set in `buildMaps`). With the scored algorithm the pre-sort is no longer load-bearing for Match, but it remains useful for `ListRoutes` admin endpoints and is harmless to keep. Do NOT remove the sort in `buildMaps`.
+
+- [ ] **Step 3: Extend `MatrixCell` struct**
+
+Find the `MatrixCell` declaration (around line 463) and add the two new informational fields:
+
+```go
+// MatrixCell is one winning (model, kind, client, billing_mode) -> upstream
+// group resolution, computed by MatrixGlobal. It is the same logical
+// answer Match returns for a (projectID="", model, kind, client,
+// billing_mode) tuple, but emitted as data so the admin UI can render
+// the full matrix in one fetch.
+type MatrixCell struct {
+	Model           string
+	Kind            string
+	Client          string   // bucket the cell was resolved for; "" when no filter applied and not a per-client slice
+	BillingMode     string   // mode the cell was resolved for; "" when no filter applied and not a per-mode slice
+	UpstreamGroupID string
+	RouteID         string
+	MatchPriority   int
+	Clients         []string // verbatim from the winning route — informational for UI badges
+	BillingModes    []string // verbatim from the winning route — informational for UI badges
+}
+```
+
+Note: the existing admin handler (`internal/admin/handle_routing_matrix.go`) wraps `MatrixCell` in `matrixCellOut` with snake_case JSON tags and hydrates `upstream_group_name` separately — Task 8 extends `matrixCellOut` with `clients`, `billing_modes`, `client`, `billing_mode`. This task only changes the Go-level struct; JSON shape changes are Task 8.
+
+- [ ] **Step 4: Rewrite `MatrixGlobal`**
+
+Find the existing `MatrixGlobal` (around line 484) and replace with:
+
+```go
+// MatrixGlobal walks every (model, kind, client, billingMode) 4-tuple
+// over the supplied models, the full AllRequestKinds set, the 5
+// ClientBuckets, and the 2 BillingModes, returning one MatrixCell for
+// each tuple that resolves under the global-route branch of Match
+// (projectID == ""). Unrouted tuples are omitted (sparse result).
+//
+// filterClient: when non-empty, restrict the client axis to that single
+// bucket; the returned cells carry the filter value in their Client
+// field. Empty means "iterate over all 5 buckets and leave Client empty
+// on cells whose winning route is client-agnostic".
+//
+// filterBillingMode: analogous, restricting the billing_mode axis.
+//
+// Rules MUST mirror Match exactly:
+//   - matchesGlobalRoute predicate (shared)
+//   - weighted specificity scoring (clients 10, billing_modes 1; project
+//     does NOT apply here since this is the global pass)
+//   - missing group → skip and keep walking
+func (r *Router) MatrixGlobal(models []string, filterClient, filterBillingMode string) []MatrixCell {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if len(models) == 0 {
+		return nil
+	}
+
+	clients := types.AllClientBuckets
+	if filterClient != "" {
+		clients = []string{filterClient}
+	}
+	modes := types.AllBillingModes
+	if filterBillingMode != "" {
+		modes = []string{filterBillingMode}
+	}
+
+	out := make([]MatrixCell, 0, len(models)*len(types.AllRequestKinds))
+	for _, model := range models {
+		for _, kind := range types.AllRequestKinds {
+			for _, client := range clients {
+				for _, mode := range modes {
+					var best *types.Route
+					var bestSpec int
+					for i := range r.routes {
+						route := &r.routes[i]
+						if !matchesGlobalRoute(*route, "", model, kind, client, mode) {
+							continue
+						}
+						if _, ok := r.groups[route.UpstreamGroupID]; !ok {
+							continue
+						}
+						spec := 0
+						if len(route.Clients) > 0 {
+							spec += 10
+						}
+						if len(route.BillingModes) > 0 {
+							spec += 1
+						}
+						if best == nil ||
+							spec > bestSpec ||
+							(spec == bestSpec && route.MatchPriority > best.MatchPriority) ||
+							(spec == bestSpec && route.MatchPriority == best.MatchPriority && route.ID < best.ID) {
+							best = route
+							bestSpec = spec
+						}
+					}
+					if best == nil {
+						continue
+					}
+					out = append(out, MatrixCell{
+						Model:           model,
+						Kind:            kind,
+						Client:          client,
+						BillingMode:     mode,
+						UpstreamGroupID: best.UpstreamGroupID,
+						RouteID:         best.ID,
+						MatchPriority:   best.MatchPriority,
+						Clients:         best.Clients,
+						BillingModes:    best.BillingModes,
+					})
+				}
+			}
+		}
+	}
+	return out
+}
+```
+
+Coverage / size note: without filters, the iteration is `models × 8 kinds × 5 clients × 2 modes`. For 100 active models that's 8 000 inner loops; each scans `len(r.routes)` candidates. With typical operator route counts (≤ 50) the total work is < 500k comparisons — single-digit milliseconds, well within the existing route-matrix endpoint's response time budget.
+
+- [ ] **Step 5: Update the executor caller**
+
+In `internal/proxy/executor.go`, find the `router.Match` call at line ~253:
+
+```go
+// BEFORE:
+group, err := e.router.Match(reqCtx.ProjectID, reqCtx.Model, reqCtx.RequestKind)
+```
+
+Replace with:
+
+```go
+// AFTER:
+billingMode := types.BillingModeSubscription
+if reqCtx.IsExtraUsage {
+	billingMode = types.BillingModeExtraUsage
+}
+client := ClientBucketFromContext(r.Context())
+group, err := e.router.Match(reqCtx.ProjectID, reqCtx.Model, reqCtx.RequestKind, client, billingMode)
+```
+
+The two new local variables make the routing decision auditable: anyone reading the function sees exactly what dimensions feed the matcher.
+
+`reqCtx.IsExtraUsage` is already stamped on the request context earlier in `Execute()` (currently at executor.go:240) by reading `ExtraUsageContextFromContext`. The flag is authoritative — `RateLimitMiddleware` + `ExtraUsageGuardMiddleware` already decided whether this request is subscription or extra-usage before we get here. **Do NOT add any balance check at this site.**
+
+- [ ] **Step 6: Update all 9 existing `r.Match(...)` call sites in `router_engine_test.go`**
+
+Search and update — every site needs two new args. The trivial way is to add `types.ClientBucketOther` for the client and `types.BillingModeSubscription` for the mode at every existing call, which preserves today's "everyone matches everything" behavior on the legacy test fixtures (which have empty `Clients` and `BillingModes`).
+
+Lines to update (verify against the file before editing — line numbers drift as tests get added):
+
+```
+internal/proxy/router_engine_test.go:50   r.Match("", "claude-sonnet", types.KindAnthropicMessages)
+internal/proxy/router_engine_test.go:210  r.Match("", "claude-sonnet", types.KindAnthropicMessages)
+internal/proxy/router_engine_test.go:345  r.Match("p", "m", types.KindOpenAIResponses)
+internal/proxy/router_engine_test.go:359  r.Match("p", "m", k)
+internal/proxy/router_engine_test.go:378  r.Match("p", "m", types.KindAnthropicCountTokens)
+internal/proxy/router_engine_test.go:400  r.Match("p", "m", types.KindAnthropicMessages)
+internal/proxy/router_engine_test.go:436  r.Match("", "gpt-5", types.KindOpenAIResponsesCompact)
+internal/proxy/router_engine_test.go:451  r.Match("", "gpt-5", types.KindOpenAIResponses)
+internal/proxy/router_engine_test.go:454  r.Match("", "gpt-5", types.KindOpenAIResponsesCompact)
+```
+
+For each, append `, types.ClientBucketOther, types.BillingModeSubscription` before the closing paren. Example:
+
+```go
+// BEFORE
+g, err := r.Match("", "claude-sonnet", types.KindAnthropicMessages)
+
+// AFTER
+g, err := r.Match("", "claude-sonnet", types.KindAnthropicMessages,
+	types.ClientBucketOther, types.BillingModeSubscription)
+```
+
+Also update the existing `TestRouter_MatrixGlobal` (around line 460) — `MatrixGlobal` now takes three args: `(models, filterClient, filterBillingMode)`. Pass `""` for both filter args to preserve today's behavior:
+
+```go
+cells := r.MatrixGlobal(modelNames, "", "")
+```
+
+Add assertions on the new `Client` and `BillingMode` cell fields where appropriate (every cell from the unfiltered call should have a populated `Client ∈ AllClientBuckets` and `BillingMode ∈ AllBillingModes`).
+
+- [ ] **Step 7: Add new precedence + tiebreak + matrix-filter tests**
+
+Append to `internal/proxy/router_engine_test.go`:
+
+```go
+// TestRouter_Match_ClientSpecificity asserts a route with Clients=[X] beats
+// an otherwise-equal route with empty Clients for an X-client request, and
+// loses for a Y-client request.
+func TestRouter_Match_ClientSpecificity(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	upstreams := []types.Upstream{
+		{ID: "up-a", Provider: types.ProviderAnthropic, Status: types.UpstreamStatusActive, Weight: 1, SupportedModels: []string{"m"}},
+	}
+	groups := []store.UpstreamGroupWithMembers{
+		{
+			UpstreamGroup: types.UpstreamGroup{ID: "grp-cc", Name: "claude-code-pool", LBPolicy: types.LBPolicyWeightedRandom, Status: "active"},
+			Members:       []store.UpstreamGroupMemberDetail{{UpstreamGroupMember: types.UpstreamGroupMember{UpstreamGroupID: "grp-cc", UpstreamID: "up-a"}}},
+		},
+		{
+			UpstreamGroup: types.UpstreamGroup{ID: "grp-any", Name: "any-pool", LBPolicy: types.LBPolicyWeightedRandom, Status: "active"},
+			Members:       []store.UpstreamGroupMemberDetail{{UpstreamGroupMember: types.UpstreamGroupMember{UpstreamGroupID: "grp-any", UpstreamID: "up-a"}}},
+		},
+	}
+	routes := []types.Route{
+		{ID: "rt-cc", ProjectID: "", ModelNames: []string{"m"}, RequestKinds: []string{types.KindAnthropicMessages},
+			Clients: []string{types.ClientBucketClaudeCodeCLI}, BillingModes: nil,
+			UpstreamGroupID: "grp-cc", MatchPriority: 1, Status: "active"},
+		{ID: "rt-any", ProjectID: "", ModelNames: []string{"m"}, RequestKinds: []string{types.KindAnthropicMessages},
+			Clients: nil, BillingModes: nil,
+			UpstreamGroupID: "grp-any", MatchPriority: 100, Status: "active"},
+	}
+	r := NewRouter(upstreams, groups, routes, []byte{}, logger, time.Minute, nil, nil, nil)
+
+	// claude-code request → specific route wins despite lower priority.
+	g, err := r.Match("", "m", types.KindAnthropicMessages,
+		types.ClientBucketClaudeCodeCLI, types.BillingModeSubscription)
+	if err != nil {
+		t.Fatalf("Match: %v", err)
+	}
+	if g.group.ID != "grp-cc" {
+		t.Errorf("client-specific lost: group = %s, want grp-cc", g.group.ID)
+	}
+
+	// other-client request → falls back to client-agnostic route.
+	g, err = r.Match("", "m", types.KindAnthropicMessages,
+		types.ClientBucketOther, types.BillingModeSubscription)
+	if err != nil {
+		t.Fatalf("Match (other): %v", err)
+	}
+	if g.group.ID != "grp-any" {
+		t.Errorf("client-agnostic fallback: group = %s, want grp-any", g.group.ID)
+	}
+}
+
+// TestRouter_Match_BillingModeSpecificity asserts the analogous rule for billing modes.
+func TestRouter_Match_BillingModeSpecificity(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	upstreams := []types.Upstream{
+		{ID: "up-a", Provider: types.ProviderAnthropic, Status: types.UpstreamStatusActive, Weight: 1, SupportedModels: []string{"m"}},
+	}
+	groups := []store.UpstreamGroupWithMembers{
+		{UpstreamGroup: types.UpstreamGroup{ID: "grp-sub", Name: "subscription-pool", LBPolicy: types.LBPolicyWeightedRandom, Status: "active"},
+			Members: []store.UpstreamGroupMemberDetail{{UpstreamGroupMember: types.UpstreamGroupMember{UpstreamGroupID: "grp-sub", UpstreamID: "up-a"}}}},
+		{UpstreamGroup: types.UpstreamGroup{ID: "grp-any", Name: "any-pool", LBPolicy: types.LBPolicyWeightedRandom, Status: "active"},
+			Members: []store.UpstreamGroupMemberDetail{{UpstreamGroupMember: types.UpstreamGroupMember{UpstreamGroupID: "grp-any", UpstreamID: "up-a"}}}},
+	}
+	routes := []types.Route{
+		{ID: "rt-sub", ProjectID: "", ModelNames: []string{"m"}, RequestKinds: []string{types.KindAnthropicMessages},
+			BillingModes: []string{types.BillingModeSubscription},
+			UpstreamGroupID: "grp-sub", MatchPriority: 1, Status: "active"},
+		{ID: "rt-any", ProjectID: "", ModelNames: []string{"m"}, RequestKinds: []string{types.KindAnthropicMessages},
+			UpstreamGroupID: "grp-any", MatchPriority: 100, Status: "active"},
+	}
+	r := NewRouter(upstreams, groups, routes, []byte{}, logger, time.Minute, nil, nil, nil)
+
+	g, _ := r.Match("", "m", types.KindAnthropicMessages,
+		types.ClientBucketOther, types.BillingModeSubscription)
+	if g.group.ID != "grp-sub" {
+		t.Errorf("mode-specific lost: %s, want grp-sub", g.group.ID)
+	}
+	g, _ = r.Match("", "m", types.KindAnthropicMessages,
+		types.ClientBucketOther, types.BillingModeExtraUsage)
+	if g.group.ID != "grp-any" {
+		t.Errorf("mode-agnostic fallback: %s, want grp-any", g.group.ID)
+	}
+}
+
+// TestRouter_Match_FullPrecedence covers the spec's full specificity stack:
+//   (project + clients + modes) > (project + clients) > (project) >
+//   (clients + modes global) > (plain global)
+// All five routes match the request; the most-specific must win regardless
+// of MatchPriority ordering.
+func TestRouter_Match_FullPrecedence(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	upstreams := []types.Upstream{
+		{ID: "up", Provider: types.ProviderAnthropic, Status: types.UpstreamStatusActive, Weight: 1, SupportedModels: []string{"m"}},
+	}
+	mkGroup := func(id string) store.UpstreamGroupWithMembers {
+		return store.UpstreamGroupWithMembers{
+			UpstreamGroup: types.UpstreamGroup{ID: id, Name: id, LBPolicy: types.LBPolicyWeightedRandom, Status: "active"},
+			Members:       []store.UpstreamGroupMemberDetail{{UpstreamGroupMember: types.UpstreamGroupMember{UpstreamGroupID: id, UpstreamID: "up"}}},
+		}
+	}
+	groups := []store.UpstreamGroupWithMembers{
+		mkGroup("g-plain"), mkGroup("g-cm"), mkGroup("g-proj"), mkGroup("g-pc"), mkGroup("g-pcm"),
+	}
+	routes := []types.Route{
+		// All 5 match (project p, model m, kind anthropic_messages, client cc, mode sub).
+		{ID: "rt-plain", ProjectID: "", ModelNames: []string{"m"}, RequestKinds: []string{types.KindAnthropicMessages},
+			UpstreamGroupID: "g-plain", MatchPriority: 1000, Status: "active"},
+		{ID: "rt-cm", ProjectID: "", ModelNames: []string{"m"}, RequestKinds: []string{types.KindAnthropicMessages},
+			Clients: []string{types.ClientBucketClaudeCodeCLI}, BillingModes: []string{types.BillingModeSubscription},
+			UpstreamGroupID: "g-cm", MatchPriority: 999, Status: "active"},
+		{ID: "rt-proj", ProjectID: "p", ModelNames: []string{"m"}, RequestKinds: []string{types.KindAnthropicMessages},
+			UpstreamGroupID: "g-proj", MatchPriority: 0, Status: "active"},
+		{ID: "rt-pc", ProjectID: "p", ModelNames: []string{"m"}, RequestKinds: []string{types.KindAnthropicMessages},
+			Clients: []string{types.ClientBucketClaudeCodeCLI},
+			UpstreamGroupID: "g-pc", MatchPriority: 0, Status: "active"},
+		{ID: "rt-pcm", ProjectID: "p", ModelNames: []string{"m"}, RequestKinds: []string{types.KindAnthropicMessages},
+			Clients: []string{types.ClientBucketClaudeCodeCLI}, BillingModes: []string{types.BillingModeSubscription},
+			UpstreamGroupID: "g-pcm", MatchPriority: 0, Status: "active"},
+	}
+	r := NewRouter(upstreams, groups, routes, []byte{}, logger, time.Minute, nil, nil, nil)
+
+	g, err := r.Match("p", "m", types.KindAnthropicMessages,
+		types.ClientBucketClaudeCodeCLI, types.BillingModeSubscription)
+	if err != nil {
+		t.Fatalf("Match: %v", err)
+	}
+	if g.group.ID != "g-pcm" {
+		t.Errorf("precedence broken: got %s, want g-pcm (project+clients+modes most specific)", g.group.ID)
+	}
+}
+
+// TestRouter_Match_LegacyEmptyMatchesAny asserts pre-migration routes
+// (empty Clients + empty BillingModes) match every (client, mode)
+// combination, preserving today's "match any" semantics.
+func TestRouter_Match_LegacyEmptyMatchesAny(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	upstreams := []types.Upstream{
+		{ID: "up", Provider: types.ProviderAnthropic, Status: types.UpstreamStatusActive, Weight: 1, SupportedModels: []string{"m"}},
+	}
+	groups := []store.UpstreamGroupWithMembers{
+		{UpstreamGroup: types.UpstreamGroup{ID: "grp", Name: "grp", LBPolicy: types.LBPolicyWeightedRandom, Status: "active"},
+			Members: []store.UpstreamGroupMemberDetail{{UpstreamGroupMember: types.UpstreamGroupMember{UpstreamGroupID: "grp", UpstreamID: "up"}}}},
+	}
+	routes := []types.Route{
+		{ID: "rt", ProjectID: "", ModelNames: []string{"m"}, RequestKinds: []string{types.KindAnthropicMessages},
+			UpstreamGroupID: "grp", MatchPriority: 0, Status: "active"},
+	}
+	r := NewRouter(upstreams, groups, routes, []byte{}, logger, time.Minute, nil, nil, nil)
+
+	for _, c := range types.AllClientBuckets {
+		for _, m := range types.AllBillingModes {
+			g, err := r.Match("", "m", types.KindAnthropicMessages, c, m)
+			if err != nil {
+				t.Errorf("Match(client=%s, mode=%s): %v", c, m, err)
+			}
+			if g != nil && g.group.ID != "grp" {
+				t.Errorf("Match(client=%s, mode=%s) = %s, want grp", c, m, g.group.ID)
+			}
+		}
+	}
+}
+
+// TestRouter_Match_DeterministicTiebreak asserts that two routes with
+// identical specificity AND identical MatchPriority resolve by ID asc
+// (lexicographic). Stable across nodes.
+func TestRouter_Match_DeterministicTiebreak(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	upstreams := []types.Upstream{
+		{ID: "up", Provider: types.ProviderAnthropic, Status: types.UpstreamStatusActive, Weight: 1, SupportedModels: []string{"m"}},
+	}
+	groups := []store.UpstreamGroupWithMembers{
+		{UpstreamGroup: types.UpstreamGroup{ID: "grp-aaa", Name: "aaa", LBPolicy: types.LBPolicyWeightedRandom, Status: "active"},
+			Members: []store.UpstreamGroupMemberDetail{{UpstreamGroupMember: types.UpstreamGroupMember{UpstreamGroupID: "grp-aaa", UpstreamID: "up"}}}},
+		{UpstreamGroup: types.UpstreamGroup{ID: "grp-bbb", Name: "bbb", LBPolicy: types.LBPolicyWeightedRandom, Status: "active"},
+			Members: []store.UpstreamGroupMemberDetail{{UpstreamGroupMember: types.UpstreamGroupMember{UpstreamGroupID: "grp-bbb", UpstreamID: "up"}}}},
+	}
+	// Two routes with identical spec (both global, both client-agnostic, both mode-agnostic)
+	// and identical MatchPriority. IDs chosen so "rt-aaa" < "rt-bbb" lexicographically.
+	routes := []types.Route{
+		{ID: "rt-bbb", ProjectID: "", ModelNames: []string{"m"}, RequestKinds: []string{types.KindAnthropicMessages},
+			UpstreamGroupID: "grp-bbb", MatchPriority: 5, Status: "active"},
+		{ID: "rt-aaa", ProjectID: "", ModelNames: []string{"m"}, RequestKinds: []string{types.KindAnthropicMessages},
+			UpstreamGroupID: "grp-aaa", MatchPriority: 5, Status: "active"},
+	}
+	r := NewRouter(upstreams, groups, routes, []byte{}, logger, time.Minute, nil, nil, nil)
+
+	g, err := r.Match("", "m", types.KindAnthropicMessages,
+		types.ClientBucketOther, types.BillingModeSubscription)
+	if err != nil {
+		t.Fatalf("Match: %v", err)
+	}
+	if g.group.ID != "grp-aaa" {
+		t.Errorf("tiebreak: got %s, want grp-aaa (ID asc wins)", g.group.ID)
+	}
+}
+
+// TestRouter_MatrixGlobal_EmitsNewDimensions asserts every cell carries the
+// new Client/BillingMode/Clients/BillingModes fields.
+func TestRouter_MatrixGlobal_EmitsNewDimensions(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	upstreams := []types.Upstream{
+		{ID: "up", Provider: types.ProviderAnthropic, Status: types.UpstreamStatusActive, Weight: 1, SupportedModels: []string{"m"}},
+	}
+	groups := []store.UpstreamGroupWithMembers{
+		{UpstreamGroup: types.UpstreamGroup{ID: "grp", Name: "grp", LBPolicy: types.LBPolicyWeightedRandom, Status: "active"},
+			Members: []store.UpstreamGroupMemberDetail{{UpstreamGroupMember: types.UpstreamGroupMember{UpstreamGroupID: "grp", UpstreamID: "up"}}}},
+	}
+	routes := []types.Route{
+		{ID: "rt", ProjectID: "", ModelNames: []string{"m"}, RequestKinds: []string{types.KindAnthropicMessages},
+			Clients: []string{types.ClientBucketClaudeCodeCLI}, BillingModes: []string{types.BillingModeSubscription},
+			UpstreamGroupID: "grp", MatchPriority: 1, Status: "active"},
+	}
+	r := NewRouter(upstreams, groups, routes, []byte{}, logger, time.Minute, nil, nil, nil)
+
+	cells := r.MatrixGlobal([]string{"m"}, "", "")
+	// Only the (claude-code-cli, subscription) cell should be populated.
+	var found bool
+	for _, c := range cells {
+		if c.Client == types.ClientBucketClaudeCodeCLI && c.BillingMode == types.BillingModeSubscription {
+			found = true
+			if c.RouteID != "rt" {
+				t.Errorf("cell.RouteID = %s, want rt", c.RouteID)
+			}
+			if !equalStrings(c.Clients, []string{types.ClientBucketClaudeCodeCLI}) {
+				t.Errorf("cell.Clients = %v, want [claude-code-cli]", c.Clients)
+			}
+			if !equalStrings(c.BillingModes, []string{types.BillingModeSubscription}) {
+				t.Errorf("cell.BillingModes = %v, want [subscription]", c.BillingModes)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("missing winning cell in matrix; got %d cells", len(cells))
+	}
+}
+
+// TestRouter_MatrixGlobal_FilterByClient narrows the iteration to one client.
+func TestRouter_MatrixGlobal_FilterByClient(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	upstreams := []types.Upstream{
+		{ID: "up", Provider: types.ProviderAnthropic, Status: types.UpstreamStatusActive, Weight: 1, SupportedModels: []string{"m"}},
+	}
+	groups := []store.UpstreamGroupWithMembers{
+		{UpstreamGroup: types.UpstreamGroup{ID: "grp", Name: "grp", LBPolicy: types.LBPolicyWeightedRandom, Status: "active"},
+			Members: []store.UpstreamGroupMemberDetail{{UpstreamGroupMember: types.UpstreamGroupMember{UpstreamGroupID: "grp", UpstreamID: "up"}}}},
+	}
+	routes := []types.Route{
+		{ID: "rt", ProjectID: "", ModelNames: []string{"m"}, RequestKinds: []string{types.KindAnthropicMessages},
+			UpstreamGroupID: "grp", MatchPriority: 1, Status: "active"},
+	}
+	r := NewRouter(upstreams, groups, routes, []byte{}, logger, time.Minute, nil, nil, nil)
+
+	cells := r.MatrixGlobal([]string{"m"}, types.ClientBucketClaudeCodeCLI, "")
+	for _, c := range cells {
+		if c.Client != types.ClientBucketClaudeCodeCLI {
+			t.Errorf("filter leaked: cell.Client = %s", c.Client)
+		}
+	}
+	// With a single route that matches every client, the filter should
+	// reduce 5*2*1*1 = 10 cells (without filter) down to 1*2*1*1 = 2.
+	if len(cells) != 2 {
+		t.Errorf("len(cells) = %d, want 2 (one client × two modes × one model × one kind)", len(cells))
+	}
+}
+
+// TestRouter_MatrixGlobal_FilterByBillingMode narrows the iteration to one mode.
+func TestRouter_MatrixGlobal_FilterByBillingMode(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	upstreams := []types.Upstream{
+		{ID: "up", Provider: types.ProviderAnthropic, Status: types.UpstreamStatusActive, Weight: 1, SupportedModels: []string{"m"}},
+	}
+	groups := []store.UpstreamGroupWithMembers{
+		{UpstreamGroup: types.UpstreamGroup{ID: "grp", Name: "grp", LBPolicy: types.LBPolicyWeightedRandom, Status: "active"},
+			Members: []store.UpstreamGroupMemberDetail{{UpstreamGroupMember: types.UpstreamGroupMember{UpstreamGroupID: "grp", UpstreamID: "up"}}}},
+	}
+	routes := []types.Route{
+		{ID: "rt", ProjectID: "", ModelNames: []string{"m"}, RequestKinds: []string{types.KindAnthropicMessages},
+			UpstreamGroupID: "grp", MatchPriority: 1, Status: "active"},
+	}
+	r := NewRouter(upstreams, groups, routes, []byte{}, logger, time.Minute, nil, nil, nil)
+
+	cells := r.MatrixGlobal([]string{"m"}, "", types.BillingModeExtraUsage)
+	for _, c := range cells {
+		if c.BillingMode != types.BillingModeExtraUsage {
+			t.Errorf("filter leaked: cell.BillingMode = %s", c.BillingMode)
+		}
+	}
+	// 5 clients × 1 mode × 1 model × 1 kind = 5.
+	if len(cells) != 5 {
+		t.Errorf("len(cells) = %d, want 5", len(cells))
+	}
+}
+
+// equalStrings is a small slice-equality helper used by the new tests.
+// If the file already defines one (it likely does, used by other matrix
+// tests), drop this and reuse.
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+```
+
+- [ ] **Step 8: Build + run tests**
+
+Run: `cd /root/coding/modelserver && go build ./... && go test ./internal/proxy/...`
+
+Expected: all green. The updated executor caller, the rewritten router, and the migrated tests all consistent.
+
+- [ ] **Step 9: Commit**
+
+```bash
+cd /root/coding/modelserver
+git add internal/proxy/router_engine.go internal/proxy/router_engine_test.go internal/proxy/executor.go
+git commit -m "feat(proxy): client+billing_mode routing axis with weighted specificity
+
+Router.Match signature: (projectID, model, kind, client, billingMode).
+matchesGlobalRoute predicate gains Clients/BillingModes clauses; the
+single shared predicate keeps Match and MatrixGlobal aligned. The
+priority-only first-hit-wins walk becomes a weighted-specificity sort
+(project 100, clients 10, billing_modes 1) with MatchPriority desc as
+the secondary key and route ID asc as the deterministic tiebreak.
+
+MatrixCell carries Client + BillingMode + Clients + BillingModes;
+MatrixGlobal accepts optional filterClient + filterBillingMode for
+server-side narrowing (consumed by the admin matrix endpoint in the
+next task).
+
+Executor derives client = ClientBucketFromContext(ctx) and
+billingMode = ternary(reqCtx.IsExtraUsage) one line before Match — no
+new balance check. The authoritative subscription/extra-usage decision
+remains in the RateLimit + ExtraUsageGuard chain, exactly as today.
+
+Tests cover client specificity, mode specificity, full 5-tier
+precedence, legacy 'empty matches any' compat, deterministic ID asc
+tiebreak, matrix new-dimension emission, matrix client filter, matrix
+mode filter. All 9 existing r.Match call sites updated.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+> **End of installment 4 (Task 6).** The router now resolves on the 5-tuple. Pricing layer (installment 5) is the next functional change; admin + dashboard wiring (installments 6-7) make the UI catch up.
 >
 > Remaining installments:
-> - **Installment 4 (Task 6):** `Router.Match` signature break + `matchesGlobalRoute` extension + weighted specificity sort + `MatrixGlobal` extension + executor caller update + full router_engine_test.go overhaul.
 > - **Installment 5 (Task 7):** `Policy.ComputeCreditsForClient` resolver + Executor pricing call-site update + no-regression invariant tests.
 > - **Installment 6 (Task 8):** admin API validation for new route fields + `GET /routing/clients` + `GET /routing/billing-modes` + matrix endpoint filter params + plan admin allow-list update.
 > - **Installment 7 (Task 9):** dashboard Routes page columns + Create/Edit dialog selectors + Matrix tab filter dropdowns + manual smoke checklist.
