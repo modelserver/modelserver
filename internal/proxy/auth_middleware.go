@@ -65,6 +65,115 @@ func InvalidateDeniedModelsCache(projectID, userID string) {
 	delete(deniedModelsCache, key)
 }
 
+// memberPresentCache caches the "is (project, user) currently a member?"
+// answer with the same 10s TTL as quotaCache and deniedModelsCache.
+// Caching the negative answer too means a removed member's continued
+// requests don't pound the DB while the cache window lapses naturally.
+//
+// Transient DB errors are NEVER cached — the next request must retry,
+// because caching an error would convert a momentary blip into 10s of
+// authorization failures.
+var (
+	memberPresentCacheMu sync.RWMutex
+	memberPresentCache   = make(map[string]memberPresentCacheEntry)
+)
+
+type memberPresentCacheEntry struct {
+	present   bool
+	expiresAt time.Time
+}
+
+const memberPresentCacheTTL = 10 * time.Second
+
+func memberPresentCacheGet(key string) (bool, bool) {
+	memberPresentCacheMu.RLock()
+	defer memberPresentCacheMu.RUnlock()
+	entry, ok := memberPresentCache[key]
+	if !ok || time.Now().After(entry.expiresAt) {
+		return false, false
+	}
+	return entry.present, true
+}
+
+func memberPresentCacheSet(key string, present bool) {
+	memberPresentCacheMu.Lock()
+	defer memberPresentCacheMu.Unlock()
+	memberPresentCache[key] = memberPresentCacheEntry{
+		present:   present,
+		expiresAt: time.Now().Add(memberPresentCacheTTL),
+	}
+}
+
+// InvalidateMemberPresentCache drops any cached membership answer for the
+// given (project, user). Safe to call without a corresponding entry.
+// Exposed so future code paths that change membership outside
+// RemoveProjectMember can invalidate immediately rather than waiting up
+// to memberPresentCacheTTL.
+func InvalidateMemberPresentCache(projectID, userID string) {
+	key := projectID + ":" + userID
+	memberPresentCacheMu.Lock()
+	defer memberPresentCacheMu.Unlock()
+	delete(memberPresentCache, key)
+}
+
+// clearMemberPresentCache resets the cache. Test-only helper.
+func clearMemberPresentCache() {
+	memberPresentCacheMu.Lock()
+	defer memberPresentCacheMu.Unlock()
+	memberPresentCache = make(map[string]memberPresentCacheEntry)
+}
+
+// memberStore is the narrow subset of *store.Store that the membership
+// check uses. Defined as an interface so tests can inject a fake without
+// a real DB.
+type memberStore interface {
+	GetProjectMember(projectID, userID string) (*types.ProjectMember, error)
+}
+
+// checkMembership returns true iff the (projectID, userID) pair is
+// currently a project member, OR a cached answer says so. On a cache
+// miss it queries `ms` and caches the result.
+//
+// On a transient DB error from `ms`, it writes 503 to `w` and returns
+// false (the request must NOT proceed). The error is NOT cached.
+//
+// On a definitively-absent member, it writes 401 to `w` and returns
+// false; the "absent" answer IS cached for the TTL window.
+//
+// On success, it writes nothing to `w` and returns true.
+//
+// SECURITY: this is the only fail-CLOSED path in AuthMiddleware. Quota
+// and denylist hydration deliberately fail open on transient DB errors
+// (a brief metering glitch is preferable to a global outage). Membership
+// is the authorization gate — failing open here is an authorization
+// bypass, so it returns 503 instead.
+func checkMembership(w http.ResponseWriter, ms memberStore, projectID, userID string) bool {
+	key := projectID + ":" + userID
+	if present, ok := memberPresentCacheGet(key); ok {
+		if !present {
+			writeProxyError(w, http.StatusUnauthorized,
+				"api key creator is no longer a project member")
+			return false
+		}
+		return true
+	}
+
+	member, err := ms.GetProjectMember(projectID, userID)
+	if err != nil {
+		writeProxyError(w, http.StatusServiceUnavailable,
+			"membership check unavailable, retry")
+		return false
+	}
+	present := member != nil
+	memberPresentCacheSet(key, present)
+	if !present {
+		writeProxyError(w, http.StatusUnauthorized,
+			"api key creator is no longer a project member")
+		return false
+	}
+	return true
+}
+
 type contextKey string
 
 const (
@@ -317,13 +426,15 @@ func AuthMiddleware(st *store.Store, encKey []byte, introspector TokenIntrospect
 				policy = nil
 			}
 
-			// Load per-user credit quota + denylist (cached 10s each).
-			// Both share the same project_members row, so a miss on either
-			// triggers a single GetProjectMember call that hydrates both.
+			// Triple-cache hydration: membership presence, quota %, denylist.
+			// All three share the cache key and TTL (10s). One GetProjectMember
+			// call hydrates all three on a miss.
 			var userQuotaPct *float64
 			var userDeniedModels []string
 
 			memberCacheKey := project.ID + ":" + apiKey.CreatedBy
+
+			memberPresent, presenceHit := memberPresentCacheGet(memberCacheKey)
 			quotaCached, quotaHit := quotaCache.Get(memberCacheKey)
 			deniedCached, deniedHit := deniedModelsCacheGet(memberCacheKey)
 
@@ -335,12 +446,24 @@ func AuthMiddleware(st *store.Store, encKey []byte, introspector TokenIntrospect
 				userDeniedModels = deniedCached
 			}
 
-			if !quotaHit || !deniedHit {
+			if !presenceHit || !quotaHit || !deniedHit {
 				member, memberErr := st.GetProjectMember(project.ID, apiKey.CreatedBy)
 				if memberErr != nil {
-					// Fail open for BOTH quota and denylist on transient
-					// DB errors — never lock everyone out of every model.
-				} else if member != nil {
+					// SECURITY: membership check is fail-CLOSED. Quota and denylist
+					// historically fail open (a brief metering glitch is preferable
+					// to global outage), but failing open on the authorization gate
+					// would let any caller use a key whose membership we can't
+					// verify — that's an authorization bypass.
+					//
+					// Error is NOT cached: the next attempt must retry.
+					writeProxyError(w, http.StatusServiceUnavailable,
+						"membership check unavailable, retry")
+					return
+				}
+				memberPresent = member != nil
+				memberPresentCacheSet(memberCacheKey, memberPresent)
+
+				if memberPresent {
 					if !quotaHit {
 						if member.CreditQuotaPct != nil {
 							userQuotaPct = member.CreditQuotaPct
@@ -354,7 +477,10 @@ func AuthMiddleware(st *store.Store, encKey []byte, introspector TokenIntrospect
 						deniedModelsCacheSet(memberCacheKey, member.DeniedModels)
 					}
 				} else {
-					// member == nil (API key outlived membership).
+					// Member is gone — quota / denylist defaults are irrelevant
+					// because the request will be rejected below, but cache the
+					// sentinels so we don't redundantly hit the DB if the same
+					// (project, user) appears again within the TTL window.
 					if !quotaHit {
 						quotaCache.Set(memberCacheKey, -1)
 					}
@@ -362,6 +488,12 @@ func AuthMiddleware(st *store.Store, encKey []byte, introspector TokenIntrospect
 						deniedModelsCacheSet(memberCacheKey, nil)
 					}
 				}
+			}
+
+			if !memberPresent {
+				writeProxyError(w, http.StatusUnauthorized,
+					"api key creator is no longer a project member")
+				return
 			}
 
 			go st.UpdateAPIKeyLastUsed(apiKey.ID)
