@@ -15,9 +15,18 @@ import (
 	"github.com/modelserver/modelserver/internal/types"
 )
 
-func TestHandleRoutingMatrix_HappyPath(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+// fakeListModels is a shared model lister used by matrix tests.
+func fakeListModels(_ string) ([]types.Model, error) {
+	return []types.Model{
+		{Name: "claude-sonnet", Status: types.ModelStatusActive},
+		{Name: "gpt-5", Status: types.ModelStatusActive},
+	}, nil
+}
 
+// fakeRouter builds the shared proxy.Router used by matrix tests.
+// Routes have no Clients filter so every client bucket resolves.
+func fakeRouter() *proxy.Router {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	upstreams := []types.Upstream{
 		{ID: "up-a", Provider: types.ProviderAnthropic, Status: types.UpstreamStatusActive, Weight: 1, SupportedModels: []string{"claude-sonnet"}},
 		{ID: "up-b", Provider: types.ProviderOpenAI, Status: types.UpstreamStatusActive, Weight: 1, SupportedModels: []string{"gpt-5"}},
@@ -40,17 +49,11 @@ func TestHandleRoutingMatrix_HappyPath(t *testing.T) {
 		{ID: "rt-1", ProjectID: "", ModelNames: []string{"claude-sonnet"}, RequestKinds: []string{types.KindAnthropicMessages}, UpstreamGroupID: "grp-anth", MatchPriority: 100, Status: "active"},
 		{ID: "rt-2", ProjectID: "", ModelNames: []string{"gpt-5"}, RequestKinds: []string{types.KindOpenAIChatCompletions, types.KindOpenAIResponses}, UpstreamGroupID: "grp-oai", MatchPriority: 5, Status: "active"},
 	}
-	router := proxy.NewRouter(upstreams, groups, routes, []byte{}, logger, time.Minute, nil, nil, nil)
+	return proxy.NewRouter(upstreams, groups, routes, []byte{}, logger, time.Minute, nil, nil, nil)
+}
 
-	// Build a tiny fake that the handler can call ListModelsByStatus on.
-	listModelsFn := func(_ string) ([]types.Model, error) {
-		return []types.Model{
-			{Name: "claude-sonnet", Status: types.ModelStatusActive},
-			{Name: "gpt-5", Status: types.ModelStatusActive},
-		}, nil
-	}
-
-	h := handleRoutingMatrixWithLister(listModelsFn, router)
+func TestHandleRoutingMatrix_HappyPath(t *testing.T) {
+	h := handleRoutingMatrixWithLister(fakeListModels, fakeRouter())
 	req := httptest.NewRequest(http.MethodGet, "/routing/matrix", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
@@ -100,3 +103,39 @@ func TestHandleRoutingMatrix_HappyPath(t *testing.T) {
 	}
 }
 
+func TestHandleRoutingMatrix_FilterByClient(t *testing.T) {
+	h := handleRoutingMatrixWithLister(fakeListModels, fakeRouter())
+
+	req := httptest.NewRequest(http.MethodGet, "/routing/matrix?client=claude-code-cli", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var resp struct {
+		Data struct {
+			Cells []matrixCellOut `json:"cells"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for _, c := range resp.Data.Cells {
+		if c.Client != types.ClientBucketClaudeCodeCLI {
+			t.Errorf("filter leaked: cell.Client = %q", c.Client)
+		}
+	}
+}
+
+func TestHandleRoutingMatrix_FilterRejectsInvalid(t *testing.T) {
+	h := handleRoutingMatrixWithLister(fakeListModels, fakeRouter())
+
+	req := httptest.NewRequest(http.MethodGet, "/routing/matrix?client=bogus", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid client: status = %d, want 400", rec.Code)
+	}
+}

@@ -297,6 +297,7 @@ func MountRoutes(r chi.Router, st *store.Store, cfg *config.Config, encKey []byt
 				r.Put("/routes/{routeID}", handleUpdateRoutingRoute(st, catalog))
 				r.Delete("/routes/{routeID}", handleDeleteRoutingRoute(st))
 				r.Get("/request-kinds", handleListRequestKinds())
+				r.Get("/clients", handleListClientBuckets())
 				r.Get("/matrix", handleRoutingMatrix(st, router))
 			})
 		})

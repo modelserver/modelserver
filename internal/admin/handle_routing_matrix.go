@@ -16,12 +16,14 @@ type matrixLister interface {
 }
 
 type matrixCellOut struct {
-	Model             string `json:"model"`
-	Kind              string `json:"kind"`
-	UpstreamGroupID   string `json:"upstream_group_id"`
-	UpstreamGroupName string `json:"upstream_group_name"`
-	RouteID           string `json:"route_id"`
-	MatchPriority     int    `json:"match_priority"`
+	Model             string   `json:"model"`
+	Kind              string   `json:"kind"`
+	Client            string   `json:"client,omitempty"`
+	UpstreamGroupID   string   `json:"upstream_group_id"`
+	UpstreamGroupName string   `json:"upstream_group_name"`
+	RouteID           string   `json:"route_id"`
+	MatchPriority     int      `json:"match_priority"`
+	Clients           []string `json:"clients,omitempty"`
 }
 
 type matrixResponse struct {
@@ -42,26 +44,33 @@ func handleRoutingMatrixWithLister(
 	listModels func(string) ([]types.Model, error),
 	router *proxy.Router,
 ) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		filterClient := r.URL.Query().Get("client")
+		if filterClient != "" && !types.IsValidClientBucket(filterClient) {
+			writeError(w, http.StatusBadRequest, "bad_request", "invalid client: "+filterClient)
+			return
+		}
+
 		models, err := listModels(types.ModelStatusActive)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "failed to list models")
 			return
 		}
-		names := make([]string, len(models))
-		for i, m := range models {
-			names[i] = m.Name
+
+		modelNames := make([]string, 0, len(models))
+		for _, m := range models {
+			modelNames = append(modelNames, m.Name)
 		}
-		sort.Strings(names)
+		sort.Strings(modelNames)
+
+		cells := router.MatrixGlobal(modelNames, filterClient)
+		groupNames := router.SnapshotGroupNames()
 
 		kinds := append([]string(nil), types.AllRequestKinds...)
 		sort.Strings(kinds)
 
-		cells := router.MatrixGlobal(names, "")
-		groupNames := router.SnapshotGroupNames()
-
 		out := matrixResponse{
-			Models: names,
+			Models: modelNames,
 			Kinds:  kinds,
 			Cells:  make([]matrixCellOut, 0, len(cells)),
 		}
@@ -69,10 +78,12 @@ func handleRoutingMatrixWithLister(
 			out.Cells = append(out.Cells, matrixCellOut{
 				Model:             c.Model,
 				Kind:              c.Kind,
+				Client:            c.Client,
 				UpstreamGroupID:   c.UpstreamGroupID,
 				UpstreamGroupName: groupNames[c.UpstreamGroupID],
 				RouteID:           c.RouteID,
 				MatchPriority:     c.MatchPriority,
+				Clients:           c.Clients,
 			})
 		}
 		writeData(w, http.StatusOK, out)

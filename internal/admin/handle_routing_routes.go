@@ -46,6 +46,7 @@ func handleCreateRoutingRoute(st *store.Store, catalog modelcatalog.Catalog) htt
 			ProjectID       string            `json:"project_id"`
 			ModelNames      []string          `json:"model_names"`
 			RequestKinds    []string          `json:"request_kinds"`
+			Clients         []string          `json:"clients"`
 			UpstreamGroupID string            `json:"upstream_group_id"`
 			MatchPriority   int               `json:"match_priority"`
 			Conditions      map[string]string `json:"conditions"`
@@ -69,6 +70,12 @@ func handleCreateRoutingRoute(st *store.Store, catalog modelcatalog.Catalog) htt
 				return
 			}
 		}
+		for _, c := range body.Clients {
+			if !types.IsValidClientBucket(c) {
+				writeError(w, http.StatusBadRequest, "bad_request", "invalid client: "+c)
+				return
+			}
+		}
 
 		canonical, err := catalog.NormalizeNames(body.ModelNames)
 		if err != nil {
@@ -85,6 +92,7 @@ func handleCreateRoutingRoute(st *store.Store, catalog modelcatalog.Catalog) htt
 			ProjectID:       body.ProjectID,
 			ModelNames:      canonical,
 			RequestKinds:    body.RequestKinds,
+			Clients:         body.Clients,
 			UpstreamGroupID: body.UpstreamGroupID,
 			MatchPriority:   body.MatchPriority,
 			Conditions:      body.Conditions,
@@ -109,7 +117,7 @@ func handleUpdateRoutingRoute(st *store.Store, catalog modelcatalog.Catalog) htt
 		}
 
 		updates := make(map[string]interface{})
-		for _, field := range []string{"project_id", "model_names", "request_kinds", "upstream_group_id", "match_priority", "conditions", "status"} {
+		for _, field := range []string{"project_id", "model_names", "request_kinds", "clients", "upstream_group_id", "match_priority", "conditions", "status"} {
 			if v, ok := body[field]; ok {
 				switch field {
 				case "project_id":
@@ -145,6 +153,19 @@ func handleUpdateRoutingRoute(st *store.Store, catalog modelcatalog.Catalog) htt
 						}
 					}
 					v = kinds
+				case "clients":
+					clients, ok := toStringSlice(v)
+					if !ok {
+						writeError(w, http.StatusBadRequest, "bad_request", "clients must be an array of strings")
+						return
+					}
+					for _, c := range clients {
+						if !types.IsValidClientBucket(c) {
+							writeError(w, http.StatusBadRequest, "bad_request", "invalid client: "+c)
+							return
+						}
+					}
+					v = clients
 				}
 				updates[field] = v
 			}
@@ -180,6 +201,15 @@ func handleDeleteRoutingRoute(st *store.Store) http.HandlerFunc {
 func handleListRequestKinds() http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		writeData(w, http.StatusOK, types.AllRequestKinds)
+	}
+}
+
+// handleListClientBuckets returns the catalog of valid client bucket values so
+// the dashboard can render a dropdown without compiling the enum into the
+// frontend bundle.
+func handleListClientBuckets() http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		writeData(w, http.StatusOK, types.AllClientBuckets)
 	}
 }
 

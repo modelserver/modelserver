@@ -181,6 +181,26 @@ func handleUpdatePlan(st *store.Store, catalog modelcatalog.Catalog) http.Handle
 			updates["model_credit_rates"] = b
 		}
 
+		if v, ok := body["client_model_credit_rates"]; ok {
+			m, ok := v.(map[string]interface{})
+			if !ok && v != nil {
+				writeError(w, http.StatusBadRequest, "bad_request", "client_model_credit_rates must be an object")
+				return
+			}
+			for client := range m {
+				if !types.IsValidClientBucket(client) {
+					writeError(w, http.StatusBadRequest, "bad_request", "invalid client bucket in client_model_credit_rates: "+client)
+					return
+				}
+			}
+			b, err := json.Marshal(v)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "bad_request", "client_model_credit_rates marshal failed")
+				return
+			}
+			updates["client_model_credit_rates"] = b
+		}
+
 		for _, field := range []string{"credit_rules", "classic_rules"} {
 			if v, ok := body[field]; ok {
 				b, err := json.Marshal(v)
