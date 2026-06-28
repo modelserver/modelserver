@@ -41,6 +41,14 @@ type ServerConfig struct {
 	// silently hitting its own watchdog and showing
 	// "Stream idle timeout - partial response received".
 	StreamIdleTimeout time.Duration `yaml:"stream_idle_timeout" mapstructure:"stream_idle_timeout"`
+	// SSEKeepaliveInterval is the gap of downstream silence after which
+	// modelserver injects an SSE comment line (":\n\n") to reset
+	// client-side stall detection and middlebox idle timers. The timer
+	// resets on every successful downstream Write, so a busy stream emits
+	// no heartbeats. Default 15s — well under any known client stall
+	// threshold and aligned with Anthropic's own ping cadence. Set to 0
+	// to disable.
+	SSEKeepaliveInterval time.Duration `yaml:"sse_keepalive_interval" mapstructure:"sse_keepalive_interval"`
 }
 
 // DBConfig holds database connection settings.
@@ -218,6 +226,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.request_timeout", 600*time.Second)
 	v.SetDefault("server.max_request_body", 52428800)
 	v.SetDefault("server.stream_idle_timeout", 10*time.Minute)
+	v.SetDefault("server.sse_keepalive_interval", 15*time.Second)
 
 	// DB
 	_ = v.BindEnv("db.url")

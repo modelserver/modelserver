@@ -28,6 +28,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Server.StreamIdleTimeout != 10*time.Minute {
 		t.Errorf("Server.StreamIdleTimeout = %v, want 10m", cfg.Server.StreamIdleTimeout)
 	}
+	if cfg.Server.SSEKeepaliveInterval != 15*time.Second {
+		t.Errorf("Server.SSEKeepaliveInterval = %v, want 15s", cfg.Server.SSEKeepaliveInterval)
+	}
 	if cfg.Images.MaxBodySize != 200<<20 {
 		t.Errorf("Images.MaxBodySize = %d, want %d", cfg.Images.MaxBodySize, int64(200<<20))
 	}
@@ -66,6 +69,7 @@ server:
   request_timeout: 30s
   max_request_body: 1048576
   stream_idle_timeout: 90s
+  sse_keepalive_interval: 7s
 db:
   url: "postgres://user:pass@localhost/mydb"
 auth:
@@ -121,6 +125,9 @@ images:
 	}
 	if cfg.Server.StreamIdleTimeout != 90*time.Second {
 		t.Errorf("Server.StreamIdleTimeout = %v, want 90s", cfg.Server.StreamIdleTimeout)
+	}
+	if cfg.Server.SSEKeepaliveInterval != 7*time.Second {
+		t.Errorf("Server.SSEKeepaliveInterval = %v, want 7s", cfg.Server.SSEKeepaliveInterval)
 	}
 	if cfg.DB.URL != "postgres://user:pass@localhost/mydb" {
 		t.Errorf("DB.URL = %q", cfg.DB.URL)
