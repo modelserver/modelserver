@@ -12,6 +12,8 @@ export function useUsers(page = 1, perPage = 20) {
 export interface UserCompact {
   id: string;
   nickname?: string;
+  email?: string;
+  picture?: string;
 }
 
 // useAllUsersCompact returns every user (superadmin only) in a single

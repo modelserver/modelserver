@@ -40,10 +40,28 @@ export function useProjects() {
   });
 }
 
-export function useAllProjects(page = 1, perPage = 20) {
+export interface AllProjectsFilters {
+  projectId?: string;
+  ownerId?: string;
+}
+
+export function useAllProjects(
+  page = 1,
+  perPage = 20,
+  filters: AllProjectsFilters = {},
+) {
+  const projectId = filters.projectId ?? "";
+  const ownerId = filters.ownerId ?? "";
+  const qs = new URLSearchParams({
+    page: String(page),
+    per_page: String(perPage),
+  });
+  if (projectId) qs.set("project_id", projectId);
+  if (ownerId) qs.set("owner", ownerId);
   return useQuery({
-    queryKey: ["admin-projects", page, perPage],
-    queryFn: () => api.get<ListResponse<Project>>(`/api/v1/admin/projects?page=${page}&per_page=${perPage}`),
+    queryKey: ["admin", "all-projects", page, perPage, projectId, ownerId],
+    queryFn: () =>
+      api.get<ListResponse<Project>>(`/api/v1/admin/projects?${qs.toString()}`),
   });
 }
 
