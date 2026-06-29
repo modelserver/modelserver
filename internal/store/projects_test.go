@@ -7,6 +7,139 @@ import (
 	"github.com/modelserver/modelserver/internal/types"
 )
 
+// seedProjectOwnedBy inserts a project with the given created_by user.
+// Uses the existing seed helpers from extra_usage_db_test.go.
+func seedProjectOwnedBy(t *testing.T, st *Store, name, createdBy string) string {
+	t.Helper()
+	var id string
+	if err := st.pool.QueryRow(context.Background(), `
+		INSERT INTO projects (name, created_by, status)
+		VALUES ($1, $2, 'active')
+		RETURNING id`, name, createdBy).Scan(&id); err != nil {
+		t.Fatalf("seed project %s: %v", name, err)
+	}
+	return id
+}
+
+func TestListAllProjects_NoFilters_ReturnsAll(t *testing.T) {
+	st := openTestStore(t)
+	ownerA, _ := seedUserAndProject(t, st) // creates a project too — that one will be counted
+	pid1 := seedProjectOwnedBy(t, st, "list-all-1", ownerA)
+	pid2 := seedProjectOwnedBy(t, st, "list-all-2", ownerA)
+
+	got, total, err := st.ListAllProjects(types.PaginationParams{Page: 1, PerPage: 100}, ProjectListFilters{})
+	if err != nil {
+		t.Fatalf("ListAllProjects: %v", err)
+	}
+	if total < 2 {
+		t.Errorf("total = %d, want >= 2 (we seeded at least 2 plus the auto-created one)", total)
+	}
+	ids := map[string]bool{}
+	for _, p := range got {
+		ids[p.ID] = true
+	}
+	if !ids[pid1] || !ids[pid2] {
+		t.Errorf("seeded projects missing from list: pid1=%v, pid2=%v in %v", ids[pid1], ids[pid2], ids)
+	}
+}
+
+func TestListAllProjects_FilterByProjectID(t *testing.T) {
+	st := openTestStore(t)
+	ownerA, _ := seedUserAndProject(t, st)
+	target := seedProjectOwnedBy(t, st, "filter-by-id-target", ownerA)
+	_ = seedProjectOwnedBy(t, st, "filter-by-id-other", ownerA)
+
+	got, total, err := st.ListAllProjects(
+		types.PaginationParams{Page: 1, PerPage: 100},
+		ProjectListFilters{ProjectID: target},
+	)
+	if err != nil {
+		t.Fatalf("ListAllProjects: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("total = %d, want 1 (single ID match)", total)
+	}
+	if len(got) != 1 || got[0].ID != target {
+		t.Errorf("got = %v, want exactly [%s]", got, target)
+	}
+}
+
+func TestListAllProjects_FilterByCreatedBy(t *testing.T) {
+	st := openTestStore(t)
+	ownerA, _ := seedUserAndProject(t, st)
+	ownerB := seedSecondUser(t, st, "owner-b")
+	a1 := seedProjectOwnedBy(t, st, "owner-a-proj-1", ownerA)
+	a2 := seedProjectOwnedBy(t, st, "owner-a-proj-2", ownerA)
+	b1 := seedProjectOwnedBy(t, st, "owner-b-proj-1", ownerB)
+
+	got, total, err := st.ListAllProjects(
+		types.PaginationParams{Page: 1, PerPage: 100},
+		ProjectListFilters{CreatedBy: ownerB},
+	)
+	if err != nil {
+		t.Fatalf("ListAllProjects: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("total = %d, want 1 (one project for ownerB)", total)
+	}
+	if len(got) != 1 || got[0].ID != b1 {
+		t.Errorf("got = %v, want [%s]", got, b1)
+	}
+	// Confirm we did NOT see ownerA's projects.
+	for _, p := range got {
+		if p.ID == a1 || p.ID == a2 {
+			t.Errorf("ownerA project %s leaked into ownerB filter", p.ID)
+		}
+	}
+}
+
+func TestListAllProjects_FilterByBoth_IntersectsAND(t *testing.T) {
+	st := openTestStore(t)
+	ownerA, _ := seedUserAndProject(t, st)
+	ownerB := seedSecondUser(t, st, "owner-b-both")
+	a1 := seedProjectOwnedBy(t, st, "both-a-1", ownerA)
+	_ = seedProjectOwnedBy(t, st, "both-b-1", ownerB)
+
+	// Filter by a1's ID AND ownerB → should be empty (mismatch).
+	_, total, err := st.ListAllProjects(
+		types.PaginationParams{Page: 1, PerPage: 100},
+		ProjectListFilters{ProjectID: a1, CreatedBy: ownerB},
+	)
+	if err != nil {
+		t.Fatalf("ListAllProjects: %v", err)
+	}
+	if total != 0 {
+		t.Errorf("total = %d, want 0 (id and owner don't match same row)", total)
+	}
+
+	// Filter by a1's ID AND ownerA → should match.
+	got, total, err := st.ListAllProjects(
+		types.PaginationParams{Page: 1, PerPage: 100},
+		ProjectListFilters{ProjectID: a1, CreatedBy: ownerA},
+	)
+	if err != nil {
+		t.Fatalf("ListAllProjects: %v", err)
+	}
+	if total != 1 || len(got) != 1 || got[0].ID != a1 {
+		t.Errorf("both-match: total=%d got=%v want=[%s]", total, got, a1)
+	}
+}
+
+func TestListAllProjects_FilterEmptyMatchReturnsZero(t *testing.T) {
+	st := openTestStore(t)
+	// Filter by a UUID that doesn't exist in the table.
+	_, total, err := st.ListAllProjects(
+		types.PaginationParams{Page: 1, PerPage: 100},
+		ProjectListFilters{ProjectID: "00000000-0000-0000-0000-000000000000"},
+	)
+	if err != nil {
+		t.Fatalf("ListAllProjects: %v", err)
+	}
+	if total != 0 {
+		t.Errorf("total = %d, want 0 (unmatched filter)", total)
+	}
+}
+
 // seedAPIKey inserts an api_key row with the given (project, creator, status)
 // and returns its ID. Bypasses any handler-level checks — for store tests only.
 func seedAPIKey(t *testing.T, st *Store, projectID, createdBy, status string) string {

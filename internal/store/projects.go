@@ -111,21 +111,60 @@ func (s *Store) ListUserProjects(userID string, p types.PaginationParams) ([]typ
 	return projects, total, nil
 }
 
-// ListAllProjects returns all projects with pagination (for superadmin).
-func (s *Store) ListAllProjects(p types.PaginationParams) ([]types.Project, int, error) {
+// ProjectListFilters narrows ListAllProjects. Empty fields are ignored
+// (= no filter on that dimension). Used by the admin /projects list
+// page to support project-id and created-by filtering. Both empty =
+// behaves identically to today's no-filter call.
+type ProjectListFilters struct {
+	ProjectID string // exact match against projects.id (UUID as string)
+	CreatedBy string // exact match against projects.created_by (UUID as string)
+}
+
+// ListAllProjects returns projects with pagination (for superadmin).
+// `filters` narrows by project ID and/or creator; empty fields mean no
+// filter. Both COUNT and the data SELECT share the WHERE so total
+// reflects the filtered set.
+func (s *Store) ListAllProjects(p types.PaginationParams, filters ProjectListFilters) ([]types.Project, int, error) {
 	ctx := context.Background()
+
+	// Build WHERE clause dynamically so pgx can use positional args
+	// without struct-tag plumbing. Numbering starts at $1 and increments
+	// per added clause.
+	var where strings.Builder
+	where.WriteString("WHERE 1=1")
+	args := make([]any, 0, 4)
+	if filters.ProjectID != "" {
+		args = append(args, filters.ProjectID)
+		fmt.Fprintf(&where, " AND id = $%d", len(args))
+	}
+	if filters.CreatedBy != "" {
+		args = append(args, filters.CreatedBy)
+		fmt.Fprintf(&where, " AND created_by = $%d", len(args))
+	}
+
 	var total int
-	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM projects`).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx,
+		fmt.Sprintf(`SELECT COUNT(*) FROM projects %s`, where.String()),
+		args...,
+	).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count projects: %w", err)
 	}
+
+	// Append LIMIT / OFFSET positional args AFTER the WHERE args so the
+	// numbering stays contiguous.
+	limitArg := len(args) + 1
+	offsetArg := len(args) + 2
+	args = append(args, p.Limit(), p.Offset())
 
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT `+projectColumns+`
 		FROM projects
-		ORDER BY %s %s LIMIT $1 OFFSET $2`,
-		sanitizeSort(p.Sort, "created_at"), sanitizeOrder(p.Order)),
-		p.Limit(), p.Offset(),
-	)
+		%s
+		ORDER BY %s %s LIMIT $%d OFFSET $%d`,
+		where.String(),
+		sanitizeSort(p.Sort, "created_at"), sanitizeOrder(p.Order),
+		limitArg, offsetArg,
+	), args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list all projects: %w", err)
 	}

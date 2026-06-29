@@ -74,18 +74,22 @@ func (s *Store) GetProjectOwnersByProjectIDs(projectIDs []string) (map[string]*t
 }
 
 // CompactUser is a minimal user row for filter dropdowns.
+// Email and Picture support filter dropdowns that need to identify
+// users by their addressable handle (email) or visual avatar.
 type CompactUser struct {
 	ID       string
 	Nickname string
+	Email    string
+	Picture  string
 }
 
-// ListAllUsersCompact returns every user as a minimal {id, nickname} row,
+// ListAllUsersCompact returns every user as a minimal {id, nickname, email, picture} row,
 // no pagination. Used to populate filter dropdowns that need to know about
 // users outside an arbitrary first-page window. Returns rows sorted by
 // nickname for stable display order.
 func (s *Store) ListAllUsersCompact() ([]CompactUser, error) {
 	rows, err := s.pool.Query(context.Background(),
-		`SELECT id, COALESCE(nickname, '') FROM users ORDER BY nickname, id`)
+		`SELECT id, COALESCE(nickname, ''), COALESCE(email, ''), COALESCE(picture, '') FROM users ORDER BY nickname, id`)
 	if err != nil {
 		return nil, fmt.Errorf("list users compact: %w", err)
 	}
@@ -94,7 +98,7 @@ func (s *Store) ListAllUsersCompact() ([]CompactUser, error) {
 	var out []CompactUser
 	for rows.Next() {
 		var u CompactUser
-		if err := rows.Scan(&u.ID, &u.Nickname); err != nil {
+		if err := rows.Scan(&u.ID, &u.Nickname, &u.Email, &u.Picture); err != nil {
 			return nil, fmt.Errorf("scan compact user: %w", err)
 		}
 		out = append(out, u)
