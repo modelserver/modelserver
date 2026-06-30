@@ -450,3 +450,64 @@ func TestRemoveProjectMember_RejectsOwner(t *testing.T) {
 		t.Errorf("owner rows after rejected remove = %d, want 1", n)
 	}
 }
+
+func TestUpdateProjectMember_RejectsRoleOwner(t *testing.T) {
+	st := openTestStore(t)
+	owner, projectID := seedUserAndProject(t, st)
+	addMember(t, st, projectID, owner, types.RoleOwner)
+	dev := seedSecondUser(t, st, "to-promote")
+	addMember(t, st, projectID, dev, types.RoleDeveloper)
+
+	newRole := types.RoleOwner
+	err := st.UpdateProjectMember(projectID, dev, &newRole, nil, nil)
+	if !errors.Is(err, ErrInvalidRole) {
+		t.Fatalf("err = %v, want ErrInvalidRole", err)
+	}
+
+	// dev's role unchanged.
+	var got string
+	if err := st.pool.QueryRow(context.Background(),
+		`SELECT role FROM project_members WHERE project_id=$1 AND user_id=$2`,
+		projectID, dev).Scan(&got); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if got != types.RoleDeveloper {
+		t.Errorf("dev role = %q, want %q", got, types.RoleDeveloper)
+	}
+}
+
+func TestUpdateProjectMember_RejectsDemotingOwner(t *testing.T) {
+	st := openTestStore(t)
+	owner, projectID := seedUserAndProject(t, st)
+	addMember(t, st, projectID, owner, types.RoleOwner)
+
+	newRole := types.RoleDeveloper
+	err := st.UpdateProjectMember(projectID, owner, &newRole, nil, nil)
+	if !errors.Is(err, ErrOwnerMustTransfer) {
+		t.Fatalf("err = %v, want ErrOwnerMustTransfer", err)
+	}
+
+	// owner role unchanged.
+	var got string
+	if err := st.pool.QueryRow(context.Background(),
+		`SELECT role FROM project_members WHERE project_id=$1 AND user_id=$2`,
+		projectID, owner).Scan(&got); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if got != types.RoleOwner {
+		t.Errorf("owner role after rejected demote = %q, want %q", got, types.RoleOwner)
+	}
+}
+
+func TestUpdateProjectMember_AllowsOwnerDeniedModels(t *testing.T) {
+	// denied_models edit on the owner row must still work — it doesn't
+	// change role. Asserts the guard is not over-eager.
+	st := openTestStore(t)
+	owner, projectID := seedUserAndProject(t, st)
+	addMember(t, st, projectID, owner, types.RoleOwner)
+
+	denied := []string{"gpt-4"}
+	if err := st.UpdateProjectMember(projectID, owner, nil, nil, &denied); err != nil {
+		t.Fatalf("UpdateProjectMember(denied_models only): %v", err)
+	}
+}

@@ -335,6 +335,31 @@ func (s *Store) UpdateProjectMember(
 		return nil
 	}
 
+	// Single-owner invariant: changing role to RoleOwner is never allowed
+	// here (use TransferProjectOwnership). Changing role *away* from
+	// RoleOwner is never allowed here either — same reason.
+	if role != nil {
+		if *role == types.RoleOwner {
+			return ErrInvalidRole
+		}
+		if !types.IsAssignableRole(*role) {
+			return ErrInvalidRole
+		}
+		// Check current role; if the caller is trying to demote the owner, reject.
+		var current string
+		if err := s.pool.QueryRow(context.Background(),
+			`SELECT role FROM project_members WHERE project_id=$1 AND user_id=$2`,
+			projectID, userID).Scan(&current); err != nil {
+			if err == pgx.ErrNoRows {
+				return fmt.Errorf("get current role: %w", ErrNotAMember)
+			}
+			return fmt.Errorf("get current role: %w", err)
+		}
+		if current == types.RoleOwner {
+			return ErrOwnerMustTransfer
+		}
+	}
+
 	sets := make([]string, 0, 3)
 	args := make([]any, 0, 5)
 	next := 1
