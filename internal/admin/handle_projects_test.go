@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/modelserver/modelserver/internal/store"
 	"github.com/modelserver/modelserver/internal/types"
 )
 
@@ -148,5 +151,65 @@ func TestHandleUpdateMember_RejectsUnknownRole(t *testing.T) {
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+}
+
+func TestHandleTransferOwnership_E2EHappyPath(t *testing.T) {
+	dbURL := os.Getenv("TEST_DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("set TEST_DATABASE_URL to run")
+	}
+	st, err := store.New(dbURL, slog.Default())
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	ctx := context.Background()
+	var ownerID, targetID, projectID string
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := st.Pool().Exec(ctx, q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustOne := func(q string, args ...any) string {
+		t.Helper()
+		var s string
+		if err := st.Pool().QueryRow(ctx, q, args...).Scan(&s); err != nil {
+			t.Fatalf("query %s: %v", q, err)
+		}
+		return s
+	}
+	ownerID = mustOne(`INSERT INTO users (email) VALUES ('owner-' || gen_random_uuid()::text || '@t.local') RETURNING id`)
+	targetID = mustOne(`INSERT INTO users (email) VALUES ('target-' || gen_random_uuid()::text || '@t.local') RETURNING id`)
+	projectID = mustOne(`INSERT INTO projects (name, created_by) VALUES ('transfer-e2e', $1) RETURNING id`, ownerID)
+	mustExec(`INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'owner')`, projectID, ownerID)
+	mustExec(`INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'developer')`, projectID, targetID)
+
+	r := chi.NewRouter()
+	r.Post("/projects/{projectID}/transfer-ownership", handleTransferOwnership(st))
+
+	body, _ := json.Marshal(map[string]string{"to_user_id": targetID})
+	req := httptest.NewRequest("POST", "/projects/"+projectID+"/transfer-ownership", bytes.NewReader(body))
+	req = req.WithContext(callerCtx(req.Context(),
+		&types.User{ID: ownerID, IsSuperadmin: false},
+		&types.ProjectMember{UserID: ownerID, Role: types.RoleOwner},
+	))
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Verify post-state.
+	gotOwner := mustOne(`SELECT user_id FROM project_members WHERE project_id=$1 AND role='owner'`, projectID)
+	if gotOwner != targetID {
+		t.Errorf("new owner = %s, want %s", gotOwner, targetID)
+	}
+	gotOldRole := mustOne(`SELECT role FROM project_members WHERE project_id=$1 AND user_id=$2`, projectID, ownerID)
+	if gotOldRole != types.RoleDeveloper {
+		t.Errorf("old owner demoted to %s, want developer", gotOldRole)
 	}
 }
