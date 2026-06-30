@@ -111,3 +111,42 @@ func TestHandleAddMember_RejectsUnknownRole(t *testing.T) {
 		t.Fatalf("status = %d, want 400", rr.Code)
 	}
 }
+
+func TestHandleUpdateMember_RejectsRoleOwner(t *testing.T) {
+	r := chi.NewRouter()
+	r.Put("/projects/{projectID}/members/{userID}", handleUpdateMember(nil))
+
+	body, _ := json.Marshal(map[string]string{"role": "owner"})
+	req := httptest.NewRequest("PUT", "/projects/p1/members/u-target", bytes.NewReader(body))
+	req = req.WithContext(callerCtx(req.Context(),
+		&types.User{ID: "u-owner"},
+		&types.ProjectMember{UserID: "u-owner", Role: types.RoleOwner},
+	))
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte(`"invalid_role"`)) {
+		t.Errorf("body lacks invalid_role: %s", rr.Body.String())
+	}
+}
+
+func TestHandleUpdateMember_RejectsUnknownRole(t *testing.T) {
+	r := chi.NewRouter()
+	r.Put("/projects/{projectID}/members/{userID}", handleUpdateMember(nil))
+
+	body, _ := json.Marshal(map[string]string{"role": "janitor"})
+	req := httptest.NewRequest("PUT", "/projects/p1/members/u-target", bytes.NewReader(body))
+	req = req.WithContext(callerCtx(req.Context(),
+		&types.User{ID: "u-owner"},
+		&types.ProjectMember{UserID: "u-owner", Role: types.RoleOwner},
+	))
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+}

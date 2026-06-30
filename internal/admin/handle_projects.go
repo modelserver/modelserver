@@ -534,6 +534,17 @@ func handleUpdateMember(st *store.Store) http.HandlerFunc {
 			return
 		}
 
+		// Role validation: if role is being changed, it must be in
+		// types.AssignableRoles. role='owner' is rejected here — use
+		// POST /projects/{id}/transfer-ownership.
+		if body.Role != nil {
+			if *body.Role == types.RoleOwner || !types.IsAssignableRole(*body.Role) {
+				writeError(w, http.StatusBadRequest, "invalid_role",
+					"role must be 'maintainer' or 'developer' (use transfer-ownership to change owner)")
+				return
+			}
+		}
+
 		// Validate credit_quota_percent range.
 		if body.CreditQuotaPct != nil && (*body.CreditQuotaPct < 0 || *body.CreditQuotaPct > 100) {
 			writeError(w, http.StatusBadRequest, "bad_request", "credit_quota_percent must be between 0 and 100")
@@ -586,7 +597,21 @@ func handleUpdateMember(st *store.Store) http.HandlerFunc {
 		}
 
 		// If promoting to owner, quota is auto-cleared in the store layer.
-		if err := st.UpdateProjectMember(projectID, userID, body.Role, quotaArg, body.DeniedModels); err != nil {
+		err = st.UpdateProjectMember(projectID, userID, body.Role, quotaArg, body.DeniedModels)
+		switch {
+		case err == nil:
+			// fall through
+		case errors.Is(err, store.ErrOwnerMustTransfer):
+			writeError(w, http.StatusConflict, "owner_must_transfer",
+				"the current owner cannot be demoted directly; use POST /projects/{id}/transfer-ownership")
+			return
+		case errors.Is(err, store.ErrInvalidRole):
+			writeError(w, http.StatusBadRequest, "invalid_role", "invalid role")
+			return
+		case errors.Is(err, store.ErrNotAMember):
+			writeError(w, http.StatusNotFound, "not_found", "member not found")
+			return
+		default:
 			writeError(w, http.StatusInternalServerError, "internal", "failed to update member")
 			return
 		}
@@ -634,7 +659,14 @@ func handleRemoveMember(st *store.Store, hydra *HydraClient) http.HandlerFunc {
 		userID := chi.URLParam(r, "userID")
 
 		revokedKeys, deletedGrants, err := st.RemoveProjectMember(projectID, userID)
-		if err != nil {
+		switch {
+		case err == nil:
+			// fall through
+		case errors.Is(err, store.ErrOwnerMustTransfer):
+			writeError(w, http.StatusConflict, "owner_must_transfer",
+				"the project owner cannot be removed; use POST /projects/{id}/transfer-ownership first")
+			return
+		default:
 			writeError(w, http.StatusInternalServerError, "internal",
 				"failed to remove member")
 			return
