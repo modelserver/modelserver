@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/modelserver/modelserver/internal/types"
@@ -594,5 +595,60 @@ func TestTransferProjectOwnership_InvalidDemoteRole(t *testing.T) {
 	err = st.TransferProjectOwnership(projectID, owner, target, "janitor")
 	if !errors.Is(err, ErrInvalidRole) {
 		t.Fatalf("demoteTo=janitor: err = %v, want ErrInvalidRole", err)
+	}
+}
+
+func TestTransferProjectOwnership_ConcurrentRacesSerialize(t *testing.T) {
+	st := openTestStore(t)
+	owner, projectID := seedUserAndProject(t, st)
+	addMember(t, st, projectID, owner, types.RoleOwner)
+	a := seedSecondUser(t, st, "race-a")
+	b := seedSecondUser(t, st, "race-b")
+	addMember(t, st, projectID, a, types.RoleDeveloper)
+	addMember(t, st, projectID, b, types.RoleDeveloper)
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	wg.Add(2)
+	go func() { defer wg.Done(); errs[0] = st.TransferProjectOwnership(projectID, owner, a, types.RoleDeveloper) }()
+	go func() { defer wg.Done(); errs[1] = st.TransferProjectOwnership(projectID, owner, b, types.RoleDeveloper) }()
+	wg.Wait()
+
+	// Exactly one goroutine succeeds; the other gets ErrInvariantViolated
+	// because by the time it acquires the lock, the current owner is no
+	// longer `owner` (it's been demoted to developer by the winner).
+	var okCount, invariantCount int
+	for _, e := range errs {
+		switch {
+		case e == nil:
+			okCount++
+		case errors.Is(e, ErrInvariantViolated):
+			invariantCount++
+		default:
+			t.Fatalf("unexpected error: %v", e)
+		}
+	}
+	if okCount != 1 || invariantCount != 1 {
+		t.Fatalf("ok=%d invariant=%d, want exactly 1 of each (errs=%v)", okCount, invariantCount, errs)
+	}
+
+	// Post-state: exactly one owner, equal to either a or b.
+	var n int
+	var winner string
+	if err := st.pool.QueryRow(context.Background(),
+		`SELECT user_id FROM project_members WHERE project_id=$1 AND role='owner'`,
+		projectID).Scan(&winner); err != nil {
+		t.Fatalf("query owner: %v", err)
+	}
+	if err := st.pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM project_members WHERE project_id=$1 AND role='owner'`,
+		projectID).Scan(&n); err != nil {
+		t.Fatalf("count owners: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("owner count = %d, want 1", n)
+	}
+	if winner != a && winner != b {
+		t.Errorf("winner = %s, want a=%s or b=%s", winner, a, b)
 	}
 }
