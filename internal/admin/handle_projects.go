@@ -731,6 +731,7 @@ func handleTransferOwnership(st *store.Store) http.HandlerFunc {
 		// in one round-trip (same shape as GET /members).
 		members, err := st.ListProjectMembers(projectID)
 		if err != nil {
+			log.Printf("WARN transfer_ownership: list members after transfer (project %s): %v", projectID, err)
 			writeData(w, http.StatusOK, map[string]string{"status": "transferred"})
 			return
 		}
