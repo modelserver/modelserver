@@ -381,3 +381,46 @@ func TestCountActiveKeysForMember(t *testing.T) {
 		t.Errorf("n = %d, want 2 (only active)", n)
 	}
 }
+
+func TestCountUserCreatedProjects_CountsByCreatedByOnly(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	a, _ := seedUserAndProject(t, st) // a creates one project via the helper
+	b := seedSecondUser(t, st, "creator-b")
+
+	// a creates two more projects (active + archived); b creates one.
+	seedProjectOwnedBy(t, st, "a-active", a)
+	aArchived := seedProjectOwnedBy(t, st, "a-archived", a)
+	if _, err := st.pool.Exec(ctx, `UPDATE projects SET status='archived' WHERE id=$1`, aArchived); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	seedProjectOwnedBy(t, st, "b-active", b)
+
+	// Now hand off ownership of one of a's projects to b inside project_members
+	// directly. This must NOT change either count — quota is by created_by.
+	otherA := seedProjectOwnedBy(t, st, "a-transferred", a)
+	if _, err := st.pool.Exec(ctx, `
+		INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'owner')`,
+		otherA, b); err != nil {
+		t.Fatalf("add owner: %v", err)
+	}
+
+	got, err := st.CountUserCreatedProjects(a)
+	if err != nil {
+		t.Fatalf("CountUserCreatedProjects(a): %v", err)
+	}
+	// a created: helper one + a-active + a-archived + a-transferred = 4
+	if got != 4 {
+		t.Errorf("CountUserCreatedProjects(a) = %d, want 4 (includes archived and transferred-out)", got)
+	}
+
+	got, err = st.CountUserCreatedProjects(b)
+	if err != nil {
+		t.Fatalf("CountUserCreatedProjects(b): %v", err)
+	}
+	// b created: b-active = 1 (NOT counting the project where b is owner-by-transfer)
+	if got != 1 {
+		t.Errorf("CountUserCreatedProjects(b) = %d, want 1 (ownership transfer doesn't move quota)", got)
+	}
+}

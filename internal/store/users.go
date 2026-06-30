@@ -175,16 +175,6 @@ func (s *Store) UpdateUser(id string, updates map[string]interface{}) error {
 	return err
 }
 
-// CountUserOwnedProjects returns the number of projects a user owns.
-func (s *Store) CountUserOwnedProjects(userID string) (int, error) {
-	var count int
-	err := s.pool.QueryRow(context.Background(), `
-		SELECT COUNT(*) FROM project_members
-		WHERE user_id = $1 AND role = 'owner'`, userID,
-	).Scan(&count)
-	return count, err
-}
-
 // UserExists returns true if any user exists in the system.
 func (s *Store) UserExists() (bool, error) {
 	var exists bool

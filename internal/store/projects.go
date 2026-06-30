@@ -436,6 +436,18 @@ func (s *Store) RemoveProjectMember(projectID, userID string) (int, []types.OAut
 	return revokedCount, deletedGrants, nil
 }
 
+// CountUserCreatedProjects counts projects where the user is the
+// original creator (projects.created_by = $1). Includes archived
+// projects — archive is not a quota release. Used by the per-user
+// max_projects check at project-creation time.
+func (s *Store) CountUserCreatedProjects(userID string) (int, error) {
+	var count int
+	err := s.pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM projects WHERE created_by = $1`, userID,
+	).Scan(&count)
+	return count, err
+}
+
 // CountActiveKeysForMember returns the number of api_keys with
 // status='active' that the user created in the project. Used by the
 // dashboard's pre-removal confirmation dialog.

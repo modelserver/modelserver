@@ -288,7 +288,7 @@ func handleCreateProject(st *store.Store) http.HandlerFunc {
 
 		// Check project limit.
 		if !user.IsSuperadmin {
-			count, _ := st.CountUserOwnedProjects(user.ID)
+			count, _ := st.CountUserCreatedProjects(user.ID)
 			if count >= user.MaxProjects {
 				writeError(w, http.StatusForbidden, "forbidden", "project limit reached")
 				return
