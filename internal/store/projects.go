@@ -488,6 +488,119 @@ func (s *Store) CountUserCreatedProjects(userID string) (int, error) {
 	return count, err
 }
 
+// TransferProjectOwnership atomically swaps the project owner from
+// fromUID to toUID, demoting fromUID to demoteTo. The whole operation
+// runs in a single transaction with row locks on the relevant
+// project_members rows; concurrent writers either block or see the
+// post-state.
+//
+// Pre-conditions checked inside the tx:
+//   - demoteTo is a member of types.AssignableRoles.
+//   - Exactly one row in this project has role='owner', and its user_id
+//     equals fromUID (a stale fromUID returns ErrInvariantViolated).
+//   - toUID has a membership row in this project (else ErrNotAMember).
+//   - toUID != fromUID (else ErrAlreadyOwner).
+//
+// Post-conditions guaranteed at COMMIT:
+//   - exactly one role='owner' row, owned by toUID.
+//   - toUID's credit_quota_percent = NULL (owners never carry a quota).
+//   - fromUID's role = demoteTo, credit_quota_percent = NULL.
+func (s *Store) TransferProjectOwnership(projectID, fromUID, toUID, demoteTo string) error {
+	if !types.IsAssignableRole(demoteTo) {
+		return ErrInvalidRole
+	}
+	if fromUID == toUID {
+		return ErrAlreadyOwner
+	}
+
+	ctx := context.Background()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx) // no-op after Commit
+
+	// Lock every member row in this project. Sorting by user_id avoids
+	// deadlocks if two transfer ops on the same project race.
+	rows, err := tx.Query(ctx, `
+		SELECT user_id, role FROM project_members
+		WHERE project_id = $1
+		ORDER BY user_id
+		FOR UPDATE`, projectID)
+	if err != nil {
+		return fmt.Errorf("lock members: %w", err)
+	}
+	var (
+		currentOwner string
+		ownerCount   int
+		targetSeen   bool
+		targetRole   string
+	)
+	for rows.Next() {
+		var uid, role string
+		if err := rows.Scan(&uid, &role); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan member: %w", err)
+		}
+		if role == types.RoleOwner {
+			currentOwner = uid
+			ownerCount++
+		}
+		if uid == toUID {
+			targetSeen = true
+			targetRole = role
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate members: %w", err)
+	}
+
+	if ownerCount != 1 || currentOwner != fromUID {
+		return ErrInvariantViolated
+	}
+	if !targetSeen {
+		return ErrNotAMember
+	}
+	if targetRole == types.RoleOwner {
+		// Defensive — we already checked fromUID != toUID, so this can
+		// only happen if multiple owners exist (caught above) or there
+		// is a fundamental bug.
+		return ErrAlreadyOwner
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE project_members
+		   SET role = $1, credit_quota_percent = NULL
+		 WHERE project_id = $2 AND user_id = $3`,
+		demoteTo, projectID, fromUID); err != nil {
+		return fmt.Errorf("demote old owner: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE project_members
+		   SET role = $1, credit_quota_percent = NULL
+		 WHERE project_id = $2 AND user_id = $3`,
+		types.RoleOwner, projectID, toUID); err != nil {
+		return fmt.Errorf("promote new owner: %w", err)
+	}
+
+	// Post-check.
+	var postOwners int
+	if err := tx.QueryRow(ctx,
+		`SELECT COUNT(*) FROM project_members WHERE project_id=$1 AND role='owner'`,
+		projectID).Scan(&postOwners); err != nil {
+		return fmt.Errorf("post-count: %w", err)
+	}
+	if postOwners != 1 {
+		return ErrInvariantViolated
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
 // CountActiveKeysForMember returns the number of api_keys with
 // status='active' that the user created in the project. Used by the
 // dashboard's pre-removal confirmation dialog.

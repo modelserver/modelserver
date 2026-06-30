@@ -511,3 +511,88 @@ func TestUpdateProjectMember_AllowsOwnerDeniedModels(t *testing.T) {
 		t.Fatalf("UpdateProjectMember(denied_models only): %v", err)
 	}
 }
+
+func TestTransferProjectOwnership_HappyPath(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	owner, projectID := seedUserAndProject(t, st)
+	addMember(t, st, projectID, owner, types.RoleOwner)
+	target := seedSecondUser(t, st, "next-owner")
+	addMember(t, st, projectID, target, types.RoleDeveloper)
+
+	if err := st.TransferProjectOwnership(projectID, owner, target, types.RoleDeveloper); err != nil {
+		t.Fatalf("TransferProjectOwnership: %v", err)
+	}
+
+	// Verify post-state.
+	rows, err := st.pool.Query(ctx,
+		`SELECT user_id, role, credit_quota_percent FROM project_members WHERE project_id=$1 ORDER BY role`,
+		projectID)
+	if err != nil {
+		t.Fatalf("query members: %v", err)
+	}
+	defer rows.Close()
+	type memberRow struct {
+		uid   string
+		role  string
+		quota *float64
+	}
+	var got []memberRow
+	for rows.Next() {
+		var r memberRow
+		if err := rows.Scan(&r.uid, &r.role, &r.quota); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, r)
+	}
+	if len(got) != 2 {
+		t.Fatalf("members = %d, want 2", len(got))
+	}
+	// "developer" < "owner" alphabetically; got[0] is the demoted old owner.
+	if got[0].uid != owner || got[0].role != types.RoleDeveloper || got[0].quota != nil {
+		t.Errorf("demoted row = %+v, want uid=%s role=developer quota=nil", got[0], owner)
+	}
+	if got[1].uid != target || got[1].role != types.RoleOwner || got[1].quota != nil {
+		t.Errorf("promoted row = %+v, want uid=%s role=owner quota=nil", got[1], target)
+	}
+}
+
+func TestTransferProjectOwnership_TargetNotMember(t *testing.T) {
+	st := openTestStore(t)
+	owner, projectID := seedUserAndProject(t, st)
+	addMember(t, st, projectID, owner, types.RoleOwner)
+	stranger := seedSecondUser(t, st, "stranger")
+
+	err := st.TransferProjectOwnership(projectID, owner, stranger, types.RoleDeveloper)
+	if !errors.Is(err, ErrNotAMember) {
+		t.Fatalf("err = %v, want ErrNotAMember", err)
+	}
+}
+
+func TestTransferProjectOwnership_TargetAlreadyOwner(t *testing.T) {
+	st := openTestStore(t)
+	owner, projectID := seedUserAndProject(t, st)
+	addMember(t, st, projectID, owner, types.RoleOwner)
+
+	err := st.TransferProjectOwnership(projectID, owner, owner, types.RoleDeveloper)
+	if !errors.Is(err, ErrAlreadyOwner) {
+		t.Fatalf("err = %v, want ErrAlreadyOwner", err)
+	}
+}
+
+func TestTransferProjectOwnership_InvalidDemoteRole(t *testing.T) {
+	st := openTestStore(t)
+	owner, projectID := seedUserAndProject(t, st)
+	addMember(t, st, projectID, owner, types.RoleOwner)
+	target := seedSecondUser(t, st, "next")
+	addMember(t, st, projectID, target, types.RoleDeveloper)
+
+	err := st.TransferProjectOwnership(projectID, owner, target, types.RoleOwner)
+	if !errors.Is(err, ErrInvalidRole) {
+		t.Fatalf("demoteTo=owner: err = %v, want ErrInvalidRole", err)
+	}
+	err = st.TransferProjectOwnership(projectID, owner, target, "janitor")
+	if !errors.Is(err, ErrInvalidRole) {
+		t.Fatalf("demoteTo=janitor: err = %v, want ErrInvalidRole", err)
+	}
+}
