@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/modelserver/modelserver/internal/types"
@@ -422,5 +423,30 @@ func TestCountUserCreatedProjects_CountsByCreatedByOnly(t *testing.T) {
 	// b created: b-active = 1 (NOT counting the project where b is owner-by-transfer)
 	if got != 1 {
 		t.Errorf("CountUserCreatedProjects(b) = %d, want 1 (ownership transfer doesn't move quota)", got)
+	}
+}
+
+func TestRemoveProjectMember_RejectsOwner(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	owner, projectID := seedUserAndProject(t, st)
+	// seedUserAndProject inserts the project but does NOT add the
+	// project_members row — do it explicitly to match production state.
+	addMember(t, st, projectID, owner, types.RoleOwner)
+
+	_, _, err := st.RemoveProjectMember(projectID, owner)
+	if !errors.Is(err, ErrOwnerMustTransfer) {
+		t.Fatalf("err = %v, want ErrOwnerMustTransfer", err)
+	}
+
+	// Owner row must still be present (transaction rolled back).
+	var n int
+	if err := st.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM project_members WHERE project_id=$1 AND user_id=$2 AND role='owner'`,
+		projectID, owner).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("owner rows after rejected remove = %d, want 1", n)
 	}
 }

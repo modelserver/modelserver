@@ -391,6 +391,28 @@ func (s *Store) RemoveProjectMember(projectID, userID string) (int, []types.OAut
 	}
 	defer tx.Rollback(ctx) // no-op after Commit
 
+	// Single-owner invariant: refuse to delete the current owner.
+	// SELECT FOR UPDATE locks the row so a concurrent UPDATE of role
+	// (or a concurrent transfer-ownership) blocks until we commit or
+	// rollback.
+	var role string
+	if err := tx.QueryRow(ctx, `
+		SELECT role FROM project_members
+		WHERE project_id=$1 AND user_id=$2
+		FOR UPDATE`, projectID, userID,
+	).Scan(&role); err != nil {
+		if err == pgx.ErrNoRows {
+			// No member row — fall through; the legacy "revoke orphan
+			// keys" behavior below still applies.
+			role = ""
+		} else {
+			return 0, nil, fmt.Errorf("lock member row: %w", err)
+		}
+	}
+	if role == types.RoleOwner {
+		return 0, nil, ErrOwnerMustTransfer
+	}
+
 	tag, err := tx.Exec(ctx, `
 		UPDATE api_keys
 		   SET status = 'revoked', updated_at = NOW()
