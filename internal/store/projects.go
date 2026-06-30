@@ -3,12 +3,29 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/modelserver/modelserver/internal/types"
+)
+
+var (
+	// ErrNotAMember: target user is not a member of the project.
+	ErrNotAMember = errors.New("user is not a project member")
+	// ErrAlreadyOwner: target user is already the project owner.
+	ErrAlreadyOwner = errors.New("user is already the project owner")
+	// ErrOwnerMustTransfer: tried to demote or remove the current owner
+	// outside of the transfer-ownership flow.
+	ErrOwnerMustTransfer = errors.New("owner cannot be demoted or removed directly; use transfer-ownership")
+	// ErrInvalidRole: a role string is not in types.AssignableRoles
+	// (or equals types.RoleOwner where owner is not permitted).
+	ErrInvalidRole = errors.New("invalid role")
+	// ErrInvariantViolated: a store transaction's post-state would have
+	// owner count ≠ 1. Indicates concurrent writes or corrupt data.
+	ErrInvariantViolated = errors.New("project owner-count invariant violated")
 )
 
 const projectColumns = `id, name, COALESCE(description, ''), created_by, status, settings, billing_tags, created_at, updated_at`
@@ -293,14 +310,6 @@ func (s *Store) ListProjectMembersPaginated(projectID string, p types.Pagination
 		return nil, 0, fmt.Errorf("iterate members: %w", err)
 	}
 	return members, total, nil
-}
-
-// UpdateProjectMemberRole updates a member's role.
-func (s *Store) UpdateProjectMemberRole(projectID, userID, role string) error {
-	_, err := s.pool.Exec(context.Background(), `
-		UPDATE project_members SET role = $1
-		WHERE project_id = $2 AND user_id = $3`, role, projectID, userID)
-	return err
 }
 
 // UpdateProjectMember updates a member's role, credit quota, and/or
