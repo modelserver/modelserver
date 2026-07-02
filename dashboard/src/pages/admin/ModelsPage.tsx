@@ -734,7 +734,10 @@ export function ModelsPage() {
               />
               <p className="text-xs text-muted-foreground">
                 Free-form JSON. Known keys: context_window, capabilities,
-                provider_hint, icon, category, replaced_by.
+                provider_hint, icon, category, replaced_by,
+                extra_usage_only (true routes every request through
+                extra-usage regardless of client — for premium models
+                priced above any subscription bundle).
               </p>
             </div>
           </div>

@@ -451,6 +451,12 @@ export interface ModelMetadata {
   icon?: string;
   category?: string;
   replaced_by?: string;
+  // extra_usage_only=true routes ALL clients (including Claude Code /
+  // Claude Desktop) through the extra-usage path regardless of client
+  // kind. Set on models priced above any subscription bundle (e.g.
+  // claude-fable-5) so subscribers can't silently exceed their plan
+  // price. Consumed by SubscriptionEligibilityMiddleware.
+  extra_usage_only?: boolean;
 }
 
 // Keys match the Go struct in internal/store/models.go ModelReferenceCounts.
