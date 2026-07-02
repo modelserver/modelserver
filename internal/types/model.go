@@ -25,13 +25,21 @@ type Model struct {
 	UpdatedAt              time.Time        `json:"updated_at"`
 }
 
-// ModelMetadata carries optional, UI-oriented hints about a model.
-// Unset fields are omitted from JSON.
+// ModelMetadata carries optional hints about a model. Most fields are
+// UI-oriented and unset fields are omitted from JSON. ExtraUsageOnly is the
+// exception — it is a policy flag consumed by
+// SubscriptionEligibilityMiddleware to force a model onto the extra-usage
+// path regardless of client kind. Kept on ModelMetadata (rather than a
+// dedicated column) so ops can flip it via the admin UI's existing
+// metadata JSON editor without a schema migration; if the number of
+// policy-shaped fields grows past two or three, promote them to dedicated
+// columns.
 type ModelMetadata struct {
-	ContextWindow int      `json:"context_window,omitempty"`
-	Capabilities  []string `json:"capabilities,omitempty"`
-	ProviderHint  string   `json:"provider_hint,omitempty"`
-	Icon          string   `json:"icon,omitempty"`
-	Category      string   `json:"category,omitempty"`
-	ReplacedBy    string   `json:"replaced_by,omitempty"`
+	ContextWindow  int      `json:"context_window,omitempty"`
+	Capabilities   []string `json:"capabilities,omitempty"`
+	ProviderHint   string   `json:"provider_hint,omitempty"`
+	Icon           string   `json:"icon,omitempty"`
+	Category       string   `json:"category,omitempty"`
+	ReplacedBy     string   `json:"replaced_by,omitempty"`
+	ExtraUsageOnly bool     `json:"extra_usage_only,omitempty"`
 }

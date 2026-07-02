@@ -104,3 +104,69 @@ func TestSubscriptionEligibility_NoModelInContext_Eligible(t *testing.T) {
 		t.Errorf("no model in context → got %+v, want eligible", *got)
 	}
 }
+
+// Models flagged with metadata.extra_usage_only are premium-tier: they
+// must take the extra-usage path for EVERY client kind, including the
+// first-party ones (Claude Code, Claude Desktop) that would otherwise
+// pass the publisher gate. This is the whole point of the flag —
+// subscribers can't be given silent access to a model priced above their
+// plan bundle.
+func TestSubscriptionEligibility_ExtraUsageOnlyModel_AllClientsIneligible(t *testing.T) {
+	m := &types.Model{
+		Name:      "claude-fable-5",
+		Publisher: types.PublisherAnthropic,
+		Metadata:  types.ModelMetadata{ExtraUsageOnly: true},
+	}
+	// Every ClientKind constant must be exercised — the flag's whole
+	// contract is "premium regardless of kind", so a future refactor that
+	// accidentally special-cases one must fail the test. If a new
+	// ClientKind is added to types/extra_usage.go, add it here too.
+	for _, kind := range []string{
+		types.ClientKindClaudeCode,
+		types.ClientKindClaudeDesktop,
+		types.ClientKindOpenCode,
+		types.ClientKindOpenClaw,
+		types.ClientKindCodex,
+		types.ClientKindUnknown,
+	} {
+		h, got := buildChain(withModelKind(m, kind))
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/x", nil))
+		if got.Eligible || got.Reason != types.ExtraUsageReasonClientRestriction {
+			t.Errorf("extra_usage_only model kind=%q → %+v, want ineligible+client_restriction",
+				kind, *got)
+		}
+	}
+}
+
+// A premium model with an empty Publisher must still be ineligible — the
+// premium check runs before the missing-publisher data-hole branch, so a
+// mis-seeded catalog row can't accidentally let the model through as
+// eligible via the metric-and-pass path.
+func TestSubscriptionEligibility_ExtraUsageOnlyModel_MissingPublisherStillIneligible(t *testing.T) {
+	m := &types.Model{
+		Name:     "claude-fable-5", // Publisher == ""
+		Metadata: types.ModelMetadata{ExtraUsageOnly: true},
+	}
+	h, got := buildChain(withModelKind(m, types.ClientKindClaudeCode))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/x", nil))
+	if got.Eligible || got.Reason != types.ExtraUsageReasonClientRestriction {
+		t.Errorf("extra_usage_only model with empty publisher → %+v, want ineligible+client_restriction", *got)
+	}
+}
+
+// The zero value (ExtraUsageOnly=false) must not affect existing behavior:
+// non-flagged models keep going through the publisher/client-kind gate
+// unchanged. Pairs with the AnthropicOther test above; this one asserts
+// the eligible half of the gate for an unflagged model.
+func TestSubscriptionEligibility_ExtraUsageOnly_ZeroValueIsNoop(t *testing.T) {
+	m := &types.Model{
+		Name:      "claude-opus-4-8",
+		Publisher: types.PublisherAnthropic,
+		// Metadata omitted → ExtraUsageOnly == false
+	}
+	h, got := buildChain(withModelKind(m, types.ClientKindClaudeCode))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/x", nil))
+	if !got.Eligible || got.Reason != "" {
+		t.Errorf("unflagged anthropic model on claude-code → %+v, want eligible", *got)
+	}
+}
